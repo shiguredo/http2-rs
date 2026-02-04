@@ -1,0 +1,25 @@
+[package]
+name = "shiguredo_http2"
+version = "2026.0.0"
+edition = "2024"
+rust-version = "1.88"
+authors = ["Shiguredo Inc."]
+license = "Apache-2.0"
+description = "HTTP/2 Library"
+homepage = "https://github.com/shiguredo/http2-rs"
+repository = "https://github.com/shiguredo/http2-rs"
+readme = "README.md"
+
+[dependencies]
+
+[workspace]
+members = [
+    "examples/http2_client",
+    "examples/http2_server",
+    "pbt",
+    "crates/nghttp2-sys",
+    "crates/shiguredo_nghttp2",
+    "crates/tokio-nghttp2",
+    "crates/tokio-http2",
+]
+exclude = ["fuzz"]

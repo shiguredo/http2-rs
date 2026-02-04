@@ -1,0 +1,10 @@
+[package]
+name = "http2_client"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+tokio-http2 = { path = "../../crates/tokio-http2" }
+shiguredo_http11 = { version = "2026.1.0-canary.4" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

@@ -1,0 +1,171 @@
+//! HTTP/2 制限設定
+//!
+//! 接続やストリームの制限値を設定する。
+
+use crate::settings::{
+    DEFAULT_HEADER_TABLE_SIZE, DEFAULT_INITIAL_WINDOW_SIZE, DEFAULT_MAX_FRAME_SIZE,
+    MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, MIN_MAX_FRAME_SIZE,
+};
+
+/// HTTP/2 接続の制限設定
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Limits {
+    /// 最大同時ストリーム数
+    pub max_concurrent_streams: Option<u32>,
+    /// 初期ウィンドウサイズ
+    pub initial_window_size: u32,
+    /// 最大フレームサイズ
+    pub max_frame_size: u32,
+    /// 最大ヘッダーリストサイズ
+    pub max_header_list_size: Option<u32>,
+    /// HPACK 動的テーブルの最大サイズ
+    pub header_table_size: u32,
+    /// 接続レベルの初期ウィンドウサイズ
+    pub connection_window_size: u32,
+    /// Extended CONNECT プロトコルの有効化 (RFC 8441)
+    pub enable_connect_protocol: bool,
+    /// RFC 7540 優先度の無効化 (RFC 9218)
+    pub no_rfc7540_priorities: bool,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            max_concurrent_streams: Some(100),
+            initial_window_size: DEFAULT_INITIAL_WINDOW_SIZE,
+            max_frame_size: DEFAULT_MAX_FRAME_SIZE,
+            max_header_list_size: Some(16384),
+            header_table_size: DEFAULT_HEADER_TABLE_SIZE,
+            connection_window_size: DEFAULT_INITIAL_WINDOW_SIZE,
+            enable_connect_protocol: false,
+            no_rfc7540_priorities: false,
+        }
+    }
+}
+
+impl Limits {
+    /// 新しい制限設定を生成する
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 最大同時ストリーム数を設定する
+    #[must_use]
+    pub const fn with_max_concurrent_streams(mut self, max: Option<u32>) -> Self {
+        self.max_concurrent_streams = max;
+        self
+    }
+
+    /// 初期ウィンドウサイズを設定する
+    ///
+    /// # Panics
+    ///
+    /// 値が `MAX_INITIAL_WINDOW_SIZE` を超える場合
+    #[must_use]
+    pub fn with_initial_window_size(mut self, size: u32) -> Self {
+        assert!(
+            size <= MAX_INITIAL_WINDOW_SIZE,
+            "initial window size must be <= {MAX_INITIAL_WINDOW_SIZE}"
+        );
+        self.initial_window_size = size;
+        self
+    }
+
+    /// 最大フレームサイズを設定する
+    ///
+    /// # Panics
+    ///
+    /// 値が `MIN_MAX_FRAME_SIZE` 未満または `MAX_MAX_FRAME_SIZE` を超える場合
+    #[must_use]
+    pub fn with_max_frame_size(mut self, size: u32) -> Self {
+        assert!(
+            (MIN_MAX_FRAME_SIZE..=MAX_MAX_FRAME_SIZE).contains(&size),
+            "max frame size must be {MIN_MAX_FRAME_SIZE}..={MAX_MAX_FRAME_SIZE}"
+        );
+        self.max_frame_size = size;
+        self
+    }
+
+    /// 最大ヘッダーリストサイズを設定する
+    #[must_use]
+    pub const fn with_max_header_list_size(mut self, size: Option<u32>) -> Self {
+        self.max_header_list_size = size;
+        self
+    }
+
+    /// HPACK 動的テーブルの最大サイズを設定する
+    #[must_use]
+    pub const fn with_header_table_size(mut self, size: u32) -> Self {
+        self.header_table_size = size;
+        self
+    }
+
+    /// 接続レベルのウィンドウサイズを設定する
+    #[must_use]
+    pub fn with_connection_window_size(mut self, size: u32) -> Self {
+        assert!(
+            size <= MAX_INITIAL_WINDOW_SIZE,
+            "connection window size must be <= {MAX_INITIAL_WINDOW_SIZE}"
+        );
+        self.connection_window_size = size;
+        self
+    }
+
+    /// Extended CONNECT プロトコルの有効化を設定する (RFC 8441)
+    #[must_use]
+    pub const fn with_enable_connect_protocol(mut self, enable: bool) -> Self {
+        self.enable_connect_protocol = enable;
+        self
+    }
+
+    /// RFC 7540 優先度の無効化を設定する (RFC 9218)
+    #[must_use]
+    pub const fn with_no_rfc7540_priorities(mut self, enable: bool) -> Self {
+        self.no_rfc7540_priorities = enable;
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_limits() {
+        let limits = Limits::default();
+        assert_eq!(limits.max_concurrent_streams, Some(100));
+        assert_eq!(limits.initial_window_size, 65535);
+        assert_eq!(limits.max_frame_size, 16384);
+    }
+
+    #[test]
+    fn test_builder_pattern() {
+        let limits = Limits::new()
+            .with_max_concurrent_streams(Some(50))
+            .with_initial_window_size(1 << 20)
+            .with_max_frame_size(1 << 20);
+
+        assert_eq!(limits.max_concurrent_streams, Some(50));
+        assert_eq!(limits.initial_window_size, 1 << 20);
+        assert_eq!(limits.max_frame_size, 1 << 20);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_invalid_initial_window_size() {
+        let _ = Limits::new().with_initial_window_size(MAX_INITIAL_WINDOW_SIZE + 1);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_invalid_max_frame_size_too_small() {
+        let _ = Limits::new().with_max_frame_size(MIN_MAX_FRAME_SIZE - 1);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_invalid_max_frame_size_too_large() {
+        let _ = Limits::new().with_max_frame_size(MAX_MAX_FRAME_SIZE + 1);
+    }
+}

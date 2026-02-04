@@ -1,0 +1,1399 @@
+//! HTTP/2 接続管理
+//!
+//! Sans I/O パターンで HTTP/2 接続を管理する。
+
+use std::collections::{HashMap, VecDeque};
+
+use crate::error::{Error, ErrorCode, Result};
+use crate::event::Event;
+use crate::flow_control::FlowControl;
+use crate::frame::{
+    CONNECTION_STREAM_ID, ContinuationFrame, DataFrame, Frame, FrameDecoder, FrameEncoder,
+    GoawayFrame, HeadersFrame, PingFrame, PriorityUpdateFrame, RstStreamFrame, SettingsFrame,
+    StreamId, WindowUpdateFrame,
+};
+use crate::hpack::{Decoder as HpackDecoder, Encoder as HpackEncoder, HeaderField};
+use crate::limits::Limits;
+use crate::settings::Settings;
+use crate::stream::{Stream, StreamState};
+use crate::validation;
+
+/// 接続の役割
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// クライアント
+    Client,
+    /// サーバー
+    Server,
+}
+
+/// 接続状態
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConnectionState {
+    /// 初期状態（接続プリフェイスを待っている）
+    #[default]
+    WaitingPreface,
+    /// アクティブ（通常の通信中）
+    Active,
+    /// GOAWAY 送信済み
+    GoawaySent,
+    /// GOAWAY 受信済み
+    GoawayReceived,
+    /// クローズ済み
+    Closed,
+}
+
+/// HTTP/2 接続
+#[derive(Debug)]
+pub struct Connection {
+    /// 接続の役割
+    role: Role,
+    /// 接続状態
+    state: ConnectionState,
+    /// ローカル設定
+    local_settings: Settings,
+    /// リモート設定
+    remote_settings: Settings,
+    /// 接続レベルのフロー制御
+    flow_control: FlowControl,
+    /// ストリーム一覧
+    streams: HashMap<StreamId, Stream>,
+    /// 次のストリーム ID
+    next_stream_id: StreamId,
+    /// 最後に受信したストリーム ID
+    last_recv_stream_id: StreamId,
+    /// HPACK エンコーダー
+    hpack_encoder: HpackEncoder,
+    /// HPACK デコーダー
+    hpack_decoder: HpackDecoder,
+    /// フレームデコーダー
+    frame_decoder: FrameDecoder,
+    /// フレームエンコーダー
+    frame_encoder: FrameEncoder,
+    /// 出力バッファ
+    output_buffer: VecDeque<u8>,
+    /// イベントキュー
+    events: VecDeque<Event>,
+    /// 設定が確認待ちかどうか
+    settings_ack_pending: bool,
+    /// 接続プリフェイスを受信したかどうか
+    preface_received: bool,
+    /// 接続プリフェイスを送信したかどうか
+    preface_sent: bool,
+    /// ヘッダーブロック継続中のストリーム ID
+    header_continuation_stream: Option<StreamId>,
+    /// ヘッダーブロックフラグメント
+    header_block_fragment: Vec<u8>,
+    /// ヘッダーブロック継続中の END_STREAM フラグ
+    ///
+    /// HEADERS フレームで END_HEADERS が未設定の場合、END_STREAM フラグを保存し、
+    /// 最後の CONTINUATION フレームで使用する (RFC 9113 Section 6.2)。
+    header_end_stream: bool,
+    /// 最初に受信した NO_RFC7540_PRIORITIES の値
+    ///
+    /// RFC 9218 Section 5.1: この設定は接続中に変更できない。
+    /// 最初の値を記録し、以後の変更を拒否する。
+    initial_no_rfc7540_priorities: Option<bool>,
+    /// 保留中の動的テーブルサイズ更新
+    ///
+    /// RFC 7541 Section 4.2: SETTINGS_HEADER_TABLE_SIZE 変更を受信した場合、
+    /// 次のヘッダーブロック送信時に Dynamic Table Size Update をエンコードする。
+    pending_table_size_update: Option<u32>,
+}
+
+impl Connection {
+    /// 新しい接続を生成する
+    #[must_use]
+    pub fn new(role: Role, limits: Limits) -> Self {
+        let mut local_settings = Settings::new();
+        local_settings.header_table_size = limits.header_table_size;
+        if let Some(max) = limits.max_concurrent_streams {
+            local_settings.max_concurrent_streams = Some(max);
+        }
+        local_settings.initial_window_size = limits.initial_window_size;
+        local_settings.max_frame_size = limits.max_frame_size;
+        local_settings.max_header_list_size = limits.max_header_list_size;
+        local_settings.enable_connect_protocol = limits.enable_connect_protocol;
+        local_settings.no_rfc7540_priorities = limits.no_rfc7540_priorities;
+
+        let next_stream_id = match role {
+            Role::Client => 1,
+            Role::Server => 2,
+        };
+
+        Self {
+            role,
+            state: ConnectionState::WaitingPreface,
+            local_settings,
+            remote_settings: Settings::new(),
+            flow_control: FlowControl::new(limits.connection_window_size),
+            streams: HashMap::new(),
+            next_stream_id,
+            last_recv_stream_id: 0,
+            hpack_encoder: HpackEncoder::new(limits.header_table_size as usize),
+            hpack_decoder: HpackDecoder::new(limits.header_table_size as usize),
+            frame_decoder: FrameDecoder::new(limits.max_frame_size),
+            frame_encoder: FrameEncoder::new(),
+            output_buffer: VecDeque::new(),
+            events: VecDeque::new(),
+            settings_ack_pending: false,
+            preface_received: false,
+            preface_sent: false,
+            header_continuation_stream: None,
+            header_block_fragment: Vec::new(),
+            header_end_stream: false,
+            initial_no_rfc7540_priorities: None,
+            pending_table_size_update: None,
+        }
+    }
+
+    /// クライアント接続を生成する
+    #[must_use]
+    pub fn client(limits: Limits) -> Self {
+        Self::new(Role::Client, limits)
+    }
+
+    /// サーバー接続を生成する
+    #[must_use]
+    pub fn server(limits: Limits) -> Self {
+        Self::new(Role::Server, limits)
+    }
+
+    /// 接続の役割を取得する
+    #[must_use]
+    pub const fn role(&self) -> Role {
+        self.role
+    }
+
+    /// 接続状態を取得する
+    #[must_use]
+    pub const fn state(&self) -> ConnectionState {
+        self.state
+    }
+
+    /// 接続がアクティブかどうかを返す
+    #[must_use]
+    pub const fn is_active(&self) -> bool {
+        matches!(self.state, ConnectionState::Active)
+    }
+
+    /// 接続がクローズされたかどうかを返す
+    #[must_use]
+    pub const fn is_closed(&self) -> bool {
+        matches!(self.state, ConnectionState::Closed)
+    }
+
+    /// 接続プリフェイスを送信する（クライアント）
+    ///
+    /// RFC 9113 Section 8.4: サーバーは ENABLE_PUSH を 0 以外に設定できない。
+    /// そのため、サーバーの場合は ENABLE_PUSH を送信しない。
+    pub fn initiate(&mut self) -> Result<()> {
+        use crate::settings::SettingId;
+
+        if self.preface_sent {
+            return Ok(());
+        }
+
+        if self.role == Role::Client {
+            // クライアントはプリフェイス文字列を送信する
+            self.output_buffer.extend(crate::CONNECTION_PREFACE);
+        }
+
+        // SETTINGS フレームを送信する
+        let mut settings_frame = SettingsFrame::new();
+        for setting in self.local_settings.to_settings_list() {
+            // RFC 9113 Section 8.4: サーバーは ENABLE_PUSH を 1 に設定できない
+            if self.role == Role::Server && setting.id == SettingId::EnablePush.as_u16() {
+                continue;
+            }
+            settings_frame.add_setting(setting);
+        }
+        self.send_frame(&Frame::Settings(settings_frame))?;
+        self.settings_ack_pending = true;
+        self.preface_sent = true;
+
+        Ok(())
+    }
+
+    /// データを入力バッファに追加する
+    pub fn feed(&mut self, data: &[u8]) -> Result<usize> {
+        self.frame_decoder.feed(data);
+        Ok(data.len())
+    }
+
+    /// 接続プリフェイス受信済みとしてマークする（外部でプリフェイスを処理した場合）
+    pub fn mark_preface_received(&mut self) {
+        self.preface_received = true;
+    }
+
+    /// 接続プリフェイス送信済みとしてマークする（外部でプリフェイスを送信した場合）
+    pub fn mark_preface_sent(&mut self) {
+        self.preface_sent = true;
+    }
+
+    /// SETTINGS フレームを送信する
+    ///
+    /// initiate() とは異なり、preface_sent のチェックを行わない。
+    /// 外部でコネクションプリフェイスを処理した場合に使用する。
+    ///
+    /// RFC 9113 Section 8.4: サーバーは ENABLE_PUSH を 0 以外に設定できない。
+    /// そのため、サーバーの場合は ENABLE_PUSH を送信しない。
+    pub fn send_settings(&mut self) -> Result<()> {
+        use crate::settings::SettingId;
+
+        if self.settings_ack_pending {
+            // 既に SETTINGS を送信済み
+            return Ok(());
+        }
+
+        let mut settings_frame = SettingsFrame::new();
+        for setting in self.local_settings.to_settings_list() {
+            // RFC 9113 Section 8.4: サーバーは ENABLE_PUSH を 1 に設定できない
+            if self.role == Role::Server && setting.id == SettingId::EnablePush.as_u16() {
+                continue;
+            }
+            settings_frame.add_setting(setting);
+        }
+        self.send_frame(&Frame::Settings(settings_frame))?;
+        self.settings_ack_pending = true;
+
+        Ok(())
+    }
+
+    /// フレームを処理してイベントを生成する
+    pub fn process(&mut self) -> Result<()> {
+        while let Some(frame) = self.frame_decoder.decode()? {
+            self.handle_frame(frame)?;
+        }
+        Ok(())
+    }
+
+    /// イベントを取得する
+    #[must_use]
+    pub fn poll_event(&mut self) -> Option<Event> {
+        self.events.pop_front()
+    }
+
+    /// 出力データを取得する
+    #[must_use]
+    pub fn poll_output(&mut self) -> Option<Vec<u8>> {
+        if self.output_buffer.is_empty() {
+            None
+        } else {
+            Some(self.output_buffer.drain(..).collect())
+        }
+    }
+
+    /// 出力バッファにデータがあるかどうかを返す
+    #[must_use]
+    pub fn has_output(&self) -> bool {
+        !self.output_buffer.is_empty()
+    }
+
+    /// 新しいストリームを開始する
+    pub fn start_stream(
+        &mut self,
+        headers: Vec<HeaderField>,
+        end_stream: bool,
+    ) -> Result<StreamId> {
+        // RFC 9113 Section 8.4: サーバープッシュ非サポートのため、サーバーは新規ストリームを開始できない
+        if self.role == Role::Server {
+            return Err(Error::invalid_input(
+                "server cannot initiate streams (server push not supported)",
+            ));
+        }
+
+        // RFC 9113 Section 5.1.1: GOAWAY 受信後は新規ストリームを開始できない
+        if matches!(self.state, ConnectionState::GoawayReceived) {
+            return Err(Error::connection_error(
+                ErrorCode::ProtocolError,
+                "cannot start new stream after GOAWAY received",
+            ));
+        }
+
+        // RFC 9113 Section 5.1.2: peer が設定した同時ストリーム上限を超えてはならない
+        if let Some(max) = self.remote_settings.max_concurrent_streams {
+            let current_open = self
+                .streams
+                .values()
+                .filter(|s| !s.state().is_closed())
+                .count();
+            if current_open >= max as usize {
+                return Err(Error::invalid_input(
+                    "max concurrent streams limit set by peer would be exceeded",
+                ));
+            }
+        }
+
+        // RFC 9113 Section 10.5.1: 送信ヘッダーリストサイズの上限チェック
+        if let Some(max_size) = self.remote_settings.max_header_list_size {
+            let header_list_size = Self::calculate_header_list_size(&headers);
+            if header_list_size > max_size as usize {
+                return Err(Error::invalid_input(format!(
+                    "header list size {} exceeds peer's SETTINGS_MAX_HEADER_LIST_SIZE {}",
+                    header_list_size, max_size
+                )));
+            }
+        }
+
+        let stream_id = self.next_stream_id;
+        self.next_stream_id += 2;
+
+        // RFC 9113 Section 5.2: 送信ウィンドウはリモートの initial_window_size、
+        // 受信ウィンドウはローカルの initial_window_size で初期化する
+        let mut stream = Stream::new(
+            stream_id,
+            self.remote_settings.initial_window_size,
+            self.local_settings.initial_window_size,
+        );
+        stream.state_machine_mut().send_headers(end_stream)?;
+        stream.set_headers(headers.clone());
+
+        self.streams.insert(stream_id, stream);
+
+        // HEADERS フレームを送信 (必要に応じて CONTINUATION に分割)
+        let mut encoded_headers = Vec::new();
+        self.hpack_encoder.encode(&mut encoded_headers, &headers);
+
+        self.send_header_block(stream_id, encoded_headers, end_stream)?;
+
+        Ok(stream_id)
+    }
+
+    /// ストリームにデータを送信する
+    ///
+    /// フロー制御に従い、送信可能な分だけ送信する。
+    /// 送信できないデータは内部バッファにキューイングされ、
+    /// WINDOW_UPDATE 受信時に自動的に送信される。
+    pub fn send_data(
+        &mut self,
+        stream_id: StreamId,
+        data: Vec<u8>,
+        end_stream: bool,
+    ) -> Result<()> {
+        // ストリームの存在確認と状態遷移
+        {
+            let stream = self
+                .streams
+                .get_mut(&stream_id)
+                .ok_or_else(|| Error::stream_error(ErrorCode::StreamClosed, "stream not found"))?;
+
+            // 状態チェック（end_stream=false でも送信可能な状態か検証する）
+            stream.state_machine_mut().send_data(end_stream)?;
+        }
+
+        // データをキューに追加
+        self.queue_data(stream_id, data, end_stream)?;
+
+        // キューから送信可能な分を送信
+        self.flush_stream_data(stream_id)?;
+
+        Ok(())
+    }
+
+    /// ストリームのデータをキューに追加する
+    fn queue_data(&mut self, stream_id: StreamId, data: Vec<u8>, end_stream: bool) -> Result<()> {
+        let stream = self
+            .streams
+            .get_mut(&stream_id)
+            .ok_or_else(|| Error::stream_error(ErrorCode::StreamClosed, "stream not found"))?;
+
+        // 送信バッファにデータを追加
+        let remaining = stream.send_buffer_mut().push(&data);
+        if remaining > 0 {
+            // バッファが満杯の場合はエラー
+            return Err(Error::connection_error(
+                ErrorCode::FlowControlError,
+                "send buffer full",
+            ));
+        }
+
+        // end_stream フラグを記録
+        if end_stream {
+            stream.set_pending_end_stream(true);
+        }
+
+        Ok(())
+    }
+
+    /// ストリームのキューからデータを送信する
+    fn flush_stream_data(&mut self, stream_id: StreamId) -> Result<()> {
+        loop {
+            // 送信可能なサイズを計算
+            let (send_size, pending_end_stream) = {
+                let stream = match self.streams.get(&stream_id) {
+                    Some(s) => s,
+                    None => return Ok(()),
+                };
+
+                let buffer_len = stream.send_buffer().len();
+                if buffer_len == 0 {
+                    return Ok(());
+                }
+
+                // 接続レベルのウィンドウ
+                let conn_window = self.flow_control.send_available();
+                // ストリームレベルのウィンドウ
+                let stream_window = stream.flow_control().send_available();
+                // 最大フレームサイズ
+                let max_frame = self.remote_settings.max_frame_size as usize;
+
+                // 送信可能なサイズ（ウィンドウとフレームサイズの最小値）
+                let available = conn_window.min(stream_window).min(max_frame);
+
+                if available == 0 {
+                    // ウィンドウが枯渇している場合は送信しない
+                    return Ok(());
+                }
+
+                let send_size = buffer_len.min(available);
+                let pending_end_stream = stream.pending_end_stream();
+
+                (send_size, pending_end_stream)
+            };
+
+            // データを取り出す
+            let data = {
+                let stream = self.streams.get_mut(&stream_id).unwrap();
+                stream.send_buffer_mut().pop(send_size)
+            };
+
+            // end_stream フラグを決定（バッファが空になり、pending_end_stream が true の場合）
+            let remaining_after = {
+                let stream = self.streams.get(&stream_id).unwrap();
+                stream.send_buffer().len()
+            };
+            let end_stream = pending_end_stream && remaining_after == 0;
+
+            // フロー制御を更新
+            self.flow_control.consume_send(data.len())?;
+            {
+                let stream = self.streams.get_mut(&stream_id).unwrap();
+                stream.flow_control_mut().consume_send(data.len())?;
+
+                // end_stream を送信したらフラグをクリア
+                if end_stream {
+                    stream.set_pending_end_stream(false);
+                }
+            }
+
+            // DATA フレームを送信
+            let data_frame = DataFrame::new(stream_id, data).with_end_stream(end_stream);
+            self.send_frame(&Frame::Data(data_frame))?;
+
+            if end_stream || remaining_after == 0 {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 全ストリームのキューからデータを送信する
+    fn flush_all_stream_data(&mut self) -> Result<()> {
+        // 送信待ちデータがあるストリームを収集
+        let stream_ids: Vec<StreamId> = self
+            .streams
+            .iter()
+            .filter(|(_, s)| !s.send_buffer().is_empty())
+            .map(|(id, _)| *id)
+            .collect();
+
+        for stream_id in stream_ids {
+            self.flush_stream_data(stream_id)?;
+        }
+
+        Ok(())
+    }
+
+    /// ストリームをリセットする
+    pub fn reset_stream(&mut self, stream_id: StreamId, error_code: ErrorCode) -> Result<()> {
+        if let Some(stream) = self.streams.get_mut(&stream_id) {
+            stream.state_machine_mut().send_rst_stream();
+        }
+
+        let rst_frame = RstStreamFrame::new(stream_id, error_code.as_u32());
+        self.send_frame(&Frame::RstStream(rst_frame))?;
+
+        Ok(())
+    }
+
+    /// PING を送信する
+    pub fn send_ping(&mut self, opaque_data: [u8; 8]) -> Result<()> {
+        let ping_frame = PingFrame::new(opaque_data);
+        self.send_frame(&Frame::Ping(ping_frame))?;
+        Ok(())
+    }
+
+    /// GOAWAY を送信する
+    pub fn send_goaway(&mut self, error_code: ErrorCode, debug_data: Vec<u8>) -> Result<()> {
+        let goaway_frame = GoawayFrame::new(self.last_recv_stream_id, error_code.as_u32())
+            .with_debug_data(debug_data);
+        self.send_frame(&Frame::Goaway(goaway_frame))?;
+        self.state = ConnectionState::GoawaySent;
+        Ok(())
+    }
+
+    /// WINDOW_UPDATE を送信する
+    pub fn send_window_update(&mut self, stream_id: StreamId, increment: u32) -> Result<()> {
+        // RFC 9113 Section 6.9: increment は 1 以上でなければならない
+        if increment == 0 {
+            return Err(Error::connection_error(
+                ErrorCode::ProtocolError,
+                "WINDOW_UPDATE increment must be non-zero",
+            ));
+        }
+
+        let window_update_frame = WindowUpdateFrame::new(stream_id, increment);
+        self.send_frame(&Frame::WindowUpdate(window_update_frame))?;
+
+        if stream_id == CONNECTION_STREAM_ID {
+            self.flow_control.add_recv_window(increment)?;
+        } else if let Some(stream) = self.streams.get_mut(&stream_id) {
+            stream.flow_control_mut().add_recv_window(increment)?;
+        }
+
+        Ok(())
+    }
+
+    /// レスポンスヘッダーを送信する (サーバー用)
+    ///
+    /// 既存のストリームにレスポンスヘッダーを送信する。
+    pub fn send_response(
+        &mut self,
+        stream_id: StreamId,
+        headers: Vec<HeaderField>,
+        end_stream: bool,
+    ) -> Result<()> {
+        // RFC 9113 Section 10.5.1: 送信ヘッダーリストサイズの上限チェック
+        if let Some(max_size) = self.remote_settings.max_header_list_size {
+            let header_list_size = Self::calculate_header_list_size(&headers);
+            if header_list_size > max_size as usize {
+                return Err(Error::invalid_input(format!(
+                    "header list size {} exceeds peer's SETTINGS_MAX_HEADER_LIST_SIZE {}",
+                    header_list_size, max_size
+                )));
+            }
+        }
+
+        let stream = self
+            .streams
+            .get_mut(&stream_id)
+            .ok_or_else(|| Error::stream_error(ErrorCode::StreamClosed, "stream not found"))?;
+
+        stream.state_machine_mut().send_headers(end_stream)?;
+
+        // HEADERS フレームを送信 (必要に応じて CONTINUATION に分割)
+        let mut encoded_headers = Vec::new();
+        self.hpack_encoder.encode(&mut encoded_headers, &headers);
+
+        self.send_header_block(stream_id, encoded_headers, end_stream)?;
+
+        Ok(())
+    }
+
+    /// フレームを処理する
+    fn handle_frame(&mut self, frame: Frame) -> Result<()> {
+        // RFC 9113 Section 3.4: 接続プリフェイス検証
+        if self.state == ConnectionState::WaitingPreface {
+            // サーバーは client preface (24 octets) を受信済みでなければならない
+            if self.role == Role::Server && !self.preface_received {
+                return Err(Error::connection_error(
+                    ErrorCode::ProtocolError,
+                    "client connection preface not received",
+                ));
+            }
+            // 最初のフレームは SETTINGS (ACK なし) でなければならない
+            if !matches!(&frame, Frame::Settings(sf) if !sf.ack) {
+                return Err(Error::connection_error(
+                    ErrorCode::ProtocolError,
+                    "first frame must be SETTINGS",
+                ));
+            }
+        }
+
+        // ヘッダーブロック継続中は CONTINUATION のみ許可
+        if let Some(expected_stream_id) = self.header_continuation_stream {
+            match &frame {
+                Frame::Continuation(cf) if cf.stream_id == expected_stream_id => {
+                    // OK
+                }
+                _ => {
+                    return Err(Error::connection_error(
+                        ErrorCode::ProtocolError,
+                        "expected CONTINUATION frame",
+                    ));
+                }
+            }
+        }
+
+        match frame {
+            Frame::Data(f) => self.handle_data(f)?,
+            Frame::Headers(f) => self.handle_headers(f)?,
+            Frame::Priority(_) => {
+                // RFC 9113 Section 6.3: 非推奨だが相互運用性のため受信は処理する
+                // 優先度情報は無視し、エラーを返さない
+            }
+            Frame::RstStream(f) => self.handle_rst_stream(f)?,
+            Frame::Settings(f) => self.handle_settings(f)?,
+            Frame::PushPromise { .. } => {
+                // RFC 9113 Section 6.6: PUSH_PROMISE はサーバーのみが送信可能
+                // このライブラリはサーバープッシュをサポートしないため、
+                // 受信した場合は常に PROTOCOL_ERROR を返す
+                return Err(Error::connection_error(
+                    ErrorCode::ProtocolError,
+                    "PUSH_PROMISE not supported",
+                ));
+            }
+            Frame::Ping(f) => self.handle_ping(f)?,
+            Frame::Goaway(f) => self.handle_goaway(f)?,
+            Frame::WindowUpdate(f) => self.handle_window_update(f)?,
+            Frame::Continuation(f) => self.handle_continuation(f)?,
+            Frame::PriorityUpdate(f) => self.handle_priority_update(f)?,
+            Frame::Unknown { .. } => {
+                // 未知のフレームは無視する (RFC 9113 Section 4.1)
+            }
+        }
+
+        Ok(())
+    }
+
+    /// DATA フレームを処理する
+    fn handle_data(&mut self, frame: DataFrame) -> Result<()> {
+        // RFC 9113 Section 5.1: アイドルストリームへのフレームは接続エラー
+        self.check_not_idle_stream(frame.stream_id, "DATA")?;
+
+        // RFC 9113 Section 6.1: フロー制御はペイロード全体に適用
+        // (Pad Length フィールド + データ + パディング)
+        let flow_control_size = if let Some(pad_length) = frame.pad_length {
+            1 + frame.data.len() + pad_length as usize
+        } else {
+            frame.data.len()
+        };
+
+        let is_closed = {
+            let stream = self
+                .streams
+                .get_mut(&frame.stream_id)
+                .ok_or_else(|| Error::stream_error(ErrorCode::StreamClosed, "stream not found"))?;
+
+            stream.state_machine_mut().recv_data(frame.end_stream)?;
+            stream.flow_control_mut().consume_recv(flow_control_size)?;
+
+            // RFC 9113 Section 8.1.1: Content-Length とボディサイズの一貫性チェック
+            let data_len = frame.data.len() as u64;
+            stream.add_received_content_length(data_len);
+
+            if let Some(expected) = stream.expected_content_length() {
+                let received = stream.received_content_length();
+                // 受信データが Content-Length を超過
+                if received > expected {
+                    return Err(Error::stream_error(
+                        ErrorCode::ProtocolError,
+                        format!(
+                            "content-length mismatch: received {} exceeds expected {}",
+                            received, expected
+                        ),
+                    ));
+                }
+                // END_STREAM 時に Content-Length と一致しない
+                if frame.end_stream && received != expected {
+                    return Err(Error::stream_error(
+                        ErrorCode::ProtocolError,
+                        format!(
+                            "content-length mismatch: received {} but expected {}",
+                            received, expected
+                        ),
+                    ));
+                }
+            }
+
+            frame.end_stream && stream.state() == StreamState::Closed
+        };
+
+        self.flow_control.consume_recv(flow_control_size)?;
+
+        self.events.push_back(Event::DataReceived {
+            stream_id: frame.stream_id,
+            data: frame.data,
+            end_stream: frame.end_stream,
+        });
+
+        if is_closed {
+            self.events.push_back(Event::StreamClosed {
+                stream_id: frame.stream_id,
+            });
+            self.streams.remove(&frame.stream_id);
+        }
+
+        Ok(())
+    }
+
+    /// HEADERS フレームを処理する
+    fn handle_headers(&mut self, frame: HeadersFrame) -> Result<()> {
+        // RFC 9113 Section 5.1.1: ストリーム ID 検証
+        self.validate_recv_stream_id(frame.stream_id)?;
+
+        // 同時ストリーム数の上限チェック
+        if !self.streams.contains_key(&frame.stream_id) {
+            self.check_concurrent_streams_limit(frame.stream_id)?;
+        }
+
+        if frame.stream_id > self.last_recv_stream_id {
+            self.last_recv_stream_id = frame.stream_id;
+        }
+
+        if frame.end_headers {
+            // 完全なヘッダーブロック
+            let headers = self
+                .hpack_decoder
+                .decode(&frame.header_block_fragment)
+                .map_err(|e| {
+                    Error::connection_error(
+                        ErrorCode::CompressionError,
+                        format!("HPACK decode error: {}", e.reason),
+                    )
+                })?;
+            self.process_headers(frame.stream_id, headers, frame.end_stream)?;
+        } else {
+            // ヘッダーブロック継続
+            // RFC 9113 Section 6.2: END_STREAM フラグは最初の HEADERS フレームで決まる
+            self.header_continuation_stream = Some(frame.stream_id);
+            self.header_block_fragment = frame.header_block_fragment;
+            self.header_end_stream = frame.end_stream;
+        }
+
+        Ok(())
+    }
+
+    /// ヘッダーを処理する
+    fn process_headers(
+        &mut self,
+        stream_id: StreamId,
+        headers: Vec<HeaderField>,
+        end_stream: bool,
+    ) -> Result<()> {
+        // RFC 9113 Section 10.5.1: ヘッダーリストサイズの上限チェック
+        if let Some(max_size) = self.local_settings.max_header_list_size {
+            let header_list_size = Self::calculate_header_list_size(&headers);
+            if header_list_size > max_size as usize {
+                return Err(Error::stream_error(
+                    ErrorCode::ProtocolError,
+                    format!(
+                        "header list size {} exceeds SETTINGS_MAX_HEADER_LIST_SIZE {}",
+                        header_list_size, max_size
+                    ),
+                ));
+            }
+        }
+
+        // RFC 9113 Section 8.1: トレーラーは疑似ヘッダーを含まない
+        // 疑似ヘッダーの有無でトレーラーかどうかを判定
+        let has_pseudo_header = headers.iter().any(|h| h.name.starts_with(b":"));
+
+        // RFC 9113 Section 8.1 / 8.3.1: 初回 HEADERS には疑似ヘッダーが必須
+        if !has_pseudo_header {
+            let is_initial = !self
+                .streams
+                .get(&stream_id)
+                .is_some_and(|s| s.initial_headers_received());
+            if is_initial {
+                return Err(Error::stream_error(
+                    ErrorCode::ProtocolError,
+                    "initial HEADERS must contain pseudo-headers",
+                ));
+            }
+        }
+
+        // RFC 9113 Section 8.1: 初回ヘッダー受信後の疑似ヘッダー検証
+        // サーバー: リクエストヘッダーは 1 回のみ許可
+        // クライアント: 最終レスポンス後の疑似ヘッダーは不正
+        if has_pseudo_header
+            && let Some(stream) = self.streams.get(&stream_id)
+            && stream.initial_headers_received()
+        {
+            return Err(Error::stream_error(
+                ErrorCode::ProtocolError,
+                "pseudo-headers in non-initial HEADERS",
+            ));
+        }
+
+        let is_trailer = !has_pseudo_header;
+
+        if is_trailer {
+            // RFC 9113 Section 8.1: トレーラー検証
+            validation::validate_trailers(&headers)?;
+            if !end_stream {
+                return Err(Error::stream_error(
+                    ErrorCode::ProtocolError,
+                    "trailers must be sent with END_STREAM",
+                ));
+            }
+        } else {
+            // ヘッダー検証
+            // サーバーはリクエストを受信、クライアントはレスポンスを受信
+            match self.role {
+                Role::Server => {
+                    validation::validate_request_headers(&headers)?;
+
+                    // RFC 8441: Extended CONNECT のネゴシエーションチェック
+                    // :protocol を含むリクエストは ENABLE_CONNECT_PROTOCOL=1 を
+                    // 送信済みの場合のみ許可
+                    let has_protocol = headers
+                        .iter()
+                        .any(|h| h.name == validation::pseudo_headers::PROTOCOL);
+                    if has_protocol && !self.local_settings.enable_connect_protocol {
+                        return Err(Error::stream_error(
+                            ErrorCode::ProtocolError,
+                            "received :protocol without ENABLE_CONNECT_PROTOCOL",
+                        ));
+                    }
+                }
+                Role::Client => validation::validate_response_headers(&headers)?,
+            }
+        }
+
+        // RFC 9113 Section 8.1.1: Content-Length ヘッダーを抽出 (トレーラーでは不要)
+        let content_length = if is_trailer {
+            None
+        } else {
+            Self::extract_content_length(&headers)?
+        };
+
+        // RFC 9113 Section 5.2: 受信したストリームの場合、
+        // 送信ウィンドウはリモートの initial_window_size、
+        // 受信ウィンドウはローカルの initial_window_size で初期化する
+        let is_closed = {
+            let stream = self.streams.entry(stream_id).or_insert_with(|| {
+                Stream::new(
+                    stream_id,
+                    self.remote_settings.initial_window_size,
+                    self.local_settings.initial_window_size,
+                )
+            });
+
+            stream.state_machine_mut().recv_headers(end_stream)?;
+
+            if is_trailer {
+                // トレーラーの場合はイベントを TrailersReceived に
+                self.events.push_back(Event::TrailersReceived {
+                    stream_id,
+                    trailers: headers,
+                });
+            } else {
+                stream.set_headers(headers.clone());
+                stream.set_expected_content_length(content_length);
+
+                // RFC 9113 Section 8.1: 初回ヘッダー受信フラグを設定する
+                if !stream.initial_headers_received() {
+                    match self.role {
+                        Role::Server => {
+                            // サーバーはリクエストヘッダーを 1 回のみ受信する
+                            stream.set_initial_headers_received(true);
+                        }
+                        Role::Client => {
+                            // 1xx 情報レスポンスは最終レスポンスではないため、
+                            // フラグを設定しない
+                            let is_informational = headers
+                                .iter()
+                                .find(|h| h.name == validation::pseudo_headers::STATUS)
+                                .is_some_and(|h| h.value.len() == 3 && h.value[0] == b'1');
+                            if !is_informational {
+                                stream.set_initial_headers_received(true);
+                            }
+                        }
+                    }
+                }
+
+                // RFC 9113 Section 8.1.1: END_STREAM の場合、Content-Length は 0 でなければならない
+                if end_stream && content_length.is_some_and(|len| len != 0) {
+                    return Err(Error::stream_error(
+                        ErrorCode::ProtocolError,
+                        "content-length mismatch: expected 0 with END_STREAM",
+                    ));
+                }
+
+                self.events.push_back(Event::HeadersReceived {
+                    stream_id,
+                    headers,
+                    end_stream,
+                });
+            }
+
+            end_stream && stream.state() == StreamState::Closed
+        };
+
+        if is_closed {
+            self.events.push_back(Event::StreamClosed { stream_id });
+            self.streams.remove(&stream_id);
+        }
+
+        Ok(())
+    }
+
+    /// Content-Length ヘッダーを抽出する
+    ///
+    /// RFC 9110 Section 8.6: 複数の Content-Length が異なる値を持つ場合は malformed。
+    fn extract_content_length(headers: &[HeaderField]) -> Result<Option<u64>> {
+        let mut content_length: Option<u64> = None;
+        for header in headers {
+            if header.name == b"content-length" {
+                let value_str = std::str::from_utf8(&header.value).map_err(|_| {
+                    Error::stream_error(ErrorCode::ProtocolError, "invalid content-length encoding")
+                })?;
+                let len: u64 = value_str.parse().map_err(|_| {
+                    Error::stream_error(ErrorCode::ProtocolError, "invalid content-length value")
+                })?;
+                if let Some(existing) = content_length {
+                    if existing != len {
+                        return Err(Error::stream_error(
+                            ErrorCode::ProtocolError,
+                            format!(
+                                "conflicting content-length values: {} and {}",
+                                existing, len
+                            ),
+                        ));
+                    }
+                } else {
+                    content_length = Some(len);
+                }
+            }
+        }
+        Ok(content_length)
+    }
+
+    /// RST_STREAM フレームを処理する
+    fn handle_rst_stream(&mut self, frame: RstStreamFrame) -> Result<()> {
+        // RFC 9113 Section 5.1: アイドルストリームへのフレームは接続エラー
+        self.check_not_idle_stream(frame.stream_id, "RST_STREAM")?;
+
+        match self.streams.get_mut(&frame.stream_id) {
+            Some(stream) => {
+                stream.state_machine_mut().recv_rst_stream();
+                self.events.push_back(Event::StreamReset {
+                    stream_id: frame.stream_id,
+                    error_code: ErrorCode::from_u32(frame.error_code),
+                });
+                self.streams.remove(&frame.stream_id);
+            }
+            None => {
+                // 暗黙的にクローズ済みストリームへの RST_STREAM は無視
+            }
+        }
+        Ok(())
+    }
+
+    /// SETTINGS フレームを処理する
+    fn handle_settings(&mut self, frame: SettingsFrame) -> Result<()> {
+        if frame.ack {
+            // RFC 9113 Section 6.5: 対応する SETTINGS がない ACK は接続エラー
+            if !self.settings_ack_pending {
+                return Err(Error::connection_error(
+                    ErrorCode::ProtocolError,
+                    "received SETTINGS ACK without pending SETTINGS",
+                ));
+            }
+            // SETTINGS ACK を受信
+            self.settings_ack_pending = false;
+            if self.state == ConnectionState::WaitingPreface {
+                self.state = ConnectionState::Active;
+            }
+            self.events.push_back(Event::SettingsReceived { ack: true });
+        } else {
+            // SETTINGS を受信
+            // RFC 9113 Section 6.5.2: SETTINGS_INITIAL_WINDOW_SIZE 変更時に
+            // 既存ストリームのウィンドウサイズを調整する
+            let old_initial_window_size = self.remote_settings.initial_window_size;
+
+            // HEADER_TABLE_SIZE の変更を追跡
+            let old_header_table_size = self.remote_settings.header_table_size;
+
+            for setting in &frame.settings {
+                // RFC 9113 Section 8.4: サーバーはクライアントに ENABLE_PUSH=1 を送信できない
+                if self.role == Role::Client
+                    && setting.id == crate::settings::SettingId::EnablePush.as_u16()
+                    && setting.value == 1
+                {
+                    return Err(Error::connection_error(
+                        ErrorCode::ProtocolError,
+                        "server sent ENABLE_PUSH=1 to client",
+                    ));
+                }
+
+                // RFC 9218 Section 5.1: NO_RFC7540_PRIORITIES は接続中に変更できない
+                if setting.id == crate::settings::SettingId::NoRfc7540Priorities.as_u16() {
+                    let new_value = setting.value == 1;
+                    if let Some(initial_value) = self.initial_no_rfc7540_priorities {
+                        if new_value != initial_value {
+                            return Err(Error::connection_error(
+                                ErrorCode::ProtocolError,
+                                "NO_RFC7540_PRIORITIES cannot be changed after initial setting",
+                            ));
+                        }
+                    } else {
+                        self.initial_no_rfc7540_priorities = Some(new_value);
+                    }
+                }
+
+                self.remote_settings.apply(*setting).map_err(|e| {
+                    // RFC 9113 Section 6.5.2: INITIAL_WINDOW_SIZE の無効な値は
+                    // FLOW_CONTROL_ERROR で応答する
+                    let error_code = match e {
+                        crate::settings::SettingsError::InvalidInitialWindowSize(_) => {
+                            ErrorCode::FlowControlError
+                        }
+                        _ => ErrorCode::ProtocolError,
+                    };
+                    Error::connection_error(error_code, e.to_string())
+                })?;
+            }
+
+            // RFC 7541 Section 4.2: HEADER_TABLE_SIZE が変更された場合、
+            // 次のヘッダーブロック送信時に Dynamic Table Size Update をエンコードする
+            let new_header_table_size = self.remote_settings.header_table_size;
+            if new_header_table_size != old_header_table_size {
+                self.pending_table_size_update = Some(new_header_table_size);
+            }
+
+            // SETTINGS_INITIAL_WINDOW_SIZE が変更された場合、既存ストリームを更新
+            let new_initial_window_size = self.remote_settings.initial_window_size;
+            if new_initial_window_size != old_initial_window_size {
+                self.update_stream_windows(new_initial_window_size)?;
+            }
+
+            // HPACK エンコーダーのテーブルサイズを更新
+            self.hpack_encoder
+                .set_max_table_size(self.remote_settings.header_table_size as usize);
+
+            // RFC 9113 Section 4.2: 受信フレームサイズの上限はローカル設定で決まる。
+            // remote_settings.max_frame_size は送信フレームの上限として使用する。
+            // frame_decoder の max_frame_size はローカル設定で初期化済みなので更新不要。
+
+            // SETTINGS ACK を送信
+            self.send_frame(&Frame::Settings(SettingsFrame::ack()))?;
+
+            self.events
+                .push_back(Event::SettingsReceived { ack: false });
+
+            if self.state == ConnectionState::WaitingPreface {
+                self.state = ConnectionState::Active;
+                self.events.push_back(Event::ConnectionPreface);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// SETTINGS_INITIAL_WINDOW_SIZE 変更時に既存ストリームのウィンドウサイズを調整する
+    ///
+    /// RFC 9113 Section 6.5.2: When the value of SETTINGS_INITIAL_WINDOW_SIZE changes,
+    /// a receiver MUST adjust the size of all stream flow-control windows that it
+    /// maintains by the difference between the new value and the old value.
+    fn update_stream_windows(&mut self, new_initial_window_size: u32) -> Result<()> {
+        for stream in self.streams.values_mut() {
+            stream
+                .flow_control_mut()
+                .update_initial_window_size(new_initial_window_size)?;
+        }
+        Ok(())
+    }
+
+    /// PING フレームを処理する
+    fn handle_ping(&mut self, frame: PingFrame) -> Result<()> {
+        if !frame.ack {
+            // PING ACK を送信
+            let ack_frame = PingFrame::ack(frame.opaque_data);
+            self.send_frame(&Frame::Ping(ack_frame))?;
+        }
+
+        self.events.push_back(Event::PingReceived {
+            opaque_data: frame.opaque_data,
+            ack: frame.ack,
+        });
+
+        Ok(())
+    }
+
+    /// GOAWAY フレームを処理する
+    fn handle_goaway(&mut self, frame: GoawayFrame) -> Result<()> {
+        self.state = ConnectionState::GoawayReceived;
+
+        self.events.push_back(Event::GoawayReceived {
+            last_stream_id: frame.last_stream_id,
+            error_code: ErrorCode::from_u32(frame.error_code),
+            debug_data: frame.debug_data,
+        });
+
+        Ok(())
+    }
+
+    /// WINDOW_UPDATE フレームを処理する
+    fn handle_window_update(&mut self, frame: WindowUpdateFrame) -> Result<()> {
+        if frame.stream_id == CONNECTION_STREAM_ID {
+            self.flow_control
+                .recv_window_update(frame.window_size_increment)?;
+            // 接続レベルのウィンドウが増えたので、全ストリームのキューを処理
+            self.flush_all_stream_data()?;
+        } else {
+            // RFC 9113 Section 5.1: アイドルストリームへのフレームは接続エラー
+            self.check_not_idle_stream(frame.stream_id, "WINDOW_UPDATE")?;
+
+            if let Some(stream) = self.streams.get_mut(&frame.stream_id) {
+                stream
+                    .flow_control_mut()
+                    .recv_window_update(frame.window_size_increment)?;
+                // ストリームレベルのウィンドウが増えたので、そのストリームのキューを処理
+                self.flush_stream_data(frame.stream_id)?;
+            }
+            // 暗黙的にクローズ済みストリームへの WINDOW_UPDATE は無視
+        }
+
+        self.events.push_back(Event::WindowUpdateReceived {
+            stream_id: frame.stream_id,
+            increment: frame.window_size_increment,
+        });
+
+        Ok(())
+    }
+
+    /// CONTINUATION フレームを処理する
+    fn handle_continuation(&mut self, frame: crate::frame::ContinuationFrame) -> Result<()> {
+        // RFC 9113 Section 6.10: CONTINUATION は先行する HEADERS の後にのみ許可
+        let expected_stream_id = self.header_continuation_stream.ok_or_else(|| {
+            Error::connection_error(
+                ErrorCode::ProtocolError,
+                "CONTINUATION frame received without preceding HEADERS",
+            )
+        })?;
+
+        if frame.stream_id != expected_stream_id {
+            return Err(Error::connection_error(
+                ErrorCode::ProtocolError,
+                "CONTINUATION frame stream ID mismatch",
+            ));
+        }
+
+        self.header_block_fragment
+            .extend_from_slice(&frame.header_block_fragment);
+
+        if frame.end_headers {
+            self.header_continuation_stream = None;
+            let headers = self
+                .hpack_decoder
+                .decode(&self.header_block_fragment)
+                .map_err(|e| {
+                    Error::connection_error(
+                        ErrorCode::CompressionError,
+                        format!("HPACK decode error: {}", e.reason),
+                    )
+                })?;
+            self.header_block_fragment.clear();
+
+            // RFC 9113 Section 6.2: END_STREAM は最初の HEADERS フレームで決まる
+            let end_stream = self.header_end_stream;
+            self.header_end_stream = false;
+            self.process_headers(expected_stream_id, headers, end_stream)?;
+        }
+
+        Ok(())
+    }
+
+    /// PRIORITY_UPDATE フレームを処理する (RFC 9218 Section 4)
+    fn handle_priority_update(&mut self, frame: PriorityUpdateFrame) -> Result<()> {
+        // RFC 9218 Section 4: サーバーのみが PRIORITY_UPDATE を受信する
+        // クライアントが受信した場合はプロトコルエラー
+        if self.role == Role::Client {
+            return Err(Error::connection_error(
+                ErrorCode::ProtocolError,
+                "client received PRIORITY_UPDATE frame",
+            ));
+        }
+
+        // RFC 9218 Section 4: Prioritized Element ID はクライアント開始ストリームでなければならない
+        // クライアント開始ストリームは奇数
+        if frame.prioritized_element_id.is_multiple_of(2) {
+            return Err(Error::connection_error(
+                ErrorCode::ProtocolError,
+                "PRIORITY_UPDATE for non-client-initiated stream",
+            ));
+        }
+
+        self.events.push_back(Event::PriorityUpdateReceived {
+            stream_id: frame.prioritized_element_id,
+            priority_field_value: frame.priority_field_value,
+        });
+
+        Ok(())
+    }
+
+    /// ストリーム ID を検証する (RFC 9113 Section 5.1.1)
+    fn validate_recv_stream_id(&self, stream_id: StreamId) -> Result<()> {
+        // 偶奇チェック
+        let is_client_initiated = stream_id % 2 == 1;
+        match self.role {
+            Role::Server => {
+                if !is_client_initiated {
+                    return Err(Error::connection_error(
+                        ErrorCode::ProtocolError,
+                        format!("server received even stream ID: {}", stream_id),
+                    ));
+                }
+            }
+            Role::Client => {
+                // PUSH_PROMISE 非サポートのため、偶数は拒否
+                if !is_client_initiated {
+                    return Err(Error::connection_error(
+                        ErrorCode::ProtocolError,
+                        format!("client received server-initiated stream: {}", stream_id),
+                    ));
+                }
+            }
+        }
+
+        // 単調増加チェック (新規ストリームの場合)
+        if !self.streams.contains_key(&stream_id) && stream_id <= self.last_recv_stream_id {
+            return Err(Error::connection_error(
+                ErrorCode::ProtocolError,
+                format!(
+                    "stream ID {} not greater than last received {}",
+                    stream_id, self.last_recv_stream_id
+                ),
+            ));
+        }
+
+        // GOAWAY 後の上限チェック
+        if matches!(self.state, ConnectionState::GoawaySent)
+            && stream_id > self.last_recv_stream_id
+            && !self.streams.contains_key(&stream_id)
+        {
+            return Err(Error::connection_error(
+                ErrorCode::ProtocolError,
+                "new stream after GOAWAY sent",
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// 非 HEADERS フレームのストリーム ID を検証する (RFC 9113 Section 5.1)
+    ///
+    /// アイドルストリームへの DATA / RST_STREAM / WINDOW_UPDATE は接続エラー。
+    /// サーバープッシュ非サポートのため偶数ストリーム ID も拒否する。
+    fn check_not_idle_stream(&self, stream_id: StreamId, frame_type: &str) -> Result<()> {
+        if self.streams.contains_key(&stream_id) {
+            return Ok(());
+        }
+        // サーバープッシュ非サポートのため偶数ストリーム ID は常にアイドル
+        if stream_id.is_multiple_of(2) {
+            return Err(Error::connection_error(
+                ErrorCode::ProtocolError,
+                format!("{} on idle stream: {}", frame_type, stream_id),
+            ));
+        }
+        // last_recv_stream_id よりも大きいストリーム ID はアイドル
+        if stream_id > self.last_recv_stream_id {
+            return Err(Error::connection_error(
+                ErrorCode::ProtocolError,
+                format!("{} on idle stream: {}", frame_type, stream_id),
+            ));
+        }
+        // last_recv_stream_id 以下でマップにないストリームは暗黙的にクローズ済み
+        Ok(())
+    }
+
+    /// 同時ストリーム数の上限チェック
+    fn check_concurrent_streams_limit(&self, stream_id: StreamId) -> Result<()> {
+        if self.streams.contains_key(&stream_id) {
+            return Ok(());
+        }
+
+        if let Some(max) = self.local_settings.max_concurrent_streams {
+            let current_open = self
+                .streams
+                .values()
+                .filter(|s| !s.state().is_closed())
+                .count();
+            if current_open >= max as usize {
+                return Err(Error::stream_error(
+                    ErrorCode::RefusedStream,
+                    "max concurrent streams exceeded",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// ヘッダーブロックを送信する (HEADERS + CONTINUATION)
+    ///
+    /// エンコード済みヘッダーを MAX_FRAME_SIZE に従って分割し、
+    /// 必要に応じて CONTINUATION フレームを使用する。
+    fn send_header_block(
+        &mut self,
+        stream_id: StreamId,
+        encoded_headers: Vec<u8>,
+        end_stream: bool,
+    ) -> Result<()> {
+        // RFC 7541 Section 4.2: SETTINGS_HEADER_TABLE_SIZE 変更を受信した場合、
+        // 次のヘッダーブロックの先頭に Dynamic Table Size Update をエンコードする
+        let encoded_headers = if let Some(new_size) = self.pending_table_size_update.take() {
+            let mut header_block = Vec::new();
+            self.hpack_encoder
+                .encode_size_update(&mut header_block, new_size as usize);
+            header_block.extend_from_slice(&encoded_headers);
+            header_block
+        } else {
+            encoded_headers
+        };
+
+        let max_frame_size = self.remote_settings.max_frame_size as usize;
+
+        if encoded_headers.len() <= max_frame_size {
+            // 単一の HEADERS フレームで送信可能
+            let headers_frame = HeadersFrame::new(stream_id, encoded_headers)
+                .with_end_stream(end_stream)
+                .with_end_headers(true);
+            self.send_frame(&Frame::Headers(headers_frame))?;
+        } else {
+            // HEADERS + CONTINUATION に分割
+            let mut remaining = &encoded_headers[..];
+
+            // 最初の HEADERS フレーム
+            let first_chunk = &remaining[..max_frame_size];
+            remaining = &remaining[max_frame_size..];
+            let headers_frame = HeadersFrame::new(stream_id, first_chunk.to_vec())
+                .with_end_stream(end_stream)
+                .with_end_headers(false);
+            self.send_frame(&Frame::Headers(headers_frame))?;
+
+            // CONTINUATION フレーム
+            while !remaining.is_empty() {
+                let chunk_size = remaining.len().min(max_frame_size);
+                let chunk = &remaining[..chunk_size];
+                remaining = &remaining[chunk_size..];
+                let is_last = remaining.is_empty();
+                let continuation_frame =
+                    ContinuationFrame::new(stream_id, chunk.to_vec()).with_end_headers(is_last);
+                self.send_frame(&Frame::Continuation(continuation_frame))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// ヘッダーリストのサイズを計算する (RFC 9113 Section 6.5.2)
+    ///
+    /// 各ヘッダーフィールドのサイズは名前と値のオクテット長に 32 を加えたもの。
+    fn calculate_header_list_size(headers: &[HeaderField]) -> usize {
+        headers
+            .iter()
+            .map(|h| h.name.len() + h.value.len() + 32)
+            .sum()
+    }
+
+    /// フレームを出力バッファに書き込む
+    fn send_frame(&mut self, frame: &Frame) -> Result<()> {
+        self.frame_encoder.encode(frame)?;
+        self.output_buffer.extend(self.frame_encoder.buffer());
+        self.frame_encoder.clear();
+        Ok(())
+    }
+}

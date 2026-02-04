@@ -1,0 +1,172 @@
+//! フロー制御の PBT
+
+use proptest::prelude::*;
+use shiguredo_http2::FlowControl;
+
+/// 有効なウィンドウサイズを生成する
+fn valid_window_size() -> impl Strategy<Value = u32> {
+    1..=2_147_483_647u32
+}
+
+proptest! {
+    /// フロー制御の初期化テスト
+    #[test]
+    fn prop_flow_control_init(initial_window in valid_window_size()) {
+        let fc = FlowControl::new(initial_window);
+        prop_assert_eq!(fc.send_window(), i64::from(initial_window));
+        prop_assert_eq!(fc.recv_window(), i64::from(initial_window));
+        prop_assert_eq!(fc.initial_window_size(), initial_window);
+    }
+
+    /// 送信/受信ウィンドウ分離初期化テスト
+    ///
+    /// RFC 9113 Section 5.2: ストリームのフロー制御において、
+    /// 送信ウィンドウはリモートの initial_window_size、
+    /// 受信ウィンドウはローカルの initial_window_size で初期化する。
+    #[test]
+    fn prop_separate_windows_init(
+        send_initial in valid_window_size(),
+        recv_initial in valid_window_size(),
+    ) {
+        let fc = FlowControl::with_separate_windows(send_initial, recv_initial);
+        prop_assert_eq!(fc.send_window(), i64::from(send_initial));
+        prop_assert_eq!(fc.recv_window(), i64::from(recv_initial));
+        prop_assert_eq!(fc.initial_window_size(), send_initial);
+    }
+
+    /// 送信ウィンドウ消費テスト
+    #[test]
+    fn prop_consume_send(
+        initial_window in 100..=65535u32,
+        consume_size in 0..=100usize,
+    ) {
+        let mut fc = FlowControl::new(initial_window);
+        let result = fc.consume_send(consume_size);
+
+        if consume_size <= initial_window as usize {
+            prop_assert!(result.is_ok());
+            prop_assert_eq!(fc.send_window(), i64::from(initial_window) - consume_size as i64);
+        } else {
+            prop_assert!(result.is_err());
+        }
+    }
+
+    /// 送信可能サイズの計算テスト
+    #[test]
+    fn prop_send_available(
+        initial_window in 1..=65535u32,
+        consume_size in 0..=65535usize,
+    ) {
+        let mut fc = FlowControl::new(initial_window);
+        let consume = consume_size.min(initial_window as usize);
+        fc.consume_send(consume).unwrap();
+
+        let available = fc.send_available();
+        let expected = (initial_window as usize).saturating_sub(consume);
+        prop_assert_eq!(available, expected);
+    }
+
+    /// WINDOW_UPDATE 受信テスト
+    #[test]
+    fn prop_window_update(
+        initial_window in 1..=1_000_000u32,
+        consume_size in 0..=1_000_000usize,
+        increment in 1..=1_000_000u32,
+    ) {
+        let mut fc = FlowControl::new(initial_window);
+        let consume = consume_size.min(initial_window as usize);
+        fc.consume_send(consume).unwrap();
+
+        let before = fc.send_window();
+        let result = fc.recv_window_update(increment);
+
+        let new_window = before + i64::from(increment);
+        if new_window > i64::from(shiguredo_http2::MAX_WINDOW_SIZE) {
+            prop_assert!(result.is_err());
+        } else {
+            prop_assert!(result.is_ok());
+            prop_assert_eq!(fc.send_window(), new_window);
+        }
+    }
+
+    /// ウィンドウサイズ更新テスト
+    #[test]
+    fn prop_update_initial_window_size(
+        initial_window in 1..=65535u32,
+        consume_size in 0..=32767usize,
+        new_initial in 1..=131070u32,
+    ) {
+        let mut fc = FlowControl::new(initial_window);
+        let consume = consume_size.min(initial_window as usize);
+        fc.consume_send(consume).unwrap();
+
+        let before = fc.send_window();
+        let result = fc.update_initial_window_size(new_initial);
+
+        let delta = i64::from(new_initial) - i64::from(initial_window);
+        let new_window = before + delta;
+
+        if new_window > i64::from(shiguredo_http2::MAX_WINDOW_SIZE) {
+            prop_assert!(result.is_err());
+        } else {
+            prop_assert!(result.is_ok());
+            prop_assert_eq!(fc.send_window(), new_window);
+            prop_assert_eq!(fc.initial_window_size(), new_initial);
+        }
+    }
+
+    /// add_recv_window に increment == 0 を渡すとエラーになる (RFC 9113 Section 6.9)
+    #[test]
+    fn prop_add_recv_window_zero_rejected(
+        initial_window in valid_window_size(),
+    ) {
+        let mut fc = FlowControl::new(initial_window);
+        prop_assert!(fc.add_recv_window(0).is_err());
+    }
+
+    /// フロー制御の不変条件テスト
+    /// - 消費量がウィンドウサイズを超えない
+    /// - WINDOW_UPDATE でオーバーフローしない
+    #[test]
+    fn prop_flow_control_invariants(
+        initial_window in 1..=65535u32,
+        operations in prop::collection::vec(
+            prop_oneof![
+                (0..=1000usize).prop_map(Op::Consume),
+                (1..=10000u32).prop_map(Op::WindowUpdate),
+            ],
+            0..20
+        ),
+    ) {
+        let mut fc = FlowControl::new(initial_window);
+
+        for op in operations {
+            match op {
+                Op::Consume(size) => {
+                    let available = fc.send_available();
+                    if size <= available {
+                        fc.consume_send(size).unwrap();
+                        // 不変条件: 送信ウィンドウは負にならない（消費後も正または 0）
+                        prop_assert!(fc.send_window() >= 0);
+                    }
+                }
+                Op::WindowUpdate(increment) => {
+                    if fc.send_window() + i64::from(increment) <= i64::from(shiguredo_http2::MAX_WINDOW_SIZE) {
+                        fc.recv_window_update(increment).unwrap();
+                        // 不変条件: ウィンドウは MAX_WINDOW_SIZE を超えない
+                        prop_assert!(fc.send_window() <= i64::from(shiguredo_http2::MAX_WINDOW_SIZE));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// フロー制御操作
+#[derive(Debug, Clone)]
+enum Op {
+    /// 送信データ消費
+    Consume(usize),
+    /// WINDOW_UPDATE 受信
+    WindowUpdate(u32),
+}

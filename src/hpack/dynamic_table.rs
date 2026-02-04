@@ -1,0 +1,253 @@
+//! HPACK 動的テーブル (RFC 7541 Section 2.3.2)
+//!
+//! HPACK で使用される動的テーブルを提供する。
+
+use crate::hpack::table::{HeaderField, STATIC_TABLE_SIZE};
+
+/// 動的テーブル
+///
+/// FIFO 順序でエントリを管理する。新しいエントリは先頭に追加され、
+/// サイズ制限を超えると古いエントリが末尾から削除される。
+#[derive(Debug, Clone)]
+pub struct DynamicTable {
+    /// エントリのリスト（先頭が最新）
+    entries: Vec<HeaderField>,
+    /// 現在のサイズ（バイト）
+    size: usize,
+    /// 最大サイズ（バイト）
+    max_size: usize,
+}
+
+impl DynamicTable {
+    /// 新しい `DynamicTable` を生成する
+    #[must_use]
+    pub fn new(max_size: usize) -> Self {
+        Self {
+            entries: Vec::new(),
+            size: 0,
+            max_size,
+        }
+    }
+
+    /// エントリ数を取得する
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// テーブルが空かどうかを返す
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// 現在のサイズ（バイト）を取得する
+    #[must_use]
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    /// 最大サイズ（バイト）を取得する
+    #[must_use]
+    pub fn max_size(&self) -> usize {
+        self.max_size
+    }
+
+    /// 最大サイズを設定する
+    ///
+    /// サイズが減少した場合、エントリが削除されることがある。
+    pub fn set_max_size(&mut self, max_size: usize) {
+        self.max_size = max_size;
+        self.evict();
+    }
+
+    /// エントリを追加する
+    ///
+    /// 新しいエントリは先頭に追加される。
+    /// サイズ制限を超える場合、古いエントリが削除される。
+    pub fn insert(&mut self, name: Vec<u8>, value: Vec<u8>) {
+        let entry = HeaderField::new(name, value);
+        let entry_size = entry.size();
+
+        // エントリが最大サイズより大きい場合、テーブルをクリアする
+        if entry_size > self.max_size {
+            self.clear();
+            return;
+        }
+
+        // サイズ制限を超えないように古いエントリを削除
+        while self.size + entry_size > self.max_size {
+            if let Some(removed) = self.entries.pop() {
+                self.size -= removed.size();
+            } else {
+                break;
+            }
+        }
+
+        // エントリを先頭に追加
+        self.entries.insert(0, entry);
+        self.size += entry_size;
+    }
+
+    /// インデックスからエントリを取得する
+    ///
+    /// インデックスは動的テーブル内でのインデックス（0 から始まる）。
+    /// 静的テーブルを含む絶対インデックスから変換するには、
+    /// `absolute_index - STATIC_TABLE_SIZE - 1` を使用する。
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<&HeaderField> {
+        self.entries.get(index)
+    }
+
+    /// 絶対インデックス（静的テーブル + 動的テーブル）からエントリを取得する
+    ///
+    /// 絶対インデックスは 1 から始まり、1-61 が静的テーブル、
+    /// 62 以降が動的テーブルを指す。
+    #[must_use]
+    pub fn get_by_absolute_index(&self, index: usize) -> Option<&HeaderField> {
+        if index <= STATIC_TABLE_SIZE {
+            None
+        } else {
+            self.get(index - STATIC_TABLE_SIZE - 1)
+        }
+    }
+
+    /// ヘッダーフィールドのインデックスを検索する
+    ///
+    /// 完全一致するエントリがある場合は `(index, true)` を返す。
+    /// 名前のみ一致するエントリがある場合は `(index, false)` を返す。
+    /// インデックスは動的テーブル内でのインデックス（0 から始まる）。
+    #[must_use]
+    pub fn find(&self, name: &[u8], value: &[u8]) -> Option<(usize, bool)> {
+        let mut name_match = None;
+
+        for (i, entry) in self.entries.iter().enumerate() {
+            if entry.name == name {
+                if entry.value == value {
+                    return Some((i, true));
+                }
+                if name_match.is_none() {
+                    name_match = Some(i);
+                }
+            }
+        }
+
+        name_match.map(|i| (i, false))
+    }
+
+    /// テーブルをクリアする
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.size = 0;
+    }
+
+    /// サイズ制限を超えているエントリを削除する
+    fn evict(&mut self) {
+        while self.size > self.max_size {
+            if let Some(removed) = self.entries.pop() {
+                self.size -= removed.size();
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+impl Default for DynamicTable {
+    fn default() -> Self {
+        Self::new(crate::settings::DEFAULT_HEADER_TABLE_SIZE as usize)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_insert_and_get() {
+        let mut table = DynamicTable::new(4096);
+
+        table.insert(b"content-type".to_vec(), b"text/html".to_vec());
+        assert_eq!(table.len(), 1);
+
+        let entry = table.get(0).unwrap();
+        assert_eq!(entry.name, b"content-type");
+        assert_eq!(entry.value, b"text/html");
+    }
+
+    #[test]
+    fn test_fifo_order() {
+        let mut table = DynamicTable::new(4096);
+
+        table.insert(b"first".to_vec(), b"1".to_vec());
+        table.insert(b"second".to_vec(), b"2".to_vec());
+        table.insert(b"third".to_vec(), b"3".to_vec());
+
+        // 最新のエントリがインデックス 0
+        assert_eq!(table.get(0).unwrap().name, b"third");
+        assert_eq!(table.get(1).unwrap().name, b"second");
+        assert_eq!(table.get(2).unwrap().name, b"first");
+    }
+
+    #[test]
+    fn test_eviction() {
+        // 小さいサイズ制限
+        let mut table = DynamicTable::new(100);
+
+        // エントリサイズ: 5 + 1 + 32 = 38
+        table.insert(b"name1".to_vec(), b"1".to_vec());
+        // エントリサイズ: 5 + 1 + 32 = 38
+        table.insert(b"name2".to_vec(), b"2".to_vec());
+        assert_eq!(table.len(), 2);
+
+        // 3つ目を追加すると最初のエントリが削除される
+        table.insert(b"name3".to_vec(), b"3".to_vec());
+        assert_eq!(table.len(), 2);
+        assert_eq!(table.get(0).unwrap().name, b"name3");
+        assert_eq!(table.get(1).unwrap().name, b"name2");
+    }
+
+    #[test]
+    fn test_set_max_size() {
+        let mut table = DynamicTable::new(4096);
+
+        table.insert(b"name1".to_vec(), b"value1".to_vec());
+        table.insert(b"name2".to_vec(), b"value2".to_vec());
+        assert_eq!(table.len(), 2);
+
+        // サイズを 0 に設定するとすべて削除される
+        table.set_max_size(0);
+        assert_eq!(table.len(), 0);
+    }
+
+    #[test]
+    fn test_find() {
+        let mut table = DynamicTable::new(4096);
+
+        table.insert(b"content-type".to_vec(), b"text/html".to_vec());
+        table.insert(b"content-type".to_vec(), b"application/json".to_vec());
+
+        // 完全一致
+        let result = table.find(b"content-type", b"application/json");
+        assert_eq!(result, Some((0, true)));
+
+        // 名前のみ一致
+        let result = table.find(b"content-type", b"text/plain");
+        assert_eq!(result, Some((0, false)));
+
+        // 一致なし
+        let result = table.find(b"x-custom", b"value");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_entry_too_large() {
+        let mut table = DynamicTable::new(50);
+
+        // このエントリは最大サイズより大きい
+        table.insert(b"very-long-name".to_vec(), b"very-long-value".to_vec());
+
+        // テーブルは空のまま
+        assert!(table.is_empty());
+    }
+}

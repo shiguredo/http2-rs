@@ -1,0 +1,176 @@
+//! HPACK エンコード/デコードの PBT
+
+use proptest::prelude::*;
+use shiguredo_http2::{HeaderField, HpackDecoder, HpackEncoder};
+
+/// 有効なヘッダー名を生成する（小文字 ASCII）
+fn valid_header_name() -> impl Strategy<Value = Vec<u8>> {
+    prop::collection::vec(
+        prop::sample::select(
+            (b'a'..=b'z')
+                .chain(b'0'..=b'9')
+                .chain([b'-', b'_'])
+                .collect::<Vec<_>>(),
+        ),
+        1..=32,
+    )
+}
+
+/// 有効なヘッダー値を生成する（印字可能 ASCII）
+fn valid_header_value() -> impl Strategy<Value = Vec<u8>> {
+    prop::collection::vec(0x20u8..=0x7Eu8, 0..=64)
+}
+
+/// 任意のバイト列を生成する
+fn arbitrary_bytes(max_len: usize) -> impl Strategy<Value = Vec<u8>> {
+    prop::collection::vec(any::<u8>(), 0..=max_len)
+}
+
+proptest! {
+    /// HPACK エンコード/デコードの往復テスト
+    #[test]
+    fn prop_hpack_roundtrip(
+        headers in prop::collection::vec(
+            (valid_header_name(), valid_header_value()),
+            1..=8
+        )
+    ) {
+        let headers: Vec<HeaderField> = headers
+            .into_iter()
+            .map(|(name, value)| HeaderField::new(name, value))
+            .collect();
+
+        let mut encoder = HpackEncoder::new(4096);
+        let mut decoder = HpackDecoder::new(4096);
+
+        let mut encoded = Vec::new();
+        encoder.encode(&mut encoded, &headers);
+
+        let decoded = decoder.decode(&encoded).unwrap();
+
+        prop_assert_eq!(decoded.len(), headers.len());
+        for (original, decoded) in headers.iter().zip(decoded.iter()) {
+            prop_assert_eq!(&original.name, &decoded.name);
+            prop_assert_eq!(&original.value, &decoded.value);
+        }
+    }
+
+    /// HPACK 整数エンコード/デコードの往復テスト
+    #[test]
+    fn prop_integer_roundtrip(
+        value in 0u64..=0xFFFF_FFFFu64,
+        prefix_bits in 1u8..=8u8,
+    ) {
+        let mut buf = [0u8; 16];
+        let encoded_len = shiguredo_http2::hpack::integer::encode(
+            &mut buf, value, prefix_bits, 0
+        ).unwrap();
+
+        let (decoded, decoded_len) = shiguredo_http2::hpack::integer::decode(
+            &buf, prefix_bits
+        ).unwrap();
+
+        prop_assert_eq!(value, decoded);
+        prop_assert_eq!(encoded_len, decoded_len);
+    }
+
+    /// Huffman エンコード/デコードの往復テスト
+    #[test]
+    fn prop_huffman_roundtrip(data in arbitrary_bytes(128)) {
+        let encoded = shiguredo_http2::hpack::huffman::encode_to_vec(&data);
+        let decoded = shiguredo_http2::hpack::huffman::decode(&encoded).unwrap();
+
+        prop_assert_eq!(data, decoded);
+    }
+
+    /// Huffman エンコード長が元データ長を大幅に超えないことを確認
+    #[test]
+    fn prop_huffman_encoded_len_bounds(data in arbitrary_bytes(128)) {
+        let encoded_len = shiguredo_http2::hpack::huffman::encoded_len(&data);
+        // 最悪ケースでも 30 ビット / 8 ビット = 3.75 倍程度
+        prop_assert!(encoded_len <= data.len() * 4 + 1);
+    }
+
+    /// デコーダーの堅牢性テスト（任意のバイト列に対してパニックしない）
+    #[test]
+    fn prop_hpack_decoder_robustness(data in arbitrary_bytes(256)) {
+        let mut decoder = HpackDecoder::new(4096);
+        // デコードを試みる（結果は気にしない、パニックしないことを確認）
+        let _ = decoder.decode(&data);
+    }
+
+    /// 動的テーブルのサイズ管理テスト
+    #[test]
+    fn prop_dynamic_table_size_management(
+        headers in prop::collection::vec(
+            (valid_header_name(), valid_header_value()),
+            1..=16
+        ),
+        max_size in 64usize..=4096usize,
+    ) {
+        let headers: Vec<HeaderField> = headers
+            .into_iter()
+            .map(|(name, value)| HeaderField::new(name, value))
+            .collect();
+
+        let mut encoder = HpackEncoder::new(max_size);
+
+        let mut encoded = Vec::new();
+        encoder.encode(&mut encoded, &headers);
+
+        // 動的テーブルのサイズが最大サイズを超えていないことを確認
+        prop_assert!(encoder.dynamic_table().size() <= max_size);
+    }
+
+    /// 機密ヘッダー (Never Indexed) のエンコード/デコードテスト
+    #[test]
+    fn prop_sensitive_header_roundtrip(
+        headers in prop::collection::vec(
+            (valid_header_name(), valid_header_value(), any::<bool>()),
+            1..=8
+        )
+    ) {
+        let headers: Vec<HeaderField> = headers
+            .into_iter()
+            .map(|(name, value, sensitive)| HeaderField::new_sensitive(name, value, sensitive))
+            .collect();
+
+        let mut encoder = HpackEncoder::new(4096);
+        let mut decoder = HpackDecoder::new(4096);
+
+        let mut encoded = Vec::new();
+        encoder.encode(&mut encoded, &headers);
+
+        let decoded = decoder.decode(&encoded).unwrap();
+
+        prop_assert_eq!(decoded.len(), headers.len());
+        for (original, decoded) in headers.iter().zip(decoded.iter()) {
+            prop_assert_eq!(&original.name, &decoded.name);
+            prop_assert_eq!(&original.value, &decoded.value);
+            prop_assert_eq!(original.sensitive, decoded.sensitive);
+        }
+    }
+
+    /// 機密ヘッダーは動的テーブルに追加されないことを確認
+    #[test]
+    fn prop_sensitive_headers_not_indexed(
+        name in valid_header_name(),
+        value in valid_header_value(),
+    ) {
+        let mut encoder = HpackEncoder::new(4096);
+        let mut decoder = HpackDecoder::new(4096);
+
+        // 機密ヘッダーのみをエンコード
+        let headers = vec![HeaderField::new_sensitive(name.clone(), value.clone(), true)];
+
+        let mut encoded = Vec::new();
+        encoder.encode(&mut encoded, &headers);
+
+        // デコード後、動的テーブルは空のままであること
+        let _ = decoder.decode(&encoded).unwrap();
+        prop_assert_eq!(decoder.dynamic_table().len(), 0);
+
+        // エンコーダーの動的テーブルも空のままであること
+        prop_assert_eq!(encoder.dynamic_table().len(), 0);
+    }
+}
