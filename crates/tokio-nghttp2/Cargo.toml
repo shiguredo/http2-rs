@@ -1,0 +1,29 @@
+[package]
+name = "tokio-nghttp2"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+shiguredo_nghttp2 = { path = "../shiguredo_nghttp2" }
+tokio = { version = "1", features = [
+    "net",
+    "io-util",
+    "time",
+    "rt",
+    "macros",
+    "sync",
+] }
+tokio-rustls = "0.26"
+rustls = { version = "0.23", default-features = false, features = [
+    "std",
+    "tls12",
+    "aws_lc_rs",
+] }
+rustls-pki-types = { version = "1", features = ["std"] }
+rustls-platform-verifier = "0.6"
+
+[dev-dependencies]
+rcgen = "0.14"
+tokio = { version = "1", features = ["full"] }

@@ -1,0 +1,86 @@
+[package]
+name = "shiguredo_http2-fuzz"
+version = "0.0.0"
+authors = ["Shiguredo Inc."]
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.shiguredo_http2]
+path = ".."
+
+[[bin]]
+name = "fuzz_frame_decoder"
+path = "fuzz_targets/fuzz_frame_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_hpack_decoder"
+path = "fuzz_targets/fuzz_hpack_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_capsule_decoder"
+path = "fuzz_targets/fuzz_capsule_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_varint_decoder"
+path = "fuzz_targets/fuzz_varint_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_connection"
+path = "fuzz_targets/fuzz_connection.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_validation"
+path = "fuzz_targets/fuzz_validation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_settings"
+path = "fuzz_targets/fuzz_settings.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_hpack_roundtrip"
+path = "fuzz_targets/fuzz_hpack_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_huffman_decoder"
+path = "fuzz_targets/fuzz_huffman_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_hpack_integer"
+path = "fuzz_targets/fuzz_hpack_integer.rs"
+test = false
+doc = false
+bench = false

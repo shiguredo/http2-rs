@@ -1,0 +1,10 @@
+[package]
+name = "shiguredo_nghttp2"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+nghttp2-sys = { path = "../nghttp2-sys" }
+libc = "0.2"

@@ -1,0 +1,552 @@
+//! WebTransport ストリーム管理 (RFC 9000 Section 2, 3)
+//!
+//! # ストリーム ID (RFC 9000 Section 2.1)
+//!
+//! | Bits | Stream Type                      |
+//! |------|----------------------------------|
+//! | 0x00 | Client-Initiated, Bidirectional  |
+//! | 0x01 | Server-Initiated, Bidirectional  |
+//! | 0x02 | Client-Initiated, Unidirectional |
+//! | 0x03 | Server-Initiated, Unidirectional |
+//!
+//! - Bit 0 (0x01): 0=Client-Initiated, 1=Server-Initiated
+//! - Bit 1 (0x02): 0=Bidirectional, 1=Unidirectional
+
+use crate::webtransport::error::{WtError, WtResult};
+
+/// WebTransport ストリーム ID (62-bit, RFC 9000 Section 2.1)
+pub type WtStreamId = u64;
+
+/// ストリーム ID 操作
+pub mod stream_id {
+    use super::WtStreamId;
+
+    /// クライアント開始か
+    #[must_use]
+    pub const fn is_client_initiated(id: WtStreamId) -> bool {
+        id & 0x01 == 0
+    }
+
+    /// サーバー開始か
+    #[must_use]
+    pub const fn is_server_initiated(id: WtStreamId) -> bool {
+        id & 0x01 == 1
+    }
+
+    /// 双方向か
+    #[must_use]
+    pub const fn is_bidirectional(id: WtStreamId) -> bool {
+        id & 0x02 == 0
+    }
+
+    /// 単方向か
+    #[must_use]
+    pub const fn is_unidirectional(id: WtStreamId) -> bool {
+        id & 0x02 == 2
+    }
+
+    /// 次のストリーム ID を生成 (同タイプ)
+    #[must_use]
+    pub const fn next(id: WtStreamId) -> WtStreamId {
+        id + 4
+    }
+
+    /// 初期ストリーム ID
+    #[must_use]
+    pub const fn first(client: bool, bidirectional: bool) -> WtStreamId {
+        let initiator = if client { 0 } else { 1 };
+        let direction = if bidirectional { 0 } else { 2 };
+        initiator | direction
+    }
+
+    /// ストリームタイプを取得
+    #[must_use]
+    pub const fn stream_type(id: WtStreamId) -> u8 {
+        (id & 0x03) as u8
+    }
+}
+
+/// 送信側ストリーム状態 (RFC 9000 Section 3.1)
+///
+/// ```text
+///          o
+///          | Open Stream (Sending)
+///          | Peer Opens Bidirectional Stream
+///          v
+///      +-------+
+///      | Ready | Send STREAM / STREAM_DATA_BLOCKED
+///      +-------+
+///          |
+///          | Send STREAM / STREAM_DATA_BLOCKED
+///          |
+///          v
+///      +-------+
+///      | Send  | Send STREAM / STREAM_DATA_BLOCKED
+///      +-------+
+///          |
+///          | Send STREAM + FIN
+///          v
+///      +----------+
+///      | Data     | Recv all ACKs
+///      | Sent     |--------------.
+///      +----------+              |
+///          |                     |
+///          | Recv STOP_SENDING   |
+///          v                     |
+///      +----------+              |
+///      | Reset    |              |
+///      | Sent     |              |
+///      +----------+              |
+///          |                     |
+///          | Recv All ACKs       |
+///          v                     v
+///      +----------+         +----------+
+///      | Reset    |         | Data     |
+///      | Recvd    |         | Recvd    |
+///      +----------+         +----------+
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SendState {
+    /// 初期状態
+    #[default]
+    Ready,
+    /// STREAM/STREAM_DATA_BLOCKED 送信後
+    Send,
+    /// FIN 送信後
+    DataSent,
+    /// RESET_STREAM 送信後
+    ResetSent,
+    /// 終端: 全 ACK 受信
+    DataRecvd,
+    /// 終端: RESET_STREAM ACK 受信
+    ResetRecvd,
+}
+
+impl SendState {
+    /// 送信可能かどうかを返す
+    #[must_use]
+    pub const fn can_send(&self) -> bool {
+        matches!(self, Self::Ready | Self::Send)
+    }
+
+    /// 終端状態かどうかを返す
+    #[must_use]
+    pub const fn is_terminal(&self) -> bool {
+        matches!(self, Self::DataRecvd | Self::ResetRecvd)
+    }
+}
+
+/// 受信側ストリーム状態 (RFC 9000 Section 3.2)
+///
+/// ```text
+///          o
+///          | Recv STREAM / STREAM_DATA_BLOCKED / RESET_STREAM
+///          | Open Bidirectional Stream (Sending)
+///          | Open Unidirectional Stream (Peer)
+///          v
+///      +-------+
+///      | Recv  | Recv STREAM / STREAM_DATA_BLOCKED
+///      +-------+
+///          |
+///          | Recv STREAM + FIN
+///          v
+///      +----------+
+///      | Size     | Recv STREAM
+///      | Known    |
+///      +----------+
+///          |
+///          | Recv all data
+///          v
+///      +----------+
+///      | Data     | App reads data
+///      | Recvd    |-------------.
+///      +----------+             |
+///          |                    |
+///          | Recv RESET_STREAM  |
+///          v                    v
+///      +----------+        +----------+
+///      | Reset    |        | Data     |
+///      | Recvd    |        | Read     |
+///      +----------+        +----------+
+///          |
+///          | App reads reset
+///          v
+///      +----------+
+///      | Reset    |
+///      | Read     |
+///      +----------+
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RecvState {
+    /// 初期状態
+    #[default]
+    Recv,
+    /// FIN 受信後 (最終サイズ確定)
+    SizeKnown,
+    /// 全データ受信
+    DataRecvd,
+    /// RESET_STREAM 受信
+    ResetRecvd,
+    /// 終端: アプリがデータ読み取り完了
+    DataRead,
+    /// 終端: アプリがリセット読み取り完了
+    ResetRead,
+}
+
+impl RecvState {
+    /// 受信可能かどうかを返す
+    #[must_use]
+    pub const fn can_recv(&self) -> bool {
+        matches!(self, Self::Recv | Self::SizeKnown)
+    }
+
+    /// 終端状態かどうかを返す
+    #[must_use]
+    pub const fn is_terminal(&self) -> bool {
+        matches!(self, Self::DataRead | Self::ResetRead)
+    }
+}
+
+/// WebTransport ストリーム
+#[derive(Debug)]
+pub struct WtStream {
+    /// ストリーム ID
+    id: WtStreamId,
+    /// 双方向ストリームかどうか
+    bidirectional: bool,
+    /// 送信状態
+    send_state: SendState,
+    /// 受信状態
+    recv_state: RecvState,
+    /// 送信済みバイト数 (オフセット)
+    send_offset: u64,
+    /// 受信済みバイト数 (オフセット)
+    recv_offset: u64,
+    /// ピアが許可した送信上限
+    send_max: u64,
+    /// ローカルが許可した受信上限
+    recv_max: u64,
+    /// STOP_SENDING を送信したかどうか
+    ///
+    /// draft-ietf-webtrans-http2-13 Section 6.3: 冪等性チェック用
+    stop_sending_sent: bool,
+    /// STOP_SENDING を受信したかどうか
+    ///
+    /// draft-ietf-webtrans-http2-13 Section 6.3: 冪等性チェック用
+    stop_sending_received: bool,
+    /// データを受信したかどうか
+    ///
+    /// draft-ietf-webtrans-http2-13 Section 6.4: empty capsule チェック用
+    has_received_data: bool,
+}
+
+impl WtStream {
+    /// 新しいストリームを生成する
+    #[must_use]
+    pub fn new(id: WtStreamId, initial_max_data: u64, bidirectional: bool) -> Self {
+        Self {
+            id,
+            bidirectional,
+            send_state: SendState::Ready,
+            recv_state: RecvState::Recv,
+            send_offset: 0,
+            recv_offset: 0,
+            send_max: initial_max_data,
+            recv_max: initial_max_data,
+            stop_sending_sent: false,
+            stop_sending_received: false,
+            has_received_data: false,
+        }
+    }
+
+    /// ストリーム ID を取得する
+    #[must_use]
+    pub const fn id(&self) -> WtStreamId {
+        self.id
+    }
+
+    /// 双方向ストリームかどうかを返す
+    #[must_use]
+    pub const fn is_bidirectional(&self) -> bool {
+        self.bidirectional
+    }
+
+    /// 送信状態を取得する
+    #[must_use]
+    pub const fn send_state(&self) -> SendState {
+        self.send_state
+    }
+
+    /// 受信状態を取得する
+    #[must_use]
+    pub const fn recv_state(&self) -> RecvState {
+        self.recv_state
+    }
+
+    /// 送信可能かどうかを返す
+    #[must_use]
+    pub const fn can_send(&self) -> bool {
+        self.send_state.can_send()
+    }
+
+    /// 受信可能かどうかを返す
+    #[must_use]
+    pub const fn can_recv(&self) -> bool {
+        self.recv_state.can_recv()
+    }
+
+    /// 送信済みバイト数を取得する
+    #[must_use]
+    pub const fn send_offset(&self) -> u64 {
+        self.send_offset
+    }
+
+    /// 受信済みバイト数を取得する
+    #[must_use]
+    pub const fn recv_offset(&self) -> u64 {
+        self.recv_offset
+    }
+
+    /// 送信可能な残りバイト数を取得する
+    #[must_use]
+    pub fn send_available(&self) -> u64 {
+        self.send_max.saturating_sub(self.send_offset)
+    }
+
+    /// 受信可能な残りバイト数を取得する
+    #[must_use]
+    pub fn recv_available(&self) -> u64 {
+        self.recv_max.saturating_sub(self.recv_offset)
+    }
+
+    /// データを送信する
+    ///
+    /// # 引数
+    ///
+    /// - `size`: 送信するバイト数
+    /// - `fin`: FIN フラグ
+    pub fn send_data(&mut self, size: u64, fin: bool) -> WtResult<()> {
+        if !self.send_state.can_send() {
+            return Err(WtError::stream_state_error("cannot send in current state"));
+        }
+
+        // draft-ietf-webtrans-http2-13: ストリームレベルのフロー制御上限チェック
+        let new_offset = self.send_offset.saturating_add(size);
+        if new_offset > self.send_max {
+            return Err(WtError::flow_control_error("stream send limit exceeded"));
+        }
+        self.send_offset = new_offset;
+        self.send_state = SendState::Send;
+
+        if fin {
+            self.send_state = SendState::DataSent;
+        }
+
+        Ok(())
+    }
+
+    /// リセットを送信する
+    pub fn send_reset(&mut self) {
+        self.send_state = SendState::ResetSent;
+    }
+
+    /// データを受信する
+    ///
+    /// # 引数
+    ///
+    /// - `size`: 受信したバイト数
+    /// - `fin`: FIN フラグ
+    pub fn recv_data(&mut self, size: u64, fin: bool) -> WtResult<()> {
+        if !self.recv_state.can_recv() {
+            return Err(WtError::stream_state_error(
+                "cannot receive in current state",
+            ));
+        }
+
+        // draft-ietf-webtrans-http2-13: ストリームレベルのフロー制御上限チェック
+        let new_offset = self.recv_offset.saturating_add(size);
+        if new_offset > self.recv_max {
+            return Err(WtError::flow_control_error("stream recv limit exceeded"));
+        }
+        self.recv_offset = new_offset;
+
+        if fin {
+            self.recv_state = RecvState::SizeKnown;
+        }
+
+        Ok(())
+    }
+
+    /// リセットを受信する
+    pub fn recv_reset(&mut self) {
+        self.recv_state = RecvState::ResetRecvd;
+    }
+
+    /// 送信上限を更新する
+    pub fn update_send_max(&mut self, maximum: u64) {
+        if maximum > self.send_max {
+            self.send_max = maximum;
+        }
+    }
+
+    /// 受信上限を更新する
+    pub fn update_recv_max(&mut self, maximum: u64) {
+        if maximum > self.recv_max {
+            self.recv_max = maximum;
+        }
+    }
+
+    /// ストリームが完全に閉じたかどうかを返す
+    #[must_use]
+    pub const fn is_closed(&self) -> bool {
+        self.send_state.is_terminal() && self.recv_state.is_terminal()
+    }
+
+    /// STOP_SENDING を送信済みかどうかを返す
+    #[must_use]
+    pub const fn stop_sending_sent(&self) -> bool {
+        self.stop_sending_sent
+    }
+
+    /// STOP_SENDING を受信済みかどうかを返す
+    #[must_use]
+    pub const fn stop_sending_received(&self) -> bool {
+        self.stop_sending_received
+    }
+
+    /// STOP_SENDING 送信済みフラグを設定する
+    pub fn set_stop_sending_sent(&mut self) {
+        self.stop_sending_sent = true;
+    }
+
+    /// STOP_SENDING 受信済みフラグを設定する
+    pub fn set_stop_sending_received(&mut self) {
+        self.stop_sending_received = true;
+    }
+
+    /// データを受信したかどうかを返す
+    #[must_use]
+    pub const fn has_received_data(&self) -> bool {
+        self.has_received_data
+    }
+
+    /// データを受信したフラグを設定する
+    pub fn set_has_received_data(&mut self) {
+        self.has_received_data = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stream_id_client_bidi() {
+        let id = stream_id::first(true, true);
+        assert_eq!(id, 0);
+        assert!(stream_id::is_client_initiated(id));
+        assert!(stream_id::is_bidirectional(id));
+
+        let next = stream_id::next(id);
+        assert_eq!(next, 4);
+        assert!(stream_id::is_client_initiated(next));
+        assert!(stream_id::is_bidirectional(next));
+    }
+
+    #[test]
+    fn test_stream_id_server_bidi() {
+        let id = stream_id::first(false, true);
+        assert_eq!(id, 1);
+        assert!(stream_id::is_server_initiated(id));
+        assert!(stream_id::is_bidirectional(id));
+    }
+
+    #[test]
+    fn test_stream_id_client_uni() {
+        let id = stream_id::first(true, false);
+        assert_eq!(id, 2);
+        assert!(stream_id::is_client_initiated(id));
+        assert!(stream_id::is_unidirectional(id));
+    }
+
+    #[test]
+    fn test_stream_id_server_uni() {
+        let id = stream_id::first(false, false);
+        assert_eq!(id, 3);
+        assert!(stream_id::is_server_initiated(id));
+        assert!(stream_id::is_unidirectional(id));
+    }
+
+    #[test]
+    fn test_stream_creation() {
+        let stream = WtStream::new(0, 65536, true);
+        assert_eq!(stream.id(), 0);
+        assert!(stream.is_bidirectional());
+        assert_eq!(stream.send_state(), SendState::Ready);
+        assert_eq!(stream.recv_state(), RecvState::Recv);
+        assert!(stream.can_send());
+        assert!(stream.can_recv());
+    }
+
+    #[test]
+    fn test_send_data() {
+        let mut stream = WtStream::new(0, 65536, true);
+
+        stream.send_data(100, false).unwrap();
+        assert_eq!(stream.send_state(), SendState::Send);
+        assert_eq!(stream.send_offset(), 100);
+        assert!(stream.can_send());
+
+        stream.send_data(100, true).unwrap();
+        assert_eq!(stream.send_state(), SendState::DataSent);
+        assert_eq!(stream.send_offset(), 200);
+        assert!(!stream.can_send());
+    }
+
+    #[test]
+    fn test_recv_data() {
+        let mut stream = WtStream::new(0, 65536, true);
+
+        stream.recv_data(100, false).unwrap();
+        assert_eq!(stream.recv_state(), RecvState::Recv);
+        assert_eq!(stream.recv_offset(), 100);
+        assert!(stream.can_recv());
+
+        stream.recv_data(100, true).unwrap();
+        assert_eq!(stream.recv_state(), RecvState::SizeKnown);
+        assert_eq!(stream.recv_offset(), 200);
+    }
+
+    #[test]
+    fn test_send_reset() {
+        let mut stream = WtStream::new(0, 65536, true);
+
+        stream.send_data(100, false).unwrap();
+        stream.send_reset();
+        assert_eq!(stream.send_state(), SendState::ResetSent);
+        assert!(!stream.can_send());
+    }
+
+    #[test]
+    fn test_recv_reset() {
+        let mut stream = WtStream::new(0, 65536, true);
+
+        stream.recv_data(100, false).unwrap();
+        stream.recv_reset();
+        assert_eq!(stream.recv_state(), RecvState::ResetRecvd);
+        assert!(!stream.can_recv());
+    }
+
+    #[test]
+    fn test_update_send_max() {
+        let mut stream = WtStream::new(0, 65536, true);
+        assert_eq!(stream.send_available(), 65536);
+
+        stream.update_send_max(131072);
+        assert_eq!(stream.send_available(), 131072);
+
+        // 減少は無視
+        stream.update_send_max(32768);
+        assert_eq!(stream.send_available(), 131072);
+    }
+}
