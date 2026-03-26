@@ -1,4 +1,4 @@
-//! WebTransport over HTTP/2 (draft-ietf-webtrans-http2-13)
+//! WebTransport over HTTP/2 (draft-ietf-webtrans-http2-14)
 //!
 //! # 概要
 //!
@@ -7,7 +7,7 @@
 //!
 //! # 参照仕様
 //!
-//! - draft-ietf-webtrans-http2-13 (WebTransport over HTTP/2)
+//! - draft-ietf-webtrans-http2-14 (WebTransport over HTTP/2)
 //! - RFC 9297 (HTTP Datagrams and the Capsule Protocol)
 //! - RFC 8441 (Bootstrapping WebSockets with HTTP/2 - Extended CONNECT)
 //! - RFC 9000 Section 2.1 (Stream Types and Identifiers)
@@ -81,8 +81,16 @@ pub enum WtEvent {
 pub struct WtConfig {
     /// セッションレベルの初期最大データ量
     pub initial_max_data: u64,
-    /// 双方向ストリームの初期最大データ量
-    pub initial_max_stream_data_bidi: u64,
+    /// 双方向ストリームの初期最大データ量 (自身が開始したストリーム)
+    ///
+    /// draft-ietf-webtrans-http2-14 Section 4.3.1:
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL に対応する。
+    pub initial_max_stream_data_bidi_local: u64,
+    /// 双方向ストリームの初期最大データ量 (ピアが開始したストリーム)
+    ///
+    /// draft-ietf-webtrans-http2-14 Section 4.3.1:
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE に対応する。
+    pub initial_max_stream_data_bidi_remote: u64,
     /// 単方向ストリームの初期最大データ量
     pub initial_max_stream_data_uni: u64,
     /// 双方向ストリームの初期最大数
@@ -94,9 +102,10 @@ pub struct WtConfig {
 impl Default for WtConfig {
     fn default() -> Self {
         Self {
-            initial_max_data: 1_048_576,           // 1 MiB
-            initial_max_stream_data_bidi: 262_144, // 256 KiB
-            initial_max_stream_data_uni: 262_144,  // 256 KiB
+            initial_max_data: 1_048_576,                  // 1 MiB
+            initial_max_stream_data_bidi_local: 262_144,  // 256 KiB
+            initial_max_stream_data_bidi_remote: 262_144, // 256 KiB
+            initial_max_stream_data_uni: 262_144,         // 256 KiB
             initial_max_streams_bidi: 100,
             initial_max_streams_uni: 100,
         }
@@ -254,7 +263,7 @@ impl WtSession {
 
     /// ストリームを開く
     fn open_stream(&mut self, bidirectional: bool) -> WtResult<WtStreamId> {
-        // draft-ietf-webtrans-http2-13 Section 6.13: Draining 状態でも新規ストリーム開設を許可
+        // draft-ietf-webtrans-http2-14 Section 6.13: Draining 状態でも新規ストリーム開設を許可
         if !matches!(
             self.state,
             WtSessionState::Active | WtSessionState::Draining
@@ -283,8 +292,10 @@ impl WtSession {
             id
         };
 
+        // draft-ietf-webtrans-http2-14 Section 4.3.1:
+        // LOCAL はこのエンドポイントが開始したストリーム向けの初期フロー制御上限
         let initial_max_data = if bidirectional {
-            self.config.initial_max_stream_data_bidi
+            self.config.initial_max_stream_data_bidi_local
         } else {
             self.config.initial_max_stream_data_uni
         };
@@ -305,7 +316,7 @@ impl WtSession {
         data: &[u8],
         fin: bool,
     ) -> WtResult<()> {
-        // draft-ietf-webtrans-http2-13 Section 6.13: Draining 状態でもデータ送信を許可
+        // draft-ietf-webtrans-http2-14 Section 6.13: Draining 状態でもデータ送信を許可
         if !matches!(
             self.state,
             WtSessionState::Active | WtSessionState::Draining
@@ -350,10 +361,12 @@ impl WtSession {
             .get_mut(&stream_id)
             .ok_or_else(|| WtError::invalid_stream_id("stream not found"))?;
 
-        // draft-ietf-webtrans-http2-13 Section 6.2: 冪等性チェック
-        // 送信できない状態では RESET_STREAM を送信しない
+        // draft-ietf-webtrans-http2-14 Section 6.2:
+        // クローズ済みまたはリセット済みのストリームでは WT_RESET_STREAM を送信してはならない
         if !stream.can_send() {
-            return Ok(());
+            return Err(WtError::stream_state_error(
+                "cannot send WT_RESET_STREAM: stream not in valid send state",
+            ));
         }
 
         let reliable_size = stream.send_offset();
@@ -380,10 +393,12 @@ impl WtSession {
             .get_mut(&stream_id)
             .ok_or_else(|| WtError::invalid_stream_id("stream not found"))?;
 
-        // draft-ietf-webtrans-http2-13 Section 6.3: 冪等性チェック
-        // 既に STOP_SENDING を送信した場合は何もしない
+        // draft-ietf-webtrans-http2-14 Section 6.3:
+        // WT_STOP_SENDING を複数回送信してはならない
         if stream.stop_sending_sent() {
-            return Ok(());
+            return Err(WtError::stream_state_error(
+                "cannot send WT_STOP_SENDING: already sent",
+            ));
         }
 
         // WT_STOP_SENDING Capsule をエンコード
@@ -402,7 +417,7 @@ impl WtSession {
 
     /// データグラムを送信する
     pub fn send_datagram(&mut self, data: &[u8]) -> WtResult<()> {
-        // draft-ietf-webtrans-http2-13 Section 6.13: Draining 状態でもデータグラム送信を許可
+        // draft-ietf-webtrans-http2-14 Section 6.13: Draining 状態でもデータグラム送信を許可
         if !matches!(
             self.state,
             WtSessionState::Active | WtSessionState::Draining
@@ -477,9 +492,17 @@ impl WtSession {
                 error_code,
                 reliable_size,
             } => {
-                // draft-ietf-webtrans-http2-13 Section 6.2: Reliable Size 検証
-                // reliable_size が既に受信したオフセットより小さい場合はセッションエラー
                 if let Some(stream) = self.streams.get_mut(&stream_id) {
+                    // draft-ietf-webtrans-http2-14 Section 6.2:
+                    // クローズ済みまたはリセット済みのストリームへの WT_RESET_STREAM は
+                    // WEBTRANSPORT_STREAM_STATE_ERROR
+                    if !stream.can_recv() {
+                        return Err(WtError::stream_state_error(
+                            "WT_RESET_STREAM received for stream not in valid state",
+                        ));
+                    }
+                    // draft-ietf-webtrans-http2-14 Section 6.2: Reliable Size 検証
+                    // reliable_size が既に受信したオフセットより小さい場合はセッションエラー
                     if reliable_size < stream.recv_offset() {
                         return Err(WtError::stream_state_error(format!(
                             "WT_RESET_STREAM reliable_size {} is less than recv_offset {}",
@@ -498,11 +521,13 @@ impl WtSession {
                 stream_id,
                 error_code,
             } => {
-                // draft-ietf-webtrans-http2-13 Section 6.3: 冪等性チェック
-                // 既に STOP_SENDING を受信している場合は無視
                 if let Some(stream) = self.streams.get_mut(&stream_id) {
+                    // draft-ietf-webtrans-http2-14 Section 6.3:
+                    // 2 回目の WT_STOP_SENDING は WEBTRANSPORT_STREAM_STATE_ERROR
                     if stream.stop_sending_received() {
-                        return Ok(());
+                        return Err(WtError::stream_state_error(
+                            "duplicate WT_STOP_SENDING received",
+                        ));
                     }
                     stream.set_stop_sending_received();
                 }
@@ -513,33 +538,47 @@ impl WtSession {
                 });
             }
             Capsule::WtMaxData { maximum } => {
-                self.flow_control.update_send_max(maximum);
+                self.flow_control.update_send_max(maximum)?;
             }
             Capsule::WtMaxStreamData { stream_id, maximum } => {
                 if let Some(stream) = self.streams.get_mut(&stream_id) {
-                    // draft-ietf-webtrans-http2-13 Section 6.6: 冪等性チェック
-                    // STOP_SENDING を送信した後は WT_MAX_STREAM_DATA を無視
+                    // draft-ietf-webtrans-http2-14 Section 6.6:
+                    // WT_STOP_SENDING を送信した後の WT_MAX_STREAM_DATA は
+                    // WEBTRANSPORT_STREAM_STATE_ERROR
                     if stream.stop_sending_sent() {
-                        return Ok(());
+                        return Err(WtError::stream_state_error(
+                            "WT_MAX_STREAM_DATA received after WT_STOP_SENDING",
+                        ));
                     }
-                    stream.update_send_max(maximum);
+                    stream.update_send_max(maximum)?;
                 }
             }
             Capsule::WtMaxStreams {
                 maximum,
                 bidirectional,
             } => {
-                self.flow_control.update_max_streams(maximum, bidirectional);
+                self.flow_control
+                    .update_max_streams(maximum, bidirectional)?;
             }
             Capsule::WtDataBlocked { maximum: _ } => {
                 // ピアがブロックされていることを通知
                 // 必要に応じて WT_MAX_DATA を送信する
             }
             Capsule::WtStreamDataBlocked {
-                stream_id: _,
+                stream_id,
                 maximum: _,
             } => {
-                // ピアがストリームレベルでブロックされていることを通知
+                // draft-ietf-webtrans-http2-14 Section 6.9:
+                // クローズ済みまたはリセット済みのストリームでは
+                // WEBTRANSPORT_STREAM_STATE_ERROR
+                if let Some(stream) = self.streams.get(&stream_id)
+                    && !stream.can_recv()
+                    && !stream.can_send()
+                {
+                    return Err(WtError::stream_state_error(
+                        "WT_STREAM_DATA_BLOCKED received for stream not in valid state",
+                    ));
+                }
             }
             Capsule::WtStreamsBlocked {
                 maximum: _,
@@ -580,7 +619,7 @@ impl WtSession {
     ) -> WtResult<()> {
         let is_new_stream = !self.streams.contains_key(&stream_id);
 
-        // draft-ietf-webtrans-http2-13 Section 6.4: empty capsule チェック
+        // draft-ietf-webtrans-http2-14 Section 6.4: empty capsule チェック
         // 空の WT_STREAM capsule は以下の場合のみ許可:
         // - 新規ストリームの開始時
         // - FIN フラグが設定されている場合
@@ -599,7 +638,7 @@ impl WtSession {
         }
 
         if is_new_stream {
-            // draft-ietf-webtrans-http2-13 Section 5, RFC 9000 Section 2.1:
+            // draft-ietf-webtrans-http2-14 Section 5, RFC 9000 Section 2.1:
             // ストリーム ID の開始主体がピア側であることを検証する。
             // ローカル開始用 ID をピアが注入すると状態管理の一貫性が崩れる。
             let is_peer_initiated = match self.role {
@@ -612,7 +651,7 @@ impl WtSession {
                 ));
             }
 
-            // RFC 9000 Section 4.6, draft-ietf-webtrans-http2-13 Section 5.2:
+            // RFC 9000 Section 4.6, draft-ietf-webtrans-http2-14 Section 5.2:
             // stream ID に基づいてストリーム上限を検証する。
             // 順序外の stream ID は下位 ID も全て開いた扱いになる。
             if !self.flow_control.can_accept_stream(stream_id) {
@@ -620,8 +659,10 @@ impl WtSession {
             }
 
             let bidirectional = stream::stream_id::is_bidirectional(stream_id);
+            // draft-ietf-webtrans-http2-14 Section 4.3.1:
+            // REMOTE はピアが開始したストリーム向けの初期フロー制御上限
             let initial_max_data = if bidirectional {
-                self.config.initial_max_stream_data_bidi
+                self.config.initial_max_stream_data_bidi_remote
             } else {
                 self.config.initial_max_stream_data_uni
             };

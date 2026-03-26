@@ -1,6 +1,6 @@
 //! WebTransport エラー型定義
 //!
-//! draft-ietf-webtrans-http2-13 で使用されるエラー型を提供する。
+//! draft-ietf-webtrans-http2-14 で使用されるエラー型を提供する。
 
 use std::backtrace::{Backtrace, BacktraceStatus};
 use std::panic::Location;

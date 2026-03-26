@@ -657,11 +657,12 @@ proptest! {
         }
     }
 
-    /// 冪等操作の不変条件
+    /// 重複操作の禁止
     ///
-    /// 数学的意義: 冪等性 f(f(x)) = f(x)
+    /// draft-ietf-webtrans-http2-14 Section 6.2, 6.3:
+    /// reset_stream / stop_sending の重複送信はエラーとなる
     #[test]
-    fn prop_idempotent_operations(
+    fn prop_duplicate_operations_are_errors(
         error_code in small_varint_value(),
     ) {
         let mut session = WtSession::client(WtConfig::default());
@@ -669,22 +670,14 @@ proptest! {
 
         let stream_id = session.open_bidi_stream().unwrap();
 
-        // reset_stream は冪等
+        // reset_stream: 1 回目は成功、2 回目はエラー
         session.reset_stream(stream_id, error_code).unwrap();
-        let state_after_first = session.state();
-        session.reset_stream(stream_id, error_code).unwrap();
-        let state_after_second = session.state();
-        prop_assert_eq!(state_after_first, state_after_second);
+        prop_assert!(session.reset_stream(stream_id, error_code).is_err());
 
-        // 別のストリームで stop_sending の冪等性をテスト
+        // 別のストリームで stop_sending: 1 回目は成功、2 回目はエラー
         let stream_id2 = session.open_bidi_stream().unwrap();
         session.stop_sending(stream_id2, error_code).unwrap();
-        let output1 = session.poll_output();
-        session.stop_sending(stream_id2, error_code).unwrap();
-        let output2 = session.poll_output();
-        // 2 回目は出力なし（冪等性）
-        prop_assert!(output1.is_some());
-        prop_assert!(output2.is_none());
+        prop_assert!(session.stop_sending(stream_id2, error_code).is_err());
     }
 
     /// Capsule のラウンドトリップ: encode -> decode -> encode == encode

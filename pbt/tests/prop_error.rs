@@ -21,7 +21,9 @@ const KNOWN_ERROR_CODES: &[(u32, ErrorCode)] = &[
     (0x0b, ErrorCode::EnhanceYourCalm),
     (0x0c, ErrorCode::InadequateSecurity),
     (0x0d, ErrorCode::Http11Required),
-    (0x100, ErrorCode::WebtransportSessionGone),
+    (0x100, ErrorCode::WebtransportError),
+    (0x101, ErrorCode::WebtransportStreamStateError),
+    (0x102, ErrorCode::WebtransportFlowControlError),
 ];
 
 /// 既知のエラーコード値を生成する Strategy
@@ -42,14 +44,17 @@ fn known_error_code_value() -> impl Strategy<Value = u32> {
         Just(0x0c),
         Just(0x0d),
         Just(0x100),
+        Just(0x101),
+        Just(0x102),
     ]
 }
 
 /// 未知のエラーコード値を生成する Strategy
 fn unknown_error_code_value() -> impl Strategy<Value = u32> {
-    (0u32..=u32::MAX).prop_filter("must be unknown code", |v| {
-        !matches!(*v, 0x00..=0x0d | 0x100)
-    })
+    (0u32..=u32::MAX).prop_filter(
+        "must be unknown code",
+        |v| !matches!(*v, 0x00..=0x0d | 0x100..=0x102),
+    )
 }
 
 /// ErrorCode を生成する Strategy
@@ -69,7 +74,9 @@ fn error_code_strategy() -> impl Strategy<Value = ErrorCode> {
         Just(ErrorCode::EnhanceYourCalm),
         Just(ErrorCode::InadequateSecurity),
         Just(ErrorCode::Http11Required),
-        Just(ErrorCode::WebtransportSessionGone),
+        Just(ErrorCode::WebtransportError),
+        Just(ErrorCode::WebtransportStreamStateError),
+        Just(ErrorCode::WebtransportFlowControlError),
         unknown_error_code_value().prop_map(ErrorCode::Unknown),
     ]
 }
@@ -254,6 +261,15 @@ mod tests {
     #[test]
     fn test_gap_values_are_unknown() {
         for value in 0x0e..0x100 {
+            let code = ErrorCode::from_u32(value);
+            assert!(
+                matches!(code, ErrorCode::Unknown(v) if v == value),
+                "value 0x{:x} should be Unknown",
+                value
+            );
+        }
+        // 0x103 以降も未知
+        for value in 0x103..0x110 {
             let code = ErrorCode::from_u32(value);
             assert!(
                 matches!(code, ErrorCode::Unknown(v) if v == value),

@@ -1,4 +1,4 @@
-//! Capsule Protocol (RFC 9297 + draft-ietf-webtrans-http2-13)
+//! Capsule Protocol (RFC 9297 + draft-ietf-webtrans-http2-14)
 //!
 //! # Capsule フォーマット (RFC 9297 Section 3.2)
 //!
@@ -13,61 +13,67 @@
 use crate::webtransport::error::{WtError, WtErrorKind, WtResult};
 use crate::webtransport::varint;
 
-/// Capsule タイプ定数 (RFC 9297 + draft-ietf-webtrans-http2-13)
+/// Capsule タイプ定数 (RFC 9297 + draft-ietf-webtrans-http2-14)
 pub mod capsule_type {
     /// DATAGRAM (RFC 9297 Section 3.5)
     pub const DATAGRAM: u64 = 0x00;
 
-    /// PADDING (draft-ietf-webtrans-http2-13 Section 6.1)
+    /// PADDING (draft-ietf-webtrans-http2-14 Section 6.1)
     pub const PADDING: u64 = 0x190B4D38;
 
-    /// WT_RESET_STREAM (draft-ietf-webtrans-http2-13 Section 6.2)
+    /// WT_RESET_STREAM (draft-ietf-webtrans-http2-14 Section 6.2)
     pub const WT_RESET_STREAM: u64 = 0x190B4D39;
 
-    /// WT_STOP_SENDING (draft-ietf-webtrans-http2-13 Section 6.3)
+    /// WT_STOP_SENDING (draft-ietf-webtrans-http2-14 Section 6.3)
     pub const WT_STOP_SENDING: u64 = 0x190B4D3A;
 
-    /// WT_STREAM (FIN=0) (draft-ietf-webtrans-http2-13 Section 6.4)
+    /// WT_STREAM (FIN=0) (draft-ietf-webtrans-http2-14 Section 6.4)
     pub const WT_STREAM: u64 = 0x190B4D3B;
 
-    /// WT_STREAM (FIN=1) (draft-ietf-webtrans-http2-13 Section 6.4)
+    /// WT_STREAM (FIN=1) (draft-ietf-webtrans-http2-14 Section 6.4)
     pub const WT_STREAM_FIN: u64 = 0x190B4D3C;
 
-    /// WT_MAX_DATA (draft-ietf-webtrans-http2-13 Section 6.5)
+    /// WT_MAX_DATA (draft-ietf-webtrans-http2-14 Section 6.5)
     pub const WT_MAX_DATA: u64 = 0x190B4D3D;
 
-    /// WT_MAX_STREAM_DATA (draft-ietf-webtrans-http2-13 Section 6.6)
+    /// WT_MAX_STREAM_DATA (draft-ietf-webtrans-http2-14 Section 6.6)
     pub const WT_MAX_STREAM_DATA: u64 = 0x190B4D3E;
 
-    /// WT_MAX_STREAMS (bidirectional) (draft-ietf-webtrans-http2-13 Section 6.7)
+    /// WT_MAX_STREAMS (bidirectional) (draft-ietf-webtrans-http2-14 Section 6.7)
     pub const WT_MAX_STREAMS_BIDI: u64 = 0x190B4D3F;
 
-    /// WT_MAX_STREAMS (unidirectional) (draft-ietf-webtrans-http2-13 Section 6.7)
+    /// WT_MAX_STREAMS (unidirectional) (draft-ietf-webtrans-http2-14 Section 6.7)
     pub const WT_MAX_STREAMS_UNI: u64 = 0x190B4D40;
 
-    /// WT_DATA_BLOCKED (draft-ietf-webtrans-http2-13 Section 6.8)
+    /// WT_DATA_BLOCKED (draft-ietf-webtrans-http2-14 Section 6.8)
     pub const WT_DATA_BLOCKED: u64 = 0x190B4D41;
 
-    /// WT_STREAM_DATA_BLOCKED (draft-ietf-webtrans-http2-13 Section 6.9)
+    /// WT_STREAM_DATA_BLOCKED (draft-ietf-webtrans-http2-14 Section 6.9)
     pub const WT_STREAM_DATA_BLOCKED: u64 = 0x190B4D42;
 
-    /// WT_STREAMS_BLOCKED (bidirectional) (draft-ietf-webtrans-http2-13 Section 6.10)
+    /// WT_STREAMS_BLOCKED (bidirectional) (draft-ietf-webtrans-http2-14 Section 6.10)
     pub const WT_STREAMS_BLOCKED_BIDI: u64 = 0x190B4D43;
 
-    /// WT_STREAMS_BLOCKED (unidirectional) (draft-ietf-webtrans-http2-13 Section 6.10)
+    /// WT_STREAMS_BLOCKED (unidirectional) (draft-ietf-webtrans-http2-14 Section 6.10)
     pub const WT_STREAMS_BLOCKED_UNI: u64 = 0x190B4D44;
 
-    /// WT_CLOSE_SESSION (draft-ietf-webtrans-http2-13 Section 6.12)
+    /// WT_CLOSE_SESSION (draft-ietf-webtrans-http2-14 Section 6.12)
     pub const WT_CLOSE_SESSION: u64 = 0x2843;
 
-    /// WT_DRAIN_SESSION (draft-ietf-webtrans-http2-13 Section 6.13)
+    /// WT_DRAIN_SESSION (draft-ietf-webtrans-http2-14 Section 6.13)
     pub const WT_DRAIN_SESSION: u64 = 0x78AE;
 }
 
 /// WT_CLOSE_SESSION のメッセージ最大長
 const MAX_CLOSE_REASON_LEN: usize = 1024;
 
-/// Capsule 構造体 (draft-ietf-webtrans-http2-13 Section 6)
+/// WebTransport アプリケーションエラーコードの最大値 (32-bit)
+///
+/// draft-ietf-webtrans-http2-14 Section 6.2, 6.3:
+/// Application Protocol Error Code は 0xffffffff 以下でなければならない。
+const MAX_APPLICATION_ERROR_CODE: u64 = 0xffff_ffff;
+
+/// Capsule 構造体 (draft-ietf-webtrans-http2-14 Section 6)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Capsule {
     /// DATAGRAM (RFC 9297 Section 3.5)
@@ -367,6 +373,13 @@ impl CapsuleDecoder {
                 offset += len;
                 let (error_code, len) = varint::decode(&payload[offset..])?;
                 offset += len;
+                // draft-ietf-webtrans-http2-14 Section 6.2:
+                // error_code は 0xffffffff 以下でなければならない
+                if error_code > MAX_APPLICATION_ERROR_CODE {
+                    return Err(WtError::capsule_decode(
+                        "WT_RESET_STREAM error code exceeds 0xffffffff",
+                    ));
+                }
                 let (reliable_size, len) = varint::decode(&payload[offset..])?;
                 offset += len;
                 // RFC 9297 Section 3.3: 余剰バイトは不正
@@ -388,6 +401,13 @@ impl CapsuleDecoder {
                 offset += len;
                 let (error_code, len) = varint::decode(&payload[offset..])?;
                 offset += len;
+                // draft-ietf-webtrans-http2-14 Section 6.3:
+                // error_code は 0xffffffff 以下でなければならない
+                if error_code > MAX_APPLICATION_ERROR_CODE {
+                    return Err(WtError::capsule_decode(
+                        "WT_STOP_SENDING error code exceeds 0xffffffff",
+                    ));
+                }
                 // RFC 9297 Section 3.3: 余剰バイトは不正
                 if offset != payload.len() {
                     return Err(WtError::capsule_decode(

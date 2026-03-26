@@ -228,15 +228,15 @@ pub struct WtStream {
     recv_max: u64,
     /// STOP_SENDING を送信したかどうか
     ///
-    /// draft-ietf-webtrans-http2-13 Section 6.3: 冪等性チェック用
+    /// draft-ietf-webtrans-http2-14 Section 6.3: 冪等性チェック用
     stop_sending_sent: bool,
     /// STOP_SENDING を受信したかどうか
     ///
-    /// draft-ietf-webtrans-http2-13 Section 6.3: 冪等性チェック用
+    /// draft-ietf-webtrans-http2-14 Section 6.3: 冪等性チェック用
     stop_sending_received: bool,
     /// データを受信したかどうか
     ///
-    /// draft-ietf-webtrans-http2-13 Section 6.4: empty capsule チェック用
+    /// draft-ietf-webtrans-http2-14 Section 6.4: empty capsule チェック用
     has_received_data: bool,
 }
 
@@ -330,7 +330,7 @@ impl WtStream {
             return Err(WtError::stream_state_error("cannot send in current state"));
         }
 
-        // draft-ietf-webtrans-http2-13: ストリームレベルのフロー制御上限チェック
+        // draft-ietf-webtrans-http2-14: ストリームレベルのフロー制御上限チェック
         let new_offset = self.send_offset.saturating_add(size);
         if new_offset > self.send_max {
             return Err(WtError::flow_control_error("stream send limit exceeded"));
@@ -363,7 +363,7 @@ impl WtStream {
             ));
         }
 
-        // draft-ietf-webtrans-http2-13: ストリームレベルのフロー制御上限チェック
+        // draft-ietf-webtrans-http2-14: ストリームレベルのフロー制御上限チェック
         let new_offset = self.recv_offset.saturating_add(size);
         if new_offset > self.recv_max {
             return Err(WtError::flow_control_error("stream recv limit exceeded"));
@@ -383,10 +383,17 @@ impl WtStream {
     }
 
     /// 送信上限を更新する
-    pub fn update_send_max(&mut self, maximum: u64) {
-        if maximum > self.send_max {
-            self.send_max = maximum;
+    ///
+    /// draft-ietf-webtrans-http2-14 Section 6.6:
+    /// 値が減少した場合は WEBTRANSPORT_FLOW_CONTROL_ERROR セッションエラーを返す。
+    pub fn update_send_max(&mut self, maximum: u64) -> WtResult<()> {
+        if maximum < self.send_max {
+            return Err(WtError::flow_control_error(
+                "WT_MAX_STREAM_DATA value decreased",
+            ));
         }
+        self.send_max = maximum;
+        Ok(())
     }
 
     /// 受信上限を更新する
@@ -542,11 +549,10 @@ mod tests {
         let mut stream = WtStream::new(0, 65536, true);
         assert_eq!(stream.send_available(), 65536);
 
-        stream.update_send_max(131072);
+        stream.update_send_max(131072).unwrap();
         assert_eq!(stream.send_available(), 131072);
 
-        // 減少は無視
-        stream.update_send_max(32768);
-        assert_eq!(stream.send_available(), 131072);
+        // draft-ietf-webtrans-http2-14 Section 6.6: 減少はエラー
+        assert!(stream.update_send_max(32768).is_err());
     }
 }

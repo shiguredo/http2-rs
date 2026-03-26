@@ -40,14 +40,29 @@ pub enum ErrorCode {
     /// HTTP/1.1 使用要求
     Http11Required,
 
-    // === WebTransport エラーコード (draft-ietf-webtrans-http2-13 Section 3.4, 11.2) ===
-    /// WebTransport セッションが終了した (H2_WEBTRANSPORT_SESSION_GONE)
+    // === WebTransport エラーコード (draft-ietf-webtrans-http2-14 Section 3.4, 11.3) ===
+    /// WEBTRANSPORT_ERROR
     ///
-    /// draft-ietf-webtrans-http2-13 Section 3.4: WebTransport セッションが終了したため、
-    /// 関連する HTTP/2 ストリームがリセットされた。
+    /// draft-ietf-webtrans-http2-14 Section 3.4: 汎用 WebTransport エラー。
+    /// より具体的なエラーコードがない場合に使用する。
     ///
     /// 注: この値は暫定値。IANA 登録後に更新される可能性がある。
-    WebtransportSessionGone,
+    WebtransportError,
+
+    /// WEBTRANSPORT_STREAM_STATE_ERROR
+    ///
+    /// draft-ietf-webtrans-http2-14 Section 3.4: ストリーム関連の capsule が
+    /// 無効な状態のストリームを指定した。
+    ///
+    /// 注: この値は暫定値。IANA 登録後に更新される可能性がある。
+    WebtransportStreamStateError,
+
+    /// WEBTRANSPORT_FLOW_CONTROL_ERROR
+    ///
+    /// draft-ietf-webtrans-http2-14 Section 11.3: フロー制御エラーが発生した。
+    ///
+    /// 注: この値は暫定値。IANA 登録後に更新される可能性がある。
+    WebtransportFlowControlError,
 
     /// 未知のエラーコード (RFC 9113 Section 7)
     ///
@@ -77,7 +92,9 @@ impl ErrorCode {
             0x0b => Self::EnhanceYourCalm,
             0x0c => Self::InadequateSecurity,
             0x0d => Self::Http11Required,
-            0x100 => Self::WebtransportSessionGone,
+            0x100 => Self::WebtransportError,
+            0x101 => Self::WebtransportStreamStateError,
+            0x102 => Self::WebtransportFlowControlError,
             _ => Self::Unknown(value),
         }
     }
@@ -100,7 +117,9 @@ impl ErrorCode {
             Self::EnhanceYourCalm => 0x0b,
             Self::InadequateSecurity => 0x0c,
             Self::Http11Required => 0x0d,
-            Self::WebtransportSessionGone => 0x100,
+            Self::WebtransportError => 0x100,
+            Self::WebtransportStreamStateError => 0x101,
+            Self::WebtransportFlowControlError => 0x102,
             Self::Unknown(code) => code,
         }
     }
@@ -123,7 +142,9 @@ impl std::fmt::Display for ErrorCode {
             Self::EnhanceYourCalm => write!(f, "ENHANCE_YOUR_CALM"),
             Self::InadequateSecurity => write!(f, "INADEQUATE_SECURITY"),
             Self::Http11Required => write!(f, "HTTP_1_1_REQUIRED"),
-            Self::WebtransportSessionGone => write!(f, "H2_WEBTRANSPORT_SESSION_GONE"),
+            Self::WebtransportError => write!(f, "WEBTRANSPORT_ERROR"),
+            Self::WebtransportStreamStateError => write!(f, "WEBTRANSPORT_STREAM_STATE_ERROR"),
+            Self::WebtransportFlowControlError => write!(f, "WEBTRANSPORT_FLOW_CONTROL_ERROR"),
             Self::Unknown(code) => write!(f, "UNKNOWN(0x{code:x})"),
         }
     }

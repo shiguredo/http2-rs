@@ -343,7 +343,7 @@ impl Connection {
             }
         }
 
-        // RFC 8441 Section 3, draft-ietf-webtrans-http2-13 Section 3.1:
+        // RFC 8441 Section 3, draft-ietf-webtrans-http2-14 Section 3.1:
         // :protocol を含むリクエストは、ピアが SETTINGS_ENABLE_CONNECT_PROTOCOL=1 を
         // 送信済みの場合のみ許可する。
         let has_protocol = headers

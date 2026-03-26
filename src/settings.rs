@@ -3,7 +3,7 @@
 //! # 拡張 SETTINGS
 //!
 //! - SETTINGS_ENABLE_CONNECT_PROTOCOL (RFC 8441): Extended CONNECT
-//! - SETTINGS_WT_* (draft-ietf-webtrans-http2-13): WebTransport
+//! - SETTINGS_WT_* (draft-ietf-webtrans-http2-14): WebTransport
 
 /// SETTINGS_HEADER_TABLE_SIZE のデフォルト値
 pub const DEFAULT_HEADER_TABLE_SIZE: u32 = 4096;
@@ -35,31 +35,35 @@ pub const MAX_MAX_FRAME_SIZE: u32 = 16_777_215;
 /// SETTINGS_INITIAL_WINDOW_SIZE の最大値
 pub const MAX_INITIAL_WINDOW_SIZE: u32 = 2_147_483_647;
 
-// === 拡張 SETTINGS (RFC 8441 + draft-ietf-webtrans-http2-13) ===
+// === 拡張 SETTINGS (RFC 8441 + draft-ietf-webtrans-http2-14) ===
 
 /// SETTINGS_ENABLE_CONNECT_PROTOCOL (RFC 8441)
 /// Extended CONNECT Protocol を有効にする
 pub const SETTINGS_ENABLE_CONNECT_PROTOCOL: u16 = 0x08;
 
-/// SETTINGS_WT_INITIAL_MAX_DATA (draft-ietf-webtrans-http2-13 Section 11.1)
+/// SETTINGS_WT_INITIAL_MAX_DATA (draft-ietf-webtrans-http2-14 Section 11.2)
 /// WebTransport セッションの初期最大データ量
 pub const SETTINGS_WT_INITIAL_MAX_DATA: u16 = 0x2b61;
 
-/// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (draft-ietf-webtrans-http2-13 Section 11.1)
+/// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (draft-ietf-webtrans-http2-14 Section 11.2)
 /// WebTransport 単方向ストリームの初期最大データ量
 pub const SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI: u16 = 0x2b62;
 
-/// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI (draft-ietf-webtrans-http2-13 Section 11.1)
-/// WebTransport 双方向ストリームの初期最大データ量
-pub const SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI: u16 = 0x2b63;
+/// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (draft-ietf-webtrans-http2-14 Section 11.2)
+/// WebTransport 双方向ストリームの初期最大データ量 (送信者が開始したストリーム)
+pub const SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL: u16 = 0x2b63;
 
-/// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (draft-ietf-webtrans-http2-13 Section 11.1)
+/// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (draft-ietf-webtrans-http2-14 Section 11.2)
 /// WebTransport 単方向ストリームの初期最大数
 pub const SETTINGS_WT_INITIAL_MAX_STREAMS_UNI: u16 = 0x2b64;
 
-/// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (draft-ietf-webtrans-http2-13 Section 11.1)
+/// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (draft-ietf-webtrans-http2-14 Section 11.2)
 /// WebTransport 双方向ストリームの初期最大数
 pub const SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI: u16 = 0x2b65;
+
+/// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (draft-ietf-webtrans-http2-14 Section 11.2)
+/// WebTransport 双方向ストリームの初期最大データ量 (受信者が開始したストリーム)
+pub const SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE: u16 = 0x2b66;
 
 /// SETTINGS パラメータの識別子
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -336,11 +340,11 @@ impl std::fmt::Display for SettingsError {
 
 impl std::error::Error for SettingsError {}
 
-// === WebTransport SETTINGS 統合 (draft-ietf-webtrans-http2-13 Section 11.1) ===
+// === WebTransport SETTINGS 統合 (draft-ietf-webtrans-http2-14 Section 11.2) ===
 
 /// WebTransport 初期設定
 ///
-/// draft-ietf-webtrans-http2-13 Section 11.1 で定義される WebTransport 関連の
+/// draft-ietf-webtrans-http2-14 Section 11.2 で定義される WebTransport 関連の
 /// HTTP/2 SETTINGS パラメータ。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WtInitialSettings {
@@ -354,11 +358,16 @@ pub struct WtInitialSettings {
     /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62)
     /// HTTP/2 SETTINGS の値は 32-bit に制限される (RFC 9113 Section 6.5.1)。
     pub initial_max_stream_data_uni: Option<u32>,
-    /// 双方向ストリームの初期最大データ量
+    /// 双方向ストリームの初期最大データ量 (送信者が開始したストリーム)
     ///
-    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI (0x2b63)
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63)
     /// HTTP/2 SETTINGS の値は 32-bit に制限される (RFC 9113 Section 6.5.1)。
-    pub initial_max_stream_data_bidi: Option<u32>,
+    pub initial_max_stream_data_bidi_local: Option<u32>,
+    /// 双方向ストリームの初期最大データ量 (受信者が開始したストリーム)
+    ///
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66)
+    /// HTTP/2 SETTINGS の値は 32-bit に制限される (RFC 9113 Section 6.5.1)。
+    pub initial_max_stream_data_bidi_remote: Option<u32>,
     /// 単方向ストリームの初期最大数
     ///
     /// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64)
@@ -389,8 +398,11 @@ impl WtInitialSettings {
             SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI => {
                 self.initial_max_stream_data_uni = Some(setting.value);
             }
-            SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI => {
-                self.initial_max_stream_data_bidi = Some(setting.value);
+            SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL => {
+                self.initial_max_stream_data_bidi_local = Some(setting.value);
+            }
+            SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE => {
+                self.initial_max_stream_data_bidi_remote = Some(setting.value);
             }
             SETTINGS_WT_INITIAL_MAX_STREAMS_UNI => {
                 self.initial_max_streams_uni = Some(setting.value);
@@ -414,8 +426,17 @@ impl WtInitialSettings {
         if let Some(v) = self.initial_max_stream_data_uni {
             list.push(Setting::new(SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI, v));
         }
-        if let Some(v) = self.initial_max_stream_data_bidi {
-            list.push(Setting::new(SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI, v));
+        if let Some(v) = self.initial_max_stream_data_bidi_local {
+            list.push(Setting::new(
+                SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL,
+                v,
+            ));
+        }
+        if let Some(v) = self.initial_max_stream_data_bidi_remote {
+            list.push(Setting::new(
+                SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE,
+                v,
+            ));
         }
         if let Some(v) = self.initial_max_streams_uni {
             list.push(Setting::new(SETTINGS_WT_INITIAL_MAX_STREAMS_UNI, v));

@@ -95,10 +95,15 @@ impl WtFlowControl {
     }
 
     /// 送信上限を更新する (WT_MAX_DATA 受信時)
-    pub fn update_send_max(&mut self, maximum: u64) {
-        if maximum > self.send_max {
-            self.send_max = maximum;
+    ///
+    /// draft-ietf-webtrans-http2-14 Section 6.5:
+    /// 値が減少した場合は WEBTRANSPORT_FLOW_CONTROL_ERROR セッションエラーを返す。
+    pub fn update_send_max(&mut self, maximum: u64) -> WtResult<()> {
+        if maximum < self.send_max {
+            return Err(WtError::flow_control_error("WT_MAX_DATA value decreased"));
         }
+        self.send_max = maximum;
+        Ok(())
     }
 
     /// 受信上限を増加する (WT_MAX_DATA 送信前に呼び出す)
@@ -133,7 +138,7 @@ impl WtFlowControl {
     ///
     /// RFC 9000 Section 4.6: stream_id < (max_streams * 4 + first_stream_id_of_type)
     /// のストリームのみ開設可能。順序外の stream ID は下位 ID も全て開いた扱いになる。
-    /// draft-ietf-webtrans-http2-13 Section 5.2 は QUIC のストリーム ID セマンティクスを継承する。
+    /// draft-ietf-webtrans-http2-14 Section 5.2 は QUIC のストリーム ID セマンティクスを継承する。
     #[must_use]
     pub fn can_accept_stream(&self, stream_id: u64) -> bool {
         let bidirectional = stream_id & 0x02 == 0;
@@ -148,14 +153,26 @@ impl WtFlowControl {
     }
 
     /// ストリーム数上限を更新する (WT_MAX_STREAMS 受信時)
-    pub fn update_max_streams(&mut self, maximum: u64, bidirectional: bool) {
+    ///
+    /// draft-ietf-webtrans-http2-14 Section 6.7:
+    /// 値が減少した場合は WEBTRANSPORT_FLOW_CONTROL_ERROR セッションエラーを返す。
+    pub fn update_max_streams(&mut self, maximum: u64, bidirectional: bool) -> WtResult<()> {
         if bidirectional {
-            if maximum > self.max_streams_bidi_remote {
-                self.max_streams_bidi_remote = maximum;
+            if maximum < self.max_streams_bidi_remote {
+                return Err(WtError::flow_control_error(
+                    "WT_MAX_STREAMS (bidi) value decreased",
+                ));
             }
-        } else if maximum > self.max_streams_uni_remote {
+            self.max_streams_bidi_remote = maximum;
+        } else {
+            if maximum < self.max_streams_uni_remote {
+                return Err(WtError::flow_control_error(
+                    "WT_MAX_STREAMS (uni) value decreased",
+                ));
+            }
             self.max_streams_uni_remote = maximum;
         }
+        Ok(())
     }
 
     /// ローカルのストリーム数上限を増加する (WT_MAX_STREAMS 送信前に呼び出す)
@@ -264,9 +281,17 @@ mod tests {
         fc.consume_send(65536).unwrap();
         assert!(fc.is_send_blocked());
 
-        fc.update_send_max(131072);
+        fc.update_send_max(131072).unwrap();
         assert!(!fc.is_send_blocked());
         assert_eq!(fc.send_available(), 65536);
+    }
+
+    #[test]
+    fn test_update_send_max_decrease_error() {
+        let mut fc = WtFlowControl::new(65536, 100, 50);
+
+        // draft-ietf-webtrans-http2-14 Section 6.5: 減少はエラー
+        assert!(fc.update_send_max(32768).is_err());
     }
 
     #[test]
@@ -294,8 +319,17 @@ mod tests {
         fc.opened_stream(true);
         assert!(!fc.can_open_bidi_stream());
 
-        fc.update_max_streams(4, true);
+        fc.update_max_streams(4, true).unwrap();
         assert!(fc.can_open_bidi_stream());
+    }
+
+    #[test]
+    fn test_update_max_streams_decrease_error() {
+        let mut fc = WtFlowControl::new(65536, 100, 50);
+
+        // draft-ietf-webtrans-http2-14 Section 6.7: 減少はエラー
+        assert!(fc.update_max_streams(50, true).is_err());
+        assert!(fc.update_max_streams(25, false).is_err());
     }
 
     #[test]
