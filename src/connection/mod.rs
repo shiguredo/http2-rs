@@ -707,6 +707,16 @@ impl Connection {
         headers: Vec<HeaderField>,
         end_stream: bool,
     ) -> Result<()> {
+        // RFC 9113 Section 8.5: CONNECT 確立済みストリームでは HEADERS を送信できない
+        if let Some(stream) = self.streams.get(&stream_id)
+            && stream.connect_established()
+        {
+            return Err(Error::stream_error(
+                ErrorCode::ProtocolError,
+                "HEADERS not allowed on established CONNECT tunnel",
+            ));
+        }
+
         // RFC 9113 Section 8.3.2: 送信前にレスポンスヘッダーの妥当性を検証する
         validation::validate_response_headers(&headers)?;
 
@@ -744,6 +754,64 @@ impl Connection {
             }
 
             end_stream && stream.state() == StreamState::Closed
+        };
+
+        // HEADERS フレームを送信 (必要に応じて CONTINUATION に分割)
+        let mut encoded_headers = Vec::new();
+        self.hpack_encoder.encode(&mut encoded_headers, &headers);
+
+        self.send_header_block(stream_id, encoded_headers, end_stream)?;
+
+        // 送信側で end_stream によりストリームが closed になった場合
+        if is_closed {
+            self.events.push_back(Event::StreamClosed { stream_id });
+            self.streams.remove(&stream_id);
+        }
+
+        Ok(())
+    }
+
+    /// トレーラーヘッダーを送信する
+    ///
+    /// RFC 9113 Section 8.1: トレーラーは END_STREAM 付きの HEADERS フレームで送信する。
+    /// 疑似ヘッダーを含めてはならない。
+    pub fn send_trailers(&mut self, stream_id: StreamId, headers: Vec<HeaderField>) -> Result<()> {
+        // RFC 9113 Section 8.5: CONNECT 確立済みストリームでは HEADERS を送信できない
+        if let Some(stream) = self.streams.get(&stream_id)
+            && stream.connect_established()
+        {
+            return Err(Error::stream_error(
+                ErrorCode::ProtocolError,
+                "HEADERS not allowed on established CONNECT tunnel",
+            ));
+        }
+
+        // RFC 9113 Section 8.1: トレーラー検証 (疑似ヘッダー禁止、接続固有ヘッダー禁止)
+        validation::validate_trailers(&headers)?;
+
+        // RFC 9113 Section 10.5.1: 送信ヘッダーリストサイズの上限チェック
+        if let Some(max_size) = self.remote_settings.max_header_list_size {
+            let header_list_size = Self::calculate_header_list_size(&headers);
+            if header_list_size > max_size as usize {
+                return Err(Error::invalid_input(format!(
+                    "header list size {} exceeds peer's SETTINGS_MAX_HEADER_LIST_SIZE {}",
+                    header_list_size, max_size
+                )));
+            }
+        }
+
+        // RFC 9113 Section 8.1: トレーラーは常に END_STREAM を伴う
+        let end_stream = true;
+
+        let is_closed = {
+            let stream = self
+                .streams
+                .get_mut(&stream_id)
+                .ok_or_else(|| Error::stream_error(ErrorCode::StreamClosed, "stream not found"))?;
+
+            stream.state_machine_mut().send_headers(end_stream)?;
+
+            stream.state() == StreamState::Closed
         };
 
         // HEADERS フレームを送信 (必要に応じて CONTINUATION に分割)

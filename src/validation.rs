@@ -263,8 +263,8 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
             // ヘッダー値の文字検証 (NUL/CR/LF 禁止)
             validate_header_value_chars(&header.value)?;
 
-            // 禁止ヘッダーのチェック
-            validate_forbidden_header(name, &header.value)?;
+            // 禁止ヘッダーのチェック (リクエスト用: TE は "trailers" のみ許可)
+            validate_forbidden_header_for_request(name, &header.value)?;
 
             // host ヘッダーの値を保持
             if name.eq_ignore_ascii_case(b"host") {
@@ -436,8 +436,8 @@ pub fn validate_response_headers(headers: &[HeaderField]) -> Result<(), Error> {
             // ヘッダー値の文字検証 (NUL/CR/LF 禁止)
             validate_header_value_chars(&header.value)?;
 
-            // 禁止ヘッダーのチェック
-            validate_forbidden_header(name, &header.value)?;
+            // 禁止ヘッダーのチェック (レスポンス用: TE ヘッダー自体が禁止)
+            validate_forbidden_header_for_response(name)?;
         }
     }
 
@@ -475,8 +475,8 @@ pub fn validate_trailers(headers: &[HeaderField]) -> Result<(), Error> {
         // ヘッダー値の文字検証 (NUL/CR/LF 禁止)
         validate_header_value_chars(&header.value)?;
 
-        // 禁止ヘッダーのチェック
-        validate_forbidden_header(name, &header.value)?;
+        // 禁止ヘッダーのチェック (トレーラー用: TE ヘッダー自体が禁止)
+        validate_forbidden_header_for_response(name)?;
     }
 
     Ok(())
@@ -567,9 +567,39 @@ fn validate_header_value_chars(value: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 
-/// 禁止ヘッダーをチェックする
-fn validate_forbidden_header(name: &[u8], value: &[u8]) -> Result<(), Error> {
-    // 接続固有のヘッダーは禁止
+/// 禁止ヘッダーをチェックする (リクエスト用)
+///
+/// RFC 9113 Section 8.2.2: TE ヘッダーは HTTP/2 リクエストでのみ "trailers" 値に限り許可される。
+fn validate_forbidden_header_for_request(name: &[u8], value: &[u8]) -> Result<(), Error> {
+    validate_forbidden_header_common(name)?;
+
+    // RFC 9113 Section 8.2.2: TE ヘッダーはリクエストでのみ "trailers" 値に限り許可
+    if name.eq_ignore_ascii_case(b"te") && !value.eq_ignore_ascii_case(TE_ALLOWED_VALUE) {
+        return Err(malformed_error(ValidationError::InvalidTeHeader));
+    }
+
+    Ok(())
+}
+
+/// 禁止ヘッダーをチェックする (レスポンス・トレーラー用)
+///
+/// RFC 9113 Section 8.2.2: TE ヘッダーの例外はリクエストに限定されるため、
+/// レスポンスやトレーラーでは TE ヘッダー自体が禁止される。
+fn validate_forbidden_header_for_response(name: &[u8]) -> Result<(), Error> {
+    validate_forbidden_header_common(name)?;
+
+    // RFC 9113 Section 8.2.2: レスポンス・トレーラーでは TE ヘッダーは禁止
+    if name.eq_ignore_ascii_case(b"te") {
+        return Err(malformed_error(ValidationError::ForbiddenHeader(
+            name.to_vec(),
+        )));
+    }
+
+    Ok(())
+}
+
+/// 接続固有の禁止ヘッダーをチェックする (共通部分)
+fn validate_forbidden_header_common(name: &[u8]) -> Result<(), Error> {
     if name.eq_ignore_ascii_case(forbidden_headers::CONNECTION)
         || name.eq_ignore_ascii_case(forbidden_headers::KEEP_ALIVE)
         || name.eq_ignore_ascii_case(forbidden_headers::PROXY_CONNECTION)
@@ -579,11 +609,6 @@ fn validate_forbidden_header(name: &[u8], value: &[u8]) -> Result<(), Error> {
         return Err(malformed_error(ValidationError::ForbiddenHeader(
             name.to_vec(),
         )));
-    }
-
-    // TE ヘッダーは "trailers" のみ許可
-    if name.eq_ignore_ascii_case(b"te") && !value.eq_ignore_ascii_case(TE_ALLOWED_VALUE) {
-        return Err(malformed_error(ValidationError::InvalidTeHeader));
     }
 
     Ok(())
@@ -756,6 +781,25 @@ mod tests {
         ];
 
         assert!(validate_request_headers(&headers).is_err());
+    }
+
+    #[test]
+    fn test_te_trailers_forbidden_in_response() {
+        // RFC 9113 Section 8.2.2: TE ヘッダーの例外はリクエストに限定される
+        let headers = vec![
+            HeaderField::from_str(":status", "200"),
+            HeaderField::from_str("te", "trailers"),
+        ];
+
+        assert!(validate_response_headers(&headers).is_err());
+    }
+
+    #[test]
+    fn test_te_trailers_forbidden_in_trailers() {
+        // RFC 9113 Section 8.2.2: TE ヘッダーの例外はリクエストに限定される
+        let headers = vec![HeaderField::from_str("te", "trailers")];
+
+        assert!(validate_trailers(&headers).is_err());
     }
 
     #[test]
