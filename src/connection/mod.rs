@@ -83,8 +83,11 @@ pub struct Connection {
     output_buffer: VecDeque<u8>,
     /// イベントキュー
     events: VecDeque<Event>,
-    /// 設定が確認待ちかどうか
-    settings_ack_pending: bool,
+    /// 未 ACK の SETTINGS フレーム数
+    ///
+    /// RFC 9113 Section 6.5: SETTINGS は接続中いつでも送信でき、
+    /// ACK は最古の未 ACK SETTINGS に対する同期点として定義される。
+    pending_settings_count: u32,
     /// 接続プリフェイスを受信したかどうか
     preface_received: bool,
     /// 接続プリフェイスを送信したかどうか
@@ -154,7 +157,7 @@ impl Connection {
             frame_encoder: FrameEncoder::new(),
             output_buffer: VecDeque::new(),
             events: VecDeque::new(),
-            settings_ack_pending: false,
+            pending_settings_count: 0,
             preface_received: false,
             preface_sent: false,
             header_continuation_stream: None,
@@ -228,7 +231,7 @@ impl Connection {
             settings_frame.add_setting(setting);
         }
         self.send_frame(&Frame::Settings(settings_frame))?;
-        self.settings_ack_pending = true;
+        self.pending_settings_count += 1;
         self.preface_sent = true;
 
         Ok(())
@@ -296,11 +299,6 @@ impl Connection {
     pub fn send_settings(&mut self) -> Result<()> {
         use crate::settings::SettingId;
 
-        if self.settings_ack_pending {
-            // 既に SETTINGS を送信済み
-            return Ok(());
-        }
-
         let mut settings_frame = SettingsFrame::new();
         for setting in self.local_settings.to_settings_list() {
             // RFC 9113 Section 8.4: サーバーは ENABLE_PUSH を 1 に設定できない
@@ -310,7 +308,7 @@ impl Connection {
             settings_frame.add_setting(setting);
         }
         self.send_frame(&Frame::Settings(settings_frame))?;
-        self.settings_ack_pending = true;
+        self.pending_settings_count += 1;
 
         Ok(())
     }
@@ -732,19 +730,30 @@ impl Connection {
         // RFC 9113 Section 8.3.2: 送信前にレスポンスヘッダーの妥当性を検証する
         validation::validate_response_headers(&headers)?;
 
+        let is_informational = headers
+            .iter()
+            .find(|h| h.name == validation::pseudo_headers::STATUS)
+            .is_some_and(|h| h.value.len() == 3 && h.value[0] == b'1');
+
         // RFC 9113 Section 8.1: 1xx 情報レスポンスに END_STREAM を付けてはならない
         // END_STREAM 付きの情報レスポンスは malformed である (Section 8.1.1)
-        if end_stream {
-            let is_informational = headers
-                .iter()
-                .find(|h| h.name == validation::pseudo_headers::STATUS)
-                .is_some_and(|h| h.value.len() == 3 && h.value[0] == b'1');
-            if is_informational {
-                return Err(Error::stream_error(
-                    ErrorCode::ProtocolError,
-                    "informational response (1xx) with END_STREAM is malformed",
-                ));
-            }
+        if end_stream && is_informational {
+            return Err(Error::stream_error(
+                ErrorCode::ProtocolError,
+                "informational response (1xx) with END_STREAM is malformed",
+            ));
+        }
+
+        // RFC 9113 Section 8.1: 最終レスポンス (非 1xx) は 1 回のみ送信可能
+        // 最終レスポンス送信後の追加 HEADERS (END_STREAM なし) は malformed
+        if !is_informational
+            && let Some(stream) = self.streams.get(&stream_id)
+            && stream.final_response_sent()
+        {
+            return Err(Error::stream_error(
+                ErrorCode::ProtocolError,
+                "final response already sent on this stream",
+            ));
         }
 
         // RFC 9113 Section 10.5.1: 送信ヘッダーリストサイズの上限チェック
@@ -765,6 +774,11 @@ impl Connection {
                 .ok_or_else(|| Error::stream_error(ErrorCode::StreamClosed, "stream not found"))?;
 
             stream.state_machine_mut().send_headers(end_stream)?;
+
+            // RFC 9113 Section 8.1: 最終レスポンス送信済みフラグを設定する
+            if !is_informational {
+                stream.set_final_response_sent(true);
+            }
 
             // RFC 9113 Section 8.5: サーバーが通常 CONNECT に 2xx を返す場合、
             // CONNECT トンネル確立済みフラグを設定する
@@ -805,13 +819,20 @@ impl Connection {
     /// 疑似ヘッダーを含めてはならない。
     pub fn send_trailers(&mut self, stream_id: StreamId, headers: Vec<HeaderField>) -> Result<()> {
         // RFC 9113 Section 8.5: CONNECT 確立済みストリームでは HEADERS を送信できない
-        if let Some(stream) = self.streams.get(&stream_id)
-            && stream.connect_established()
-        {
-            return Err(Error::stream_error(
-                ErrorCode::ProtocolError,
-                "HEADERS not allowed on established CONNECT tunnel",
-            ));
+        // RFC 9113 Section 8.1: トレーラーは最終レスポンス送信後にのみ送信可能
+        if let Some(stream) = self.streams.get(&stream_id) {
+            if stream.connect_established() {
+                return Err(Error::stream_error(
+                    ErrorCode::ProtocolError,
+                    "HEADERS not allowed on established CONNECT tunnel",
+                ));
+            }
+            if !stream.final_response_sent() {
+                return Err(Error::stream_error(
+                    ErrorCode::ProtocolError,
+                    "cannot send trailers before final response",
+                ));
+            }
         }
 
         // RFC 9113 Section 8.1: トレーラー検証 (疑似ヘッダー禁止、接続固有ヘッダー禁止)
@@ -1415,14 +1436,14 @@ impl Connection {
     fn handle_settings(&mut self, frame: SettingsFrame) -> Result<()> {
         if frame.ack {
             // RFC 9113 Section 6.5: 対応する SETTINGS がない ACK は接続エラー
-            if !self.settings_ack_pending {
+            if self.pending_settings_count == 0 {
                 return Err(Error::connection_error(
                     ErrorCode::ProtocolError,
                     "received SETTINGS ACK without pending SETTINGS",
                 ));
             }
-            // SETTINGS ACK を受信
-            self.settings_ack_pending = false;
+            // SETTINGS ACK を受信 (最古の未 ACK SETTINGS に対応)
+            self.pending_settings_count -= 1;
             if self.state == ConnectionState::WaitingPreface {
                 self.state = ConnectionState::Active;
             }

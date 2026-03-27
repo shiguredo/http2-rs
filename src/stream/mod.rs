@@ -59,6 +59,11 @@ pub struct Stream {
     /// 204/304 レスポンスおよび HEAD リクエストへのレスポンスは
     /// コンテンツを持たないため、DATA フレームを受信してはならない。
     no_content: bool,
+    /// 最終レスポンス送信済みフラグ (RFC 9113 Section 8.1)
+    ///
+    /// 非 1xx の最終レスポンス HEADERS を送信した場合に true になる。
+    /// 以降の最終レスポンス送信を拒否し、trailer 送信の前提条件として使用する。
+    final_response_sent: bool,
 }
 
 impl Stream {
@@ -86,6 +91,7 @@ impl Stream {
             request_method: None,
             has_protocol: false,
             no_content: false,
+            final_response_sent: false,
         }
     }
 
@@ -254,5 +260,16 @@ impl Stream {
     /// コンテンツを持たないレスポンスフラグを設定する
     pub fn set_no_content(&mut self, no_content: bool) {
         self.no_content = no_content;
+    }
+
+    /// 最終レスポンスを送信済みかどうかを返す
+    #[must_use]
+    pub const fn final_response_sent(&self) -> bool {
+        self.final_response_sent
+    }
+
+    /// 最終レスポンス送信済みフラグを設定する
+    pub fn set_final_response_sent(&mut self, sent: bool) {
+        self.final_response_sent = sent;
     }
 }
