@@ -1032,6 +1032,9 @@ impl Connection {
 
             stream.state_machine_mut().recv_headers(end_stream)?;
 
+            // RFC 9113 Section 8.2.3: 複数の Cookie ヘッダーを連結する
+            let headers = concatenate_cookies(headers);
+
             if is_trailer {
                 // トレーラーの場合はイベントを TrailersReceived に
                 self.events.push_back(Event::TrailersReceived {
@@ -1616,4 +1619,42 @@ impl Connection {
         self.frame_encoder.clear();
         Ok(())
     }
+}
+
+/// RFC 9113 Section 8.2.3: 複数の Cookie ヘッダーフィールドを "; " で連結する
+///
+/// HPACK 展開後に複数の cookie フィールドが存在する場合、
+/// non-HTTP/2 コンテキストへ渡す前に 1 つのフィールドに連結しなければならない (MUST)。
+fn concatenate_cookies(headers: Vec<HeaderField>) -> Vec<HeaderField> {
+    let cookie_count = headers
+        .iter()
+        .filter(|h| h.name.eq_ignore_ascii_case(b"cookie"))
+        .count();
+    if cookie_count <= 1 {
+        return headers;
+    }
+
+    let mut result = Vec::with_capacity(headers.len() - cookie_count + 1);
+    let mut cookie_values: Vec<Vec<u8>> = Vec::with_capacity(cookie_count);
+    let mut cookie_sensitive = false;
+
+    for header in headers {
+        if header.name.eq_ignore_ascii_case(b"cookie") {
+            if header.sensitive {
+                cookie_sensitive = true;
+            }
+            cookie_values.push(header.value);
+        } else {
+            result.push(header);
+        }
+    }
+
+    let concatenated = cookie_values.join(&b"; "[..]);
+    result.push(HeaderField {
+        name: b"cookie".to_vec(),
+        value: concatenated,
+        sensitive: cookie_sensitive,
+    });
+
+    result
 }

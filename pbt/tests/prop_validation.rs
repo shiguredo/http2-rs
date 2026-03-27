@@ -595,4 +595,119 @@ proptest! {
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
     }
+
+    /// CONNECT の :authority にポートがない場合は拒否される (RFC 9113 Section 8.5)
+    #[test]
+    fn prop_connect_authority_without_port_rejected(
+        host in "[a-z][a-z0-9]{0,10}\\.[a-z]{2,3}",
+    ) {
+        // host のみ (ポートなし) は authority-form ではないため拒否される
+        let headers = vec![
+            HeaderField::from_str(":method", "CONNECT"),
+            HeaderField::from_str(":authority", &host),
+        ];
+
+        prop_assert!(validation::validate_request_headers(&headers).is_err());
+    }
+
+    /// CONNECT の :authority が authority-form (host:port) なら通過する (RFC 9113 Section 8.5)
+    #[test]
+    fn prop_connect_authority_with_port_accepted(
+        host in "[a-z][a-z0-9]{0,10}\\.[a-z]{2,3}",
+        port in 1u16..=65535u16,
+    ) {
+        let authority = format!("{host}:{port}");
+        let headers = vec![
+            HeaderField::from_str(":method", "CONNECT"),
+            HeaderField::from_str(":authority", &authority),
+        ];
+
+        prop_assert!(validation::validate_request_headers(&headers).is_ok());
+    }
+
+    /// CONNECT の :authority が IPv6 の authority-form なら通過する (RFC 9113 Section 8.5)
+    #[test]
+    fn prop_connect_ipv6_authority_accepted(
+        port in 1u16..=65535u16,
+    ) {
+        let authority = format!("[::1]:{port}");
+        let headers = vec![
+            HeaderField::from_str(":method", "CONNECT"),
+            HeaderField::from_str(":authority", &authority),
+        ];
+
+        prop_assert!(validation::validate_request_headers(&headers).is_ok());
+    }
+
+    /// OPTIONS 以外で :path = "*" は拒否される (RFC 9113 Section 8.3.1)
+    #[test]
+    fn prop_asterisk_path_on_non_options_rejected(
+        method in prop_oneof![
+            Just("GET"),
+            Just("POST"),
+            Just("PUT"),
+            Just("DELETE"),
+            Just("HEAD"),
+            Just("PATCH"),
+        ],
+    ) {
+        let headers = vec![
+            HeaderField::from_str(":method", method),
+            HeaderField::from_str(":scheme", "https"),
+            HeaderField::from_str(":path", "*"),
+            HeaderField::from_str(":authority", "example.com"),
+        ];
+
+        prop_assert!(validation::validate_request_headers(&headers).is_err());
+    }
+
+    /// OPTIONS で :path = "*" は通過する (RFC 9113 Section 8.3.1)
+    #[test]
+    fn prop_asterisk_path_on_options_accepted(
+        scheme in http_scheme(),
+    ) {
+        let headers = vec![
+            HeaderField::from_str(":method", "OPTIONS"),
+            HeaderField::from_str(":scheme", scheme),
+            HeaderField::from_str(":path", "*"),
+            HeaderField::from_str(":authority", "example.com"),
+        ];
+
+        prop_assert!(validation::validate_request_headers(&headers).is_ok());
+    }
+
+    /// http/https スキームで :authority に userinfo (@) がある場合は拒否される (RFC 9113 Section 8.3.1)
+    #[test]
+    fn prop_userinfo_in_authority_rejected_for_http(
+        user in "[a-z]{1,4}",
+        host in "[a-z][a-z0-9]{0,10}\\.[a-z]{2,3}",
+        scheme in http_scheme(),
+    ) {
+        let authority = format!("{user}@{host}");
+        let headers = vec![
+            HeaderField::from_str(":method", "GET"),
+            HeaderField::from_str(":scheme", scheme),
+            HeaderField::from_str(":path", "/"),
+            HeaderField::from_str(":authority", &authority),
+        ];
+
+        prop_assert!(validation::validate_request_headers(&headers).is_err());
+    }
+
+    /// 非 HTTP スキームで :authority に userinfo (@) があっても通過する (RFC 9113 Section 8.3.1)
+    #[test]
+    fn prop_userinfo_in_authority_accepted_for_non_http(
+        user in "[a-z]{1,4}",
+        host in "[a-z][a-z0-9]{0,10}\\.[a-z]{2,3}",
+    ) {
+        let authority = format!("{user}@{host}");
+        let headers = vec![
+            HeaderField::from_str(":method", "GET"),
+            HeaderField::from_str(":scheme", "ftp"),
+            HeaderField::from_str(":path", "/"),
+            HeaderField::from_str(":authority", &authority),
+        ];
+
+        prop_assert!(validation::validate_request_headers(&headers).is_ok());
+    }
 }

@@ -44,8 +44,12 @@ pub enum ValidationError {
     InvalidTeHeader,
     /// :path が空
     EmptyPath,
+    /// OPTIONS 以外で :path が asterisk-form (*) になっている
+    AsteriskPathOnNonOptions,
     /// CONNECT リクエストに :path または :scheme が含まれている
     ConnectWithPathOrScheme,
+    /// CONNECT の :authority が authority-form (host:port) でない
+    ConnectInvalidAuthority,
     /// CONNECT 以外のリクエストに :path または :scheme がない
     NonConnectMissingPathOrScheme,
     /// Extended CONNECT (RFC 8441) に :scheme または :path がない
@@ -88,8 +92,17 @@ impl std::fmt::Display for ValidationError {
             }
             Self::InvalidTeHeader => write!(f, "TE header with value other than 'trailers'"),
             Self::EmptyPath => write!(f, ":path is empty"),
+            Self::AsteriskPathOnNonOptions => {
+                write!(f, ":path '*' is only allowed for OPTIONS requests")
+            }
             Self::ConnectWithPathOrScheme => {
                 write!(f, "CONNECT request must not include :path or :scheme")
+            }
+            Self::ConnectInvalidAuthority => {
+                write!(
+                    f,
+                    "CONNECT :authority must be in authority-form (host:port)"
+                )
             }
             Self::NonConnectMissingPathOrScheme => {
                 write!(f, "non-CONNECT request must include :path and :scheme")
@@ -168,6 +181,7 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
     let mut scheme_value: Option<&[u8]> = None;
     let mut authority_value: Option<&[u8]> = None;
     let mut host_value: Option<&[u8]> = None;
+    let mut path_value: Option<&[u8]> = None;
 
     for header in headers {
         let name = &header.name;
@@ -200,11 +214,6 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
                         ":authority",
                     )));
                 }
-                // RFC 9113 Section 8.3.1: :authority は http/https URI の
-                // 非推奨な userinfo サブコンポーネントを含んではならない (MUST NOT)
-                if header.value.contains(&b'@') {
-                    return Err(malformed_error(ValidationError::AuthorityWithUserinfo));
-                }
                 seen_authority = true;
                 authority_value = Some(&header.value);
             } else if name == pseudo_headers::PATH {
@@ -216,6 +225,7 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
                 if header.value.is_empty() {
                     return Err(malformed_error(ValidationError::EmptyPath));
                 }
+                path_value = Some(&header.value);
                 seen_path = true;
             } else if name == pseudo_headers::PROTOCOL {
                 if seen_protocol {
@@ -283,6 +293,18 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
         )));
     }
 
+    // RFC 9113 Section 8.3.1: :authority の userinfo 禁止は http/https と CONNECT に限定
+    if let Some(authority) = authority_value
+        && authority.contains(&b'@')
+    {
+        let is_http_scheme = scheme_value
+            .is_some_and(|s| s.eq_ignore_ascii_case(b"http") || s.eq_ignore_ascii_case(b"https"));
+        let is_connect = method == Some(b"CONNECT");
+        if is_http_scheme || is_connect {
+            return Err(malformed_error(ValidationError::AuthorityWithUserinfo));
+        }
+    }
+
     // CONNECT メソッドの特別処理
     if method == Some(b"CONNECT") {
         if seen_protocol {
@@ -315,6 +337,12 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
                     ":authority",
                 )));
             }
+            // RFC 9113 Section 8.5: :authority は authority-form (host:port) でなければならない
+            if let Some(authority) = authority_value
+                && !is_valid_connect_authority(authority)
+            {
+                return Err(malformed_error(ValidationError::ConnectInvalidAuthority));
+            }
         }
     } else {
         // CONNECT 以外で :protocol は禁止
@@ -331,6 +359,11 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
             return Err(malformed_error(ValidationError::MissingPseudoHeader(
                 ":path",
             )));
+        }
+
+        // RFC 9113 Section 8.3.1: asterisk-form (*) は OPTIONS のみ
+        if path_value == Some(b"*") && method != Some(b"OPTIONS") {
+            return Err(malformed_error(ValidationError::AsteriskPathOnNonOptions));
         }
 
         // RFC 9113 Section 8.3.1: http/https スキームでは :authority または Host が必須
@@ -554,6 +587,42 @@ fn validate_forbidden_header(name: &[u8], value: &[u8]) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+/// RFC 9113 Section 8.5: CONNECT の :authority が authority-form (host:port) か検証する
+///
+/// authority-form = uri-host ":" port (RFC 9112 Section 3.2.3)
+/// IPv6 リテラル ([::1]:443) を考慮する。
+fn is_valid_connect_authority(authority: &[u8]) -> bool {
+    if authority.is_empty() {
+        return false;
+    }
+
+    // IPv6 リテラルの場合: [host]:port
+    if authority.starts_with(b"[") {
+        // ']' を探す
+        let Some(bracket_end) = authority.iter().position(|&b| b == b']') else {
+            return false;
+        };
+        // ']:' の後に port が続く必要がある
+        let rest = &authority[bracket_end + 1..];
+        if !rest.starts_with(b":") || rest.len() < 2 {
+            return false;
+        }
+        return rest[1..].iter().all(|b| b.is_ascii_digit());
+    }
+
+    // IPv4 / ホスト名の場合: 最後の ':' 以降が port
+    let Some(colon_pos) = authority.iter().rposition(|&b| b == b':') else {
+        return false;
+    };
+    // host 部分が空でないこと
+    if colon_pos == 0 {
+        return false;
+    }
+    // port 部分が空でなく全て数字であること
+    let port = &authority[colon_pos + 1..];
+    !port.is_empty() && port.iter().all(|b| b.is_ascii_digit())
 }
 
 /// Malformed メッセージエラーを生成する
