@@ -68,6 +68,9 @@ pub struct Connection {
     next_stream_id: StreamId,
     /// 最後に受信したストリーム ID
     last_recv_stream_id: StreamId,
+    /// 最後に正常処理が完了したストリーム ID (GOAWAY 用)
+    /// RFC 9113 Section 5.4.1: GOAWAY には正常に受信した最後のストリーム ID を載せる
+    last_successful_stream_id: StreamId,
     /// HPACK エンコーダー
     hpack_encoder: HpackEncoder,
     /// HPACK デコーダー
@@ -144,6 +147,7 @@ impl Connection {
             closed_streams: HashSet::new(),
             next_stream_id,
             last_recv_stream_id: 0,
+            last_successful_stream_id: 0,
             hpack_encoder: HpackEncoder::new(limits.header_table_size as usize),
             hpack_decoder: HpackDecoder::new(limits.header_table_size as usize),
             frame_decoder: FrameDecoder::new(limits.max_frame_size),
@@ -670,7 +674,7 @@ impl Connection {
 
     /// GOAWAY を送信する
     pub fn send_goaway(&mut self, error_code: ErrorCode, debug_data: Vec<u8>) -> Result<()> {
-        let goaway_frame = GoawayFrame::new(self.last_recv_stream_id, error_code.as_u32())
+        let goaway_frame = GoawayFrame::new(self.last_successful_stream_id, error_code.as_u32())
             .with_debug_data(debug_data);
         self.send_frame(&Frame::Goaway(goaway_frame))?;
         self.state = ConnectionState::GoawaySent;
@@ -1098,6 +1102,12 @@ impl Connection {
             }
 
             self.process_headers(frame.stream_id, headers, frame.end_stream)?;
+
+            // RFC 9113 Section 5.4.1: ヘッダーの HPACK デコードと検証が
+            // 両方成功した場合のみ GOAWAY 用の last_successful_stream_id を更新する
+            if frame.stream_id > self.last_successful_stream_id {
+                self.last_successful_stream_id = frame.stream_id;
+            }
         } else {
             // ヘッダーブロック継続
             // RFC 9113 Section 6.2: END_STREAM フラグは最初の HEADERS フレームで決まる
@@ -1649,6 +1659,12 @@ impl Connection {
             let end_stream = self.header_end_stream;
             self.header_end_stream = false;
             self.process_headers(expected_stream_id, headers, end_stream)?;
+
+            // RFC 9113 Section 5.4.1: ヘッダーの HPACK デコードと検証が
+            // 両方成功した場合のみ GOAWAY 用の last_successful_stream_id を更新する
+            if expected_stream_id > self.last_successful_stream_id {
+                self.last_successful_stream_id = expected_stream_id;
+            }
         }
 
         Ok(())

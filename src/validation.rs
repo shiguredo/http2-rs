@@ -70,6 +70,12 @@ pub enum ValidationError {
     AuthorityWithUserinfo,
     /// :protocol の値が不正 (空または非 token 文字を含む)
     InvalidProtocolValue(Vec<u8>),
+    /// :method の値が不正 (空または非 token 文字を含む)
+    InvalidMethodValue(Vec<u8>),
+    /// :scheme の値が不正 (RFC 3986 Section 3.1 の scheme 構文に違反)
+    InvalidSchemeValue(Vec<u8>),
+    /// :path の値が不正 (http/https で絶対パスでない)
+    InvalidPathValue(Vec<u8>),
 }
 
 impl std::fmt::Display for ValidationError {
@@ -145,6 +151,23 @@ impl std::fmt::Display for ValidationError {
                     String::from_utf8_lossy(value)
                 )
             }
+            Self::InvalidMethodValue(value) => {
+                write!(
+                    f,
+                    "invalid :method value: {}",
+                    String::from_utf8_lossy(value)
+                )
+            }
+            Self::InvalidSchemeValue(value) => {
+                write!(
+                    f,
+                    "invalid :scheme value: {}",
+                    String::from_utf8_lossy(value)
+                )
+            }
+            Self::InvalidPathValue(value) => {
+                write!(f, "invalid :path value: {}", String::from_utf8_lossy(value))
+            }
         }
     }
 }
@@ -198,12 +221,24 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
                         ":method",
                     )));
                 }
+                // RFC 9110 Section 9: method = token
+                if !is_valid_token(&header.value) {
+                    return Err(malformed_error(ValidationError::InvalidMethodValue(
+                        header.value.clone(),
+                    )));
+                }
                 seen_method = true;
                 method = Some(&header.value);
             } else if name == pseudo_headers::SCHEME {
                 if seen_scheme {
                     return Err(malformed_error(ValidationError::DuplicatePseudoHeader(
                         ":scheme",
+                    )));
+                }
+                // RFC 3986 Section 3.1: scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+                if !is_valid_scheme(&header.value) {
+                    return Err(malformed_error(ValidationError::InvalidSchemeValue(
+                        header.value.clone(),
                     )));
                 }
                 seen_scheme = true;
@@ -364,6 +399,19 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
         // RFC 9113 Section 8.3.1: asterisk-form (*) は OPTIONS のみ
         if path_value == Some(b"*") && method != Some(b"OPTIONS") {
             return Err(malformed_error(ValidationError::AsteriskPathOnNonOptions));
+        }
+
+        // RFC 9113 Section 8.3.1: http/https スキームでは :path は
+        // absolute-path ("/" で始まる) または asterisk-form ("*") でなければならない
+        if let Some(scheme) = scheme_value
+            && (scheme.eq_ignore_ascii_case(b"http") || scheme.eq_ignore_ascii_case(b"https"))
+            && let Some(path) = path_value
+            && path != b"*"
+            && !path.starts_with(b"/")
+        {
+            return Err(malformed_error(ValidationError::InvalidPathValue(
+                path.to_vec(),
+            )));
         }
 
         // RFC 9113 Section 8.3.1: http/https スキームでは :authority または Host が必須
@@ -533,6 +581,21 @@ const fn is_token_char_case_insensitive(b: u8) -> bool {
 /// バイト列が有効な HTTP token (1*tchar) かどうかを検証する
 fn is_valid_token(value: &[u8]) -> bool {
     !value.is_empty() && value.iter().all(|&b| is_token_char_case_insensitive(b))
+}
+
+/// バイト列が有効な URI scheme かどうかを検証する
+///
+/// RFC 3986 Section 3.1: scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+fn is_valid_scheme(value: &[u8]) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    if !value[0].is_ascii_alphabetic() {
+        return false;
+    }
+    value[1..]
+        .iter()
+        .all(|&b| b.is_ascii_alphanumeric() || b == b'+' || b == b'-' || b == b'.')
 }
 
 /// ヘッダー値に禁止文字が含まれていないか検証する
