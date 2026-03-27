@@ -274,6 +274,17 @@ impl Connection {
                     if let Some(stream_id) = self.frame_decoder.last_decoded_stream_id()
                         && let Some(error_code) = e.error_code()
                     {
+                        // RFC 9113 Section 6.4: idle ストリームへの RST_STREAM は禁止
+                        // されているため、idle ストリームの場合は接続エラーに昇格する
+                        if self.is_idle_stream(stream_id) {
+                            return Err(Error::connection_error(
+                                error_code,
+                                format!(
+                                    "stream error on idle stream {} promoted to connection error",
+                                    stream_id
+                                ),
+                            ));
+                        }
                         self.reset_stream(stream_id, error_code)?;
                     }
                 }
@@ -477,8 +488,14 @@ impl Connection {
                 };
 
                 let buffer_len = stream.send_buffer().len();
-                if buffer_len == 0 {
+                let pending_es = stream.pending_end_stream();
+                // RFC 9113 Section 6.9: フロー制御ウィンドウが 0 でも
+                // END_STREAM 付きの長さ 0 DATA フレームは送信してよい
+                if buffer_len == 0 && !pending_es {
                     return Ok(());
+                }
+                if buffer_len == 0 && pending_es {
+                    break;
                 }
 
                 // 接続レベルのウィンドウ
@@ -535,6 +552,17 @@ impl Connection {
             if end_stream || remaining_after == 0 {
                 break;
             }
+        }
+
+        // RFC 9113 Section 6.9: 空 DATA + END_STREAM を送信する
+        // ループから break で抜けた場合（buffer_len == 0 && pending_end_stream）
+        if let Some(stream) = self.streams.get_mut(&stream_id)
+            && stream.pending_end_stream()
+            && stream.send_buffer().is_empty()
+        {
+            stream.set_pending_end_stream(false);
+            let data_frame = DataFrame::new(stream_id, vec![]).with_end_stream(true);
+            self.send_frame(&Frame::Data(data_frame))?;
         }
 
         Ok(())
@@ -1059,6 +1087,14 @@ impl Connection {
                                 .iter()
                                 .find(|h| h.name == validation::pseudo_headers::STATUS)
                                 .is_some_and(|h| h.value.len() == 3 && h.value[0] == b'1');
+                            // RFC 9113 Section 8.1: END_STREAM 付きの情報レスポンス (1xx) は
+                            // malformed である (Section 8.1.1)
+                            if is_informational && end_stream {
+                                return Err(Error::stream_error(
+                                    ErrorCode::ProtocolError,
+                                    "informational response (1xx) with END_STREAM is malformed",
+                                ));
+                            }
                             if !is_informational {
                                 stream.set_initial_headers_received(true);
                             }
@@ -1336,9 +1372,18 @@ impl Connection {
                 if stream.state() == StreamState::Closed {
                     return Ok(());
                 }
-                stream
+                // RFC 9113 Section 6.9.1: ストリームレベルのウィンドウオーバーフローは
+                // RST_STREAM(FLOW_CONTROL_ERROR) で処理する（接続エラーではない）
+                if let Err(e) = stream
                     .flow_control_mut()
-                    .recv_window_update(frame.window_size_increment)?;
+                    .recv_window_update(frame.window_size_increment)
+                {
+                    if e.is_connection_error() {
+                        self.reset_stream(frame.stream_id, ErrorCode::FlowControlError)?;
+                        return Ok(());
+                    }
+                    return Err(e);
+                }
                 // ストリームレベルのウィンドウが増えたので、そのストリームのキューを処理
                 self.flush_stream_data(frame.stream_id)?;
             }
@@ -1481,6 +1526,22 @@ impl Connection {
         }
 
         Ok(())
+    }
+
+    /// ストリームが idle 状態かどうかを判定する
+    ///
+    /// RFC 9113 Section 5.1: マップに存在しないストリームで、
+    /// last_recv_stream_id より大きい（または偶数で未使用）ものは idle。
+    fn is_idle_stream(&self, stream_id: StreamId) -> bool {
+        if self.streams.contains_key(&stream_id) {
+            return false;
+        }
+        // サーバープッシュ非サポートのため偶数ストリーム ID は常にアイドル
+        if stream_id.is_multiple_of(2) {
+            return true;
+        }
+        // last_recv_stream_id よりも大きいストリーム ID はアイドル
+        stream_id > self.last_recv_stream_id
     }
 
     /// マップ内のストリームが Closed 状態かどうかを判定する
