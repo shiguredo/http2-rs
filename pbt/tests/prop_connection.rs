@@ -493,19 +493,18 @@ proptest! {
 
     /// preface 未受信でフレーム処理がエラーになるテスト
     ///
-    /// RFC 9113 Section 3.4: サーバーは client preface を受信済みでなければならない
+    /// RFC 9113 Section 3.4: サーバーは client preface を受信済みでなければならない。
+    /// feed() が接続プリフェイスを検証するため、不正なデータは feed() 時点でエラーになる。
     #[test]
     fn prop_server_rejects_frame_without_preface(_dummy in Just(())) {
         let mut server = Connection::server(Limits::default());
         // mark_preface_received() を呼ばずに initiate
         server.initiate().unwrap();
 
-        // SETTINGS フレームを送信しても preface 未受信のためエラー
+        // SETTINGS フレームを送信しても preface と一致しないためエラー
         let settings_frame = Frame::Settings(SettingsFrame::new());
         let settings_bytes = encode_frame(&settings_frame);
-        server.feed(&settings_bytes).unwrap();
-
-        let result = server.process();
+        let result = server.feed(&settings_bytes);
         prop_assert!(result.is_err());
         if let Err(e) = result {
             prop_assert!(e.is_connection_error());

@@ -101,6 +101,11 @@ pub struct Connection {
     /// ヘッダーブロック間に複数回変化した場合、最小値と最終値の両方を送出する。
     /// (min, final) の形式で保持する。
     pending_table_size_update: Option<(u32, u32)>,
+    /// 接続プリフェイス受信バッファ
+    ///
+    /// サーバーロールで feed() 経由のプリフェイス検証に使用する。
+    /// 24 バイト蓄積された時点で検証し、preface_received を true にする。
+    preface_buffer: Vec<u8>,
 }
 
 impl Connection {
@@ -146,6 +151,7 @@ impl Connection {
             header_end_stream: false,
             initial_no_rfc7540_priorities: None,
             pending_table_size_update: None,
+            preface_buffer: Vec::new(),
         }
     }
 
@@ -218,8 +224,44 @@ impl Connection {
     }
 
     /// データを入力バッファに追加する
+    ///
+    /// サーバーロールでプリフェイス未受信の場合、先頭 24 バイトを接続プリフェイスとして
+    /// 検証する (RFC 9113 Section 3.4)。プリフェイスが無効な場合は PROTOCOL_ERROR を返す。
     pub fn feed(&mut self, data: &[u8]) -> Result<usize> {
-        self.frame_decoder.feed(data);
+        // サーバーロールでプリフェイス未受信の場合、先頭バイトを検証する
+        if self.role == Role::Server && !self.preface_received {
+            let preface_len = crate::CONNECTION_PREFACE_LEN;
+            let needed = preface_len - self.preface_buffer.len();
+            let consume = data.len().min(needed);
+
+            self.preface_buffer.extend_from_slice(&data[..consume]);
+
+            // 蓄積分が接続プリフェイスのプレフィックスと一致するか検証する
+            // 不一致を早期検出することで、不正なデータがフレームデコーダーに渡るのを防ぐ
+            let buf_len = self.preface_buffer.len();
+            if self.preface_buffer[..] != crate::CONNECTION_PREFACE[..buf_len] {
+                return Err(Error::connection_error(
+                    ErrorCode::ProtocolError,
+                    "invalid client connection preface",
+                ));
+            }
+
+            if buf_len < preface_len {
+                // まだプリフェイス全体を受信していない
+                return Ok(data.len());
+            }
+
+            self.preface_received = true;
+
+            // プリフェイス以降のデータをフレームデコーダーに渡す
+            let remaining = &data[consume..];
+            if !remaining.is_empty() {
+                self.frame_decoder.feed(remaining);
+            }
+        } else {
+            self.frame_decoder.feed(data);
+        }
+
         Ok(data.len())
     }
 
@@ -425,7 +467,7 @@ impl Connection {
         end_stream: bool,
     ) -> Result<()> {
         // ストリームの存在確認と状態遷移
-        let is_closed = {
+        {
             let stream = self
                 .streams
                 .get_mut(&stream_id)
@@ -433,9 +475,7 @@ impl Connection {
 
             // 状態チェック（end_stream=false でも送信可能な状態か検証する）
             stream.state_machine_mut().send_data(end_stream)?;
-
-            end_stream && stream.state() == StreamState::Closed
-        };
+        }
 
         // データをキューに追加
         self.queue_data(stream_id, data, end_stream)?;
@@ -443,11 +483,9 @@ impl Connection {
         // キューから送信可能な分を送信
         self.flush_stream_data(stream_id)?;
 
-        // 送信側で end_stream によりストリームが closed になった場合
-        if is_closed {
-            self.events.push_back(Event::StreamClosed { stream_id });
-            self.streams.remove(&stream_id);
-        }
+        // RFC 9113 Section 5.1: END_STREAM 付きフレームを実際に送信完了した場合のみ
+        // ストリームを closed として削除する
+        self.try_remove_closed_stream(stream_id);
 
         Ok(())
     }
@@ -570,19 +608,37 @@ impl Connection {
 
     /// 全ストリームのキューからデータを送信する
     fn flush_all_stream_data(&mut self) -> Result<()> {
-        // 送信待ちデータがあるストリームを収集
+        // 送信待ちデータまたは送信待ち END_STREAM があるストリームを収集
         let stream_ids: Vec<StreamId> = self
             .streams
             .iter()
-            .filter(|(_, s)| !s.send_buffer().is_empty())
+            .filter(|(_, s)| !s.send_buffer().is_empty() || s.pending_end_stream())
             .map(|(id, _)| *id)
             .collect();
 
         for stream_id in stream_ids {
             self.flush_stream_data(stream_id)?;
+            self.try_remove_closed_stream(stream_id);
         }
 
         Ok(())
+    }
+
+    /// END_STREAM 送信済みかつ状態が Closed のストリームを削除する
+    ///
+    /// RFC 9113 Section 5.1: END_STREAM 付きフレームを実際に送信した時点で
+    /// ストリームは closed に遷移する。送信バッファに未送信データが残っている間は
+    /// ストリームを削除してはならない。
+    fn try_remove_closed_stream(&mut self, stream_id: StreamId) {
+        let should_remove = self.streams.get(&stream_id).is_some_and(|stream| {
+            stream.state() == StreamState::Closed
+                && stream.send_buffer().is_empty()
+                && !stream.pending_end_stream()
+        });
+        if should_remove {
+            self.events.push_back(Event::StreamClosed { stream_id });
+            self.streams.remove(&stream_id);
+        }
     }
 
     /// ストリームをリセットする
@@ -1386,6 +1442,8 @@ impl Connection {
                 }
                 // ストリームレベルのウィンドウが増えたので、そのストリームのキューを処理
                 self.flush_stream_data(frame.stream_id)?;
+                // WINDOW_UPDATE により送信が完了した場合、ストリームを削除する
+                self.try_remove_closed_stream(frame.stream_id);
             }
             // 暗黙的にクローズ済みストリームへの WINDOW_UPDATE は無視
         }

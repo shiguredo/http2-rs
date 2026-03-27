@@ -20,10 +20,13 @@ impl TlsClientConfig {
         let verifier = rustls_platform_verifier::Verifier::new(Arc::new(provider))
             .map_err(|e| Error::Tls(Box::new(e)))?;
 
-        let config = ClientConfig::builder()
+        let mut config = ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(verifier))
             .with_no_client_auth();
+
+        // RFC 9113 Section 3.3: ALPN で h2 を設定する
+        config.alpn_protocols = vec![b"h2".to_vec()];
 
         Ok(Self {
             inner: Arc::new(config),
@@ -46,9 +49,12 @@ impl TlsClientConfig {
             root_store.add(cert).map_err(|e| Error::Tls(Box::new(e)))?;
         }
 
-        let config = ClientConfig::builder()
+        let mut config = ClientConfig::builder()
             .with_root_certificates(root_store)
             .with_no_client_auth();
+
+        // RFC 9113 Section 3.3: ALPN で h2 を設定する
+        config.alpn_protocols = vec![b"h2".to_vec()];
 
         Ok(Self {
             inner: Arc::new(config),
@@ -57,10 +63,13 @@ impl TlsClientConfig {
 
     /// 証明書検証を無効化した設定を作成（テスト用）
     pub fn insecure() -> Result<Self> {
-        let config = ClientConfig::builder()
+        let mut config = ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(InsecureVerifier))
             .with_no_client_auth();
+
+        // RFC 9113 Section 3.3: ALPN で h2 を設定する
+        config.alpn_protocols = vec![b"h2".to_vec()];
 
         Ok(Self {
             inner: Arc::new(config),
@@ -92,10 +101,13 @@ impl TlsServerConfig {
 
         let key = PrivateKeyDer::from_pem_slice(key_pem).map_err(|e| Error::Tls(Box::new(e)))?;
 
-        let config = ServerConfig::builder()
+        let mut config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(certs, key)
             .map_err(|e| Error::Tls(Box::new(e)))?;
+
+        // RFC 9113 Section 3.3: ALPN で h2 を設定する
+        config.alpn_protocols = vec![b"h2".to_vec()];
 
         Ok(Self {
             inner: Arc::new(config),
@@ -107,10 +119,13 @@ impl TlsServerConfig {
         certs: Vec<CertificateDer<'static>>,
         key: PrivateKeyDer<'static>,
     ) -> Result<Self> {
-        let config = ServerConfig::builder()
+        let mut config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(certs, key)
             .map_err(|e| Error::Tls(Box::new(e)))?;
+
+        // RFC 9113 Section 3.3: ALPN で h2 を設定する
+        config.alpn_protocols = vec![b"h2".to_vec()];
 
         Ok(Self {
             inner: Arc::new(config),
