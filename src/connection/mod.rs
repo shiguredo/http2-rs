@@ -2,7 +2,7 @@
 //!
 //! Sans I/O パターンで HTTP/2 接続を管理する。
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::error::{Error, ErrorCode, Result};
 use crate::event::Event;
@@ -58,6 +58,12 @@ pub struct Connection {
     flow_control: FlowControl,
     /// ストリーム一覧
     streams: HashMap<StreamId, Stream>,
+    /// クローズ済みストリーム ID の集合
+    ///
+    /// RFC 9113 Section 5.1: マップから削除されたストリームの ID を追跡する。
+    /// RST_STREAM 送信後や END_STREAM による正常クローズ後に到着する遅延フレームを
+    /// 接続エラーではなく破棄として処理するために使用する。
+    closed_streams: HashSet<StreamId>,
     /// 次のストリーム ID
     next_stream_id: StreamId,
     /// 最後に受信したストリーム ID
@@ -135,6 +141,7 @@ impl Connection {
             remote_settings: Settings::new(),
             flow_control: FlowControl::new(limits.connection_window_size),
             streams: HashMap::new(),
+            closed_streams: HashSet::new(),
             next_stream_id,
             last_recv_stream_id: 0,
             hpack_encoder: HpackEncoder::new(limits.header_table_size as usize),
@@ -637,6 +644,7 @@ impl Connection {
         });
         if should_remove {
             self.events.push_back(Event::StreamClosed { stream_id });
+            self.closed_streams.insert(stream_id);
             self.streams.remove(&stream_id);
         }
     }
@@ -720,6 +728,21 @@ impl Connection {
         // RFC 9113 Section 8.3.2: 送信前にレスポンスヘッダーの妥当性を検証する
         validation::validate_response_headers(&headers)?;
 
+        // RFC 9113 Section 8.1: 1xx 情報レスポンスに END_STREAM を付けてはならない
+        // END_STREAM 付きの情報レスポンスは malformed である (Section 8.1.1)
+        if end_stream {
+            let is_informational = headers
+                .iter()
+                .find(|h| h.name == validation::pseudo_headers::STATUS)
+                .is_some_and(|h| h.value.len() == 3 && h.value[0] == b'1');
+            if is_informational {
+                return Err(Error::stream_error(
+                    ErrorCode::ProtocolError,
+                    "informational response (1xx) with END_STREAM is malformed",
+                ));
+            }
+        }
+
         // RFC 9113 Section 10.5.1: 送信ヘッダーリストサイズの上限チェック
         if let Some(max_size) = self.remote_settings.max_header_list_size {
             let header_list_size = Self::calculate_header_list_size(&headers);
@@ -765,6 +788,7 @@ impl Connection {
         // 送信側で end_stream によりストリームが closed になった場合
         if is_closed {
             self.events.push_back(Event::StreamClosed { stream_id });
+            self.closed_streams.insert(stream_id);
             self.streams.remove(&stream_id);
         }
 
@@ -823,6 +847,7 @@ impl Connection {
         // 送信側で end_stream によりストリームが closed になった場合
         if is_closed {
             self.events.push_back(Event::StreamClosed { stream_id });
+            self.closed_streams.insert(stream_id);
             self.streams.remove(&stream_id);
         }
 
@@ -941,6 +966,15 @@ impl Connection {
             stream.state_machine_mut().recv_data(frame.end_stream)?;
             stream.flow_control_mut().consume_recv(flow_control_size)?;
 
+            // RFC 9110 Section 6.4.1: コンテンツを持たないレスポンス (204/304/HEAD) に
+            // DATA フレームが含まれている場合は malformed として扱う
+            if stream.no_content() {
+                return Err(Error::stream_error(
+                    ErrorCode::ProtocolError,
+                    "DATA received on response defined as having no content (204/304/HEAD)",
+                ));
+            }
+
             // RFC 9113 Section 8.1.1: Content-Length とボディサイズの一貫性チェック
             let data_len = frame.data.len() as u64;
             stream.add_received_content_length(data_len);
@@ -982,6 +1016,7 @@ impl Connection {
             self.events.push_back(Event::StreamClosed {
                 stream_id: frame.stream_id,
             });
+            self.closed_streams.insert(frame.stream_id);
             self.streams.remove(&frame.stream_id);
         }
 
@@ -990,23 +1025,54 @@ impl Connection {
 
     /// HEADERS フレームを処理する
     fn handle_headers(&mut self, frame: HeadersFrame) -> Result<()> {
-        // RFC 9113 Section 5.1.1: ストリーム ID 検証
-        self.validate_recv_stream_id(frame.stream_id)?;
+        // RFC 9113 Section 5.1.1: ストリーム ID の偶奇チェック
+        self.validate_stream_id_parity(frame.stream_id)?;
 
-        // RFC 9113 Section 8.5: CONNECT 確立済みストリームでは HEADERS を拒否する
-        // Extended CONNECT (:protocol 付き) は通常のストリームとして動作するため対象外
-        if let Some(stream) = self.streams.get(&frame.stream_id)
-            && stream.connect_established()
+        // RFC 9113 Section 5.1.1: GOAWAY 送信後の新規ストリームチェック
+        if matches!(self.state, ConnectionState::GoawaySent)
+            && frame.stream_id > self.last_recv_stream_id
+            && !self.streams.contains_key(&frame.stream_id)
         {
-            return Err(Error::stream_error(
+            return Err(Error::connection_error(
                 ErrorCode::ProtocolError,
-                "HEADERS not allowed on established CONNECT tunnel",
+                "new stream after GOAWAY sent",
             ));
         }
 
-        // 同時ストリーム数の上限チェック
-        if !self.streams.contains_key(&frame.stream_id) {
-            self.check_concurrent_streams_limit(frame.stream_id)?;
+        // RFC 9113 Section 5.1: クローズ済みストリームへの遅延 HEADERS は
+        // HPACK 状態を更新してから破棄する必要がある (MUST)。
+        // closed_streams で追跡しているため、未開設ストリームの非単調 ID とは区別できる。
+        let is_previously_closed = self.closed_streams.contains(&frame.stream_id);
+
+        if !is_previously_closed {
+            // RFC 9113 Section 5.1.1: 新規ストリームの単調増加チェック
+            if !self.streams.contains_key(&frame.stream_id)
+                && frame.stream_id <= self.last_recv_stream_id
+            {
+                return Err(Error::connection_error(
+                    ErrorCode::ProtocolError,
+                    format!(
+                        "stream ID {} not greater than last received {}",
+                        frame.stream_id, self.last_recv_stream_id
+                    ),
+                ));
+            }
+
+            // RFC 9113 Section 8.5: CONNECT 確立済みストリームでは HEADERS を拒否する
+            // Extended CONNECT (:protocol 付き) は通常のストリームとして動作するため対象外
+            if let Some(stream) = self.streams.get(&frame.stream_id)
+                && stream.connect_established()
+            {
+                return Err(Error::stream_error(
+                    ErrorCode::ProtocolError,
+                    "HEADERS not allowed on established CONNECT tunnel",
+                ));
+            }
+
+            // 同時ストリーム数の上限チェック
+            if !self.streams.contains_key(&frame.stream_id) {
+                self.check_concurrent_streams_limit(frame.stream_id)?;
+            }
         }
 
         if frame.stream_id > self.last_recv_stream_id {
@@ -1014,7 +1080,7 @@ impl Connection {
         }
 
         if frame.end_headers {
-            // 完全なヘッダーブロック
+            // 完全なヘッダーブロック: HPACK 状態を必ず更新する
             let headers = self
                 .hpack_decoder
                 .decode(&frame.header_block_fragment)
@@ -1026,8 +1092,8 @@ impl Connection {
                 })?;
 
             // RFC 9113 Section 5.1: Closed 状態のストリームへの HEADERS は
-            // HPACK 状態を更新した上で破棄する
-            if self.is_stream_closed(frame.stream_id) {
+            // HPACK 状態を更新した上で破棄する (マップから削除済みの場合を含む)
+            if is_previously_closed || self.is_stream_closed(frame.stream_id) {
                 return Ok(());
             }
 
@@ -1147,16 +1213,28 @@ impl Connection {
                 Role::Client => {
                     validation::validate_response_headers(&headers)?;
 
-                    // クライアント側: 通常 CONNECT の 2xx レスポンスで CONNECT 確立
+                    // クライアント側: レスポンスステータスの判定
                     let status = headers
                         .iter()
                         .find(|h| h.name == validation::pseudo_headers::STATUS)
                         .map(|h| &h.value[..]);
+
+                    // 通常 CONNECT の 2xx レスポンスで CONNECT 確立
                     let is_2xx = status.is_some_and(|s| s.len() == 3 && s[0] == b'2');
                     if is_2xx && let Some(stream) = self.streams.get_mut(&stream_id) {
                         let is_connect = stream.request_method().is_some_and(|m| m == b"CONNECT");
                         if is_connect && !stream.has_protocol() {
                             stream.set_connect_established(true);
+                        }
+                    }
+
+                    // RFC 9110 Section 6.4.1: 204/304 レスポンスおよび HEAD リクエストへの
+                    // レスポンスはコンテンツを持たない。DATA フレームを受信してはならない。
+                    let is_no_content = status == Some(b"204") || status == Some(b"304");
+                    if let Some(stream) = self.streams.get_mut(&stream_id) {
+                        let is_head = stream.request_method().is_some_and(|m| m == b"HEAD");
+                        if is_no_content || is_head {
+                            stream.set_no_content(true);
                         }
                     }
                 }
@@ -1263,6 +1341,7 @@ impl Connection {
 
         if is_closed {
             self.events.push_back(Event::StreamClosed { stream_id });
+            self.closed_streams.insert(stream_id);
             self.streams.remove(&stream_id);
         }
 
@@ -1312,6 +1391,7 @@ impl Connection {
                     stream_id: frame.stream_id,
                     error_code: ErrorCode::from_u32(frame.error_code),
                 });
+                self.closed_streams.insert(frame.stream_id);
                 self.streams.remove(&frame.stream_id);
             }
             None => {
@@ -1558,8 +1638,9 @@ impl Connection {
             self.header_block_fragment.clear();
 
             // RFC 9113 Section 5.1: Closed 状態のストリームへの HEADERS は
-            // HPACK 状態を更新した上で破棄する
-            if self.is_stream_closed(expected_stream_id) {
+            // HPACK 状態を更新した上で破棄する (マップから削除済みの場合を含む)
+            let is_previously_closed = self.closed_streams.contains(&expected_stream_id);
+            if is_previously_closed || self.is_stream_closed(expected_stream_id) {
                 self.header_end_stream = false;
                 return Ok(());
             }
@@ -1605,9 +1686,11 @@ impl Connection {
         Ok(())
     }
 
-    /// ストリーム ID を検証する (RFC 9113 Section 5.1.1)
-    fn validate_recv_stream_id(&self, stream_id: StreamId) -> Result<()> {
-        // 偶奇チェック
+    /// ストリーム ID の偶奇チェック (RFC 9113 Section 5.1.1)
+    ///
+    /// HEADERS フレームで使用する。HPACK デコード前に呼び出しても安全な検証のみ行う。
+    /// 偶奇違反は接続エラーで接続を閉じるため、HPACK 状態は不要。
+    fn validate_stream_id_parity(&self, stream_id: StreamId) -> Result<()> {
         let is_client_initiated = stream_id % 2 == 1;
         match self.role {
             Role::Server => {
@@ -1619,7 +1702,6 @@ impl Connection {
                 }
             }
             Role::Client => {
-                // PUSH_PROMISE 非サポートのため、偶数は拒否
                 if !is_client_initiated {
                     return Err(Error::connection_error(
                         ErrorCode::ProtocolError,
@@ -1628,29 +1710,6 @@ impl Connection {
                 }
             }
         }
-
-        // 単調増加チェック (新規ストリームの場合)
-        if !self.streams.contains_key(&stream_id) && stream_id <= self.last_recv_stream_id {
-            return Err(Error::connection_error(
-                ErrorCode::ProtocolError,
-                format!(
-                    "stream ID {} not greater than last received {}",
-                    stream_id, self.last_recv_stream_id
-                ),
-            ));
-        }
-
-        // GOAWAY 後の上限チェック
-        if matches!(self.state, ConnectionState::GoawaySent)
-            && stream_id > self.last_recv_stream_id
-            && !self.streams.contains_key(&stream_id)
-        {
-            return Err(Error::connection_error(
-                ErrorCode::ProtocolError,
-                "new stream after GOAWAY sent",
-            ));
-        }
-
         Ok(())
     }
 

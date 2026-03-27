@@ -54,6 +54,11 @@ pub struct Stream {
     /// Extended CONNECT は通常の HTTP/2 ストリームとして動作するため、
     /// CONNECT トンネルのフレーム種別制限の対象外。
     has_protocol: bool,
+    /// コンテンツを持たないレスポンス (RFC 9110 Section 6.4.1)
+    ///
+    /// 204/304 レスポンスおよび HEAD リクエストへのレスポンスは
+    /// コンテンツを持たないため、DATA フレームを受信してはならない。
+    no_content: bool,
 }
 
 impl Stream {
@@ -80,6 +85,7 @@ impl Stream {
             connect_established: false,
             request_method: None,
             has_protocol: false,
+            no_content: false,
         }
     }
 
@@ -237,5 +243,16 @@ impl Stream {
     /// Extended CONNECT フラグを設定する
     pub fn set_has_protocol(&mut self, has_protocol: bool) {
         self.has_protocol = has_protocol;
+    }
+
+    /// コンテンツを持たないレスポンスかどうかを返す
+    #[must_use]
+    pub const fn no_content(&self) -> bool {
+        self.no_content
+    }
+
+    /// コンテンツを持たないレスポンスフラグを設定する
+    pub fn set_no_content(&mut self, no_content: bool) {
+        self.no_content = no_content;
     }
 }
