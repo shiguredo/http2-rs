@@ -10,7 +10,7 @@ draft-ietf-webtrans-http2-14 に対応し、Extended CONNECT (`:protocol=webtran
 
 ## 起動方法
 
-デフォルト (`127.0.0.1:8443`) で起動する。
+デフォルト (`127.0.0.1:4443`) で起動する。
 
 ```bash
 cd examples/wt_server
@@ -20,7 +20,7 @@ cargo run
 リッスンアドレスを指定する。
 
 ```bash
-cargo run -- --listen 127.0.0.1:8443
+cargo run -- --listen 127.0.0.1:4443
 ```
 
 `WtServerRequest::reject(404)` の動作確認。
@@ -39,7 +39,7 @@ RUST_LOG=debug cargo run
 
 | オプション | 説明 | デフォルト |
 | --- | --- | --- |
-| `-l`, `--listen <ADDR>` | リッスンアドレス | `127.0.0.1:8443` |
+| `-l`, `--listen <ADDR>` | リッスンアドレス | `127.0.0.1:4443` |
 | `--reject-connect` | 全セッションを 404 で拒否 | 無効 |
 | `-h`, `--help` | ヘルプを表示 | |
 | `--version` | バージョンを表示 | |

@@ -7,7 +7,7 @@
 //!
 //! ```bash
 //! cd examples/wt_server
-//! cargo run -- --listen 127.0.0.1:8443
+//! cargo run -- --listen 127.0.0.1:4443
 //! ```
 
 mod error;
@@ -25,7 +25,7 @@ use tokio_http2::{
 
 use crate::error::Error;
 
-const DEFAULT_LISTEN: &str = "127.0.0.1:8443";
+const DEFAULT_LISTEN: &str = "127.0.0.1:4443";
 
 #[tokio::main]
 async fn main() {
