@@ -1,0 +1,49 @@
+fail_fast = true
+default_install_hook_types = ["pre-commit", "pre-push"]
+exclude = { glob = ["target/**", "fuzz/target/**"] }
+
+[[repos]]
+repo = "builtin"
+hooks = [
+  { id = "trailing-whitespace" },
+  { id = "end-of-file-fixer" },
+  { id = "check-toml" },
+  { id = "check-merge-conflict" },
+  { id = "check-case-conflict" },
+  { id = "check-added-large-files" },
+  { id = "detect-private-key" },
+  { id = "mixed-line-ending" },
+]
+
+[[repos]]
+repo = "local"
+hooks = [
+  {
+    id = "cargo-fmt",
+    name = "cargo fmt",
+    entry = "cargo fmt --all -- --check",
+    language = "system",
+    types = ["rust"],
+    pass_filenames = false,
+    priority = 0,
+  },
+  {
+    id = "cargo-clippy",
+    name = "cargo clippy",
+    entry = "cargo clippy --workspace --all-targets -- -D warnings",
+    language = "system",
+    types = ["rust"],
+    pass_filenames = false,
+    priority = 10,
+  },
+  {
+    id = "cargo-test",
+    name = "cargo test",
+    entry = "cargo test --workspace",
+    language = "system",
+    types = ["rust"],
+    pass_filenames = false,
+    stages = ["pre-push"],
+    priority = 20,
+  },
+]
