@@ -1,6 +1,7 @@
 # CHANGES.md を整備して WebTransport サーバーサンプル追加を仕上げる
 
 - Created: 2026-04-17
+- Completed: 2026-04-17
 - Model: Opus 4.7
 
 ## 概要
@@ -51,3 +52,9 @@ CLAUDE.md の変更履歴・issue 運用ルールに従い、リリースノー�
 ## 依存
 
 - 0001〜0008 全て
+
+## 解決方法
+
+- `CHANGES.md` を新規作成し `## develop` セクションに本変更の `[ADD]` エントリと `### misc` を記載
+- 親 issue 0001 を含む全子 issue を `issues/closed/` に移動し Completed 日付と解決方法を追記
+- `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` がすべて通ることを確認

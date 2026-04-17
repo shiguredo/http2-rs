@@ -1,6 +1,7 @@
 # WebTransport サーバーサンプルを追加する (親 issue)
 
 - Created: 2026-04-17
+- Completed: 2026-04-17
 - Model: Opus 4.7
 
 ## 概要
@@ -45,3 +46,21 @@ http3-rs の `examples/wt_server/` に相当する位置付けで、draft-14 準
 - RFC 8441 (Extended CONNECT)
 - RFC 9113 (HTTP/2)
 - RFC 9000 Section 2, 3 (Stream Types and States)
+
+## 解決方法
+
+子 issue 0002〜0009 をすべて `issues/closed/` で完了した。
+
+1. 0002: `shiguredo_http2` の WebTransport 統合層 (SETTINGS / Connection / Stream / Event)
+2. 0003: `tokio-http2` の WebTransport サーバー API 外形
+3. 0004: CONNECT ストリーム ↔ `WtSession` の glue (actor pattern の driver task)
+4. 0005: WT DATAGRAM capsule の送受信
+5. 0006: 動的フロー制御 (`WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` の自動発行)
+6. 0007: WebTransport 統合テスト (`test_webtransport.rs` に bidi_echo / reject)
+7. 0008: `examples/wt_server/` (draft-14 対応のエコーサーバーサンプル)
+8. 0009: `CHANGES.md` 整備と全 issue クローズ
+
+結果:
+
+- `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` がすべて green
+- `cd examples/wt_server && cargo run` で HTTP/2 WebTransport サーバーが起動できる
