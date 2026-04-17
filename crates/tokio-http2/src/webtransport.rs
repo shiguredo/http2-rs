@@ -16,7 +16,9 @@ use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
-use shiguredo_http2::webtransport::{WtConfig, WtEvent, WtSession, WtStreamId};
+use shiguredo_http2::webtransport::{
+    WtConfig, WtEvent, WtSession, WtStreamId, stream::stream_id as wt_stream_id,
+};
 use shiguredo_http2::{Event, HeaderField, StreamId};
 
 use crate::error::{Error, Result};
@@ -135,6 +137,8 @@ impl WtServerRequest {
                 cmd_rx,
                 cmd_tx: driver_cmd_tx,
                 stream_channels: HashMap::new(),
+                peer_closed_bidi_count: 0,
+                peer_closed_uni_count: 0,
             };
             state.run().await
         });
@@ -495,6 +499,10 @@ struct DriverState {
     cmd_rx: mpsc::UnboundedReceiver<DriverCmd>,
     cmd_tx: mpsc::UnboundedSender<DriverCmd>,
     stream_channels: HashMap<WtStreamId, mpsc::UnboundedSender<StreamPacket>>,
+    /// ピア側から開いて閉じた双方向ストリームの数 (WT_MAX_STREAMS 自動発行用)
+    peer_closed_bidi_count: u64,
+    /// ピア側から開いて閉じた単方向ストリームの数 (WT_MAX_STREAMS 自動発行用)
+    peer_closed_uni_count: u64,
 }
 
 impl DriverState {
@@ -641,8 +649,13 @@ impl DriverState {
                 self.wt_session.process().map_err(wt_err)?;
 
                 while let Some(wt_ev) = self.wt_session.poll_event() {
-                    self.dispatch_wt_event(wt_ev);
+                    self.dispatch_wt_event(wt_ev)?;
                 }
+
+                // draft-ietf-webtrans-http2-14 Section 6: 受信時にフロー制御を更新する
+                self.maybe_grow_session_window()?;
+                self.maybe_grow_max_streams(true)?;
+                self.maybe_grow_max_streams(false)?;
 
                 self.flush_wt_output().await?;
 
@@ -663,7 +676,63 @@ impl DriverState {
         Ok(())
     }
 
-    fn dispatch_wt_event(&mut self, ev: WtEvent) {
+    /// セッションレベルの受信ウィンドウを必要に応じて拡張する
+    fn maybe_grow_session_window(&mut self) -> Result<()> {
+        let initial = self.wt_session.config().initial_max_data;
+        if self.wt_session.flow_control().should_send_max_data(initial) {
+            self.wt_session.grow_recv_window(initial).map_err(wt_err)?;
+        }
+        Ok(())
+    }
+
+    /// ストリームレベルの受信ウィンドウを必要に応じて拡張する
+    fn maybe_grow_stream_window(&mut self, stream_id: WtStreamId) -> Result<()> {
+        let (bidirectional, recv_available) = match self.wt_session.stream(stream_id) {
+            Some(s) => (s.is_bidirectional(), s.recv_available()),
+            None => return Ok(()),
+        };
+        let initial = if bidirectional {
+            self.wt_session.config().initial_max_stream_data_bidi_remote
+        } else {
+            self.wt_session.config().initial_max_stream_data_uni
+        };
+        if recv_available < initial / 2 {
+            self.wt_session
+                .grow_stream_recv_window(stream_id, initial)
+                .map_err(wt_err)?;
+        }
+        Ok(())
+    }
+
+    /// ストリーム数上限を必要に応じて拡張する
+    fn maybe_grow_max_streams(&mut self, bidirectional: bool) -> Result<()> {
+        let initial = if bidirectional {
+            self.wt_session.config().initial_max_streams_bidi
+        } else {
+            self.wt_session.config().initial_max_streams_uni
+        };
+        if initial == 0 {
+            return Ok(());
+        }
+        let closed = if bidirectional {
+            self.peer_closed_bidi_count
+        } else {
+            self.peer_closed_uni_count
+        };
+        if closed * 2 >= initial {
+            self.wt_session
+                .grow_max_streams(closed, bidirectional)
+                .map_err(wt_err)?;
+            if bidirectional {
+                self.peer_closed_bidi_count = 0;
+            } else {
+                self.peer_closed_uni_count = 0;
+            }
+        }
+        Ok(())
+    }
+
+    fn dispatch_wt_event(&mut self, ev: WtEvent) -> Result<()> {
         match ev {
             WtEvent::StreamOpened {
                 stream_id,
@@ -695,8 +764,11 @@ impl DriverState {
                 if let Some(ch) = self.stream_channels.get(&stream_id) {
                     let _ = ch.send(StreamPacket::Data { data, fin });
                 }
+                // ストリームレベルのフロー制御を更新する
+                self.maybe_grow_stream_window(stream_id)?;
                 if fin {
                     self.stream_channels.remove(&stream_id);
+                    self.account_peer_stream_closed(stream_id);
                 }
             }
             WtEvent::StreamReset {
@@ -706,6 +778,7 @@ impl DriverState {
                 if let Some(ch) = self.stream_channels.remove(&stream_id) {
                     let _ = ch.send(StreamPacket::Reset { error_code });
                 }
+                self.account_peer_stream_closed(stream_id);
             }
             WtEvent::StopSending { .. } => {
                 // 現在の API では送信側にシグナルを伝達しない (将来の拡張)
@@ -716,6 +789,20 @@ impl DriverState {
             WtEvent::SessionDraining | WtEvent::SessionClosed { .. } => {
                 // 何もしない (ユーザーに close/drain を通知する手段は将来追加)
             }
+        }
+        Ok(())
+    }
+
+    /// ピアが開いたストリームのクローズをカウントする
+    fn account_peer_stream_closed(&mut self, stream_id: WtStreamId) {
+        // クライアント開始ストリームのみカウント (サーバーから見てピア発起)
+        if !wt_stream_id::is_client_initiated(stream_id) {
+            return;
+        }
+        if wt_stream_id::is_bidirectional(stream_id) {
+            self.peer_closed_bidi_count = self.peer_closed_bidi_count.saturating_add(1);
+        } else {
+            self.peer_closed_uni_count = self.peer_closed_uni_count.saturating_add(1);
         }
     }
 

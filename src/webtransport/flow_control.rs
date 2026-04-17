@@ -74,6 +74,42 @@ impl WtFlowControl {
         self.recv_offset
     }
 
+    /// 送信上限 (ピアが許可した最大バイト数) を取得する
+    #[must_use]
+    pub const fn send_max(&self) -> u64 {
+        self.send_max
+    }
+
+    /// 受信上限 (ローカルが許可した最大バイト数) を取得する
+    #[must_use]
+    pub const fn recv_max(&self) -> u64 {
+        self.recv_max
+    }
+
+    /// ローカルが許可した双方向ストリーム最大数を取得する
+    #[must_use]
+    pub const fn max_streams_bidi_local(&self) -> u64 {
+        self.max_streams_bidi_local
+    }
+
+    /// ローカルが許可した単方向ストリーム最大数を取得する
+    #[must_use]
+    pub const fn max_streams_uni_local(&self) -> u64 {
+        self.max_streams_uni_local
+    }
+
+    /// ピアが許可した双方向ストリーム最大数を取得する
+    #[must_use]
+    pub const fn max_streams_bidi_remote(&self) -> u64 {
+        self.max_streams_bidi_remote
+    }
+
+    /// ピアが許可した単方向ストリーム最大数を取得する
+    #[must_use]
+    pub const fn max_streams_uni_remote(&self) -> u64 {
+        self.max_streams_uni_remote
+    }
+
     /// 送信を消費する
     pub fn consume_send(&mut self, size: u64) -> WtResult<()> {
         let new_offset = self.send_offset.saturating_add(size);

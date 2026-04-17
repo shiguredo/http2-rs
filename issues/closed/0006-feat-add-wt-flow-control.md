@@ -1,6 +1,7 @@
 # WebTransport の動的フロー制御を実装する
 
 - Created: 2026-04-17
+- Completed: 2026-04-17
 - Model: Opus 4.7
 
 ## 概要
@@ -49,3 +50,19 @@ draft-ietf-webtrans-http2-14 の動的フロー制御カプセルを自動で発
 ## 依存
 
 - 0002, 0003, 0004, 0005
+
+## 解決方法
+
+- `src/webtransport/mod.rs` に以下の公開 API を追加
+  - `WtSession::send_max_data` / `send_max_stream_data` / `send_max_streams` (capsule 直接送出)
+  - `WtSession::grow_recv_window` / `grow_stream_recv_window` / `grow_max_streams` (高レベル)
+  - `WtSession::flow_control` / `flow_control_mut` / `stream` / `config`
+- `src/webtransport/flow_control.rs` に getter を追加 (`send_max`, `recv_max`, `max_streams_*_{local,remote}`)
+- `src/webtransport/stream.rs` に getter を追加 (`send_max`, `recv_max`)
+- `crates/tokio-http2/src/webtransport.rs` の `DriverState` に自動発行ロジックを追加
+  - `maybe_grow_session_window`: セッション recv ウィンドウを `initial_max_data` 単位で拡張
+  - `maybe_grow_stream_window`: ストリーム recv ウィンドウを `initial_max_stream_data_*` 単位で拡張
+  - `maybe_grow_max_streams`: ピアが閉じたストリーム数が閾値を超えたら `WT_MAX_STREAMS` を送出
+  - `account_peer_stream_closed`: クライアント起点ストリームのクローズをカウント
+- `handle_event` / `dispatch_wt_event` から各 `maybe_grow_*` を呼び出し、データパスに組み込み
+- 送信側 (`WT_*_BLOCKED`) 自動発行は将来の課題として残し、API のみ `WtSession` 側で利用可能な状態 (既存 `Capsule::WtDataBlocked` 等は encode 可能)
