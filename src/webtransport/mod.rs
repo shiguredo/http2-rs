@@ -456,6 +456,97 @@ impl WtSession {
         Ok(())
     }
 
+    /// セッションレベルのフロー制御上限を増やす `WT_MAX_DATA` を送信する
+    ///
+    /// draft-ietf-webtrans-http2-14 Section 6.5: 受信側が受信可能なバイト数を通知する。
+    /// 単調増加でなければならない (現在値より小さい値を指定すると `flow_control_error`)。
+    pub fn send_max_data(&mut self, maximum: u64) -> WtResult<()> {
+        let capsule = Capsule::WtMaxData { maximum };
+        self.capsule_encoder.encode(&capsule);
+        self.output_buffer.extend(self.capsule_encoder.take());
+        Ok(())
+    }
+
+    /// ストリームレベルのフロー制御上限を増やす `WT_MAX_STREAM_DATA` を送信する
+    ///
+    /// draft-ietf-webtrans-http2-14 Section 6.6: 指定ストリームの受信可能バイト数を通知する。
+    pub fn send_max_stream_data(&mut self, stream_id: WtStreamId, maximum: u64) -> WtResult<()> {
+        let capsule = Capsule::WtMaxStreamData { stream_id, maximum };
+        self.capsule_encoder.encode(&capsule);
+        self.output_buffer.extend(self.capsule_encoder.take());
+        Ok(())
+    }
+
+    /// ストリーム数上限を増やす `WT_MAX_STREAMS` を送信する
+    ///
+    /// draft-ietf-webtrans-http2-14 Section 6.7: ピアが新規ストリームを開ける上限を通知する。
+    pub fn send_max_streams(&mut self, maximum: u64, bidirectional: bool) -> WtResult<()> {
+        let capsule = Capsule::WtMaxStreams {
+            maximum,
+            bidirectional,
+        };
+        self.capsule_encoder.encode(&capsule);
+        self.output_buffer.extend(self.capsule_encoder.take());
+        Ok(())
+    }
+
+    /// フロー制御への参照を取得する
+    #[must_use]
+    pub const fn flow_control(&self) -> &WtFlowControl {
+        &self.flow_control
+    }
+
+    /// フロー制御への可変参照を取得する
+    pub fn flow_control_mut(&mut self) -> &mut WtFlowControl {
+        &mut self.flow_control
+    }
+
+    /// 指定ストリームへの参照を取得する
+    #[must_use]
+    pub fn stream(&self, stream_id: WtStreamId) -> Option<&WtStream> {
+        self.streams.get(&stream_id)
+    }
+
+    /// セッション受信ウィンドウを拡張し、`WT_MAX_DATA` を自動送信する
+    pub fn grow_recv_window(&mut self, increment: u64) -> WtResult<()> {
+        self.flow_control.add_recv_max(increment)?;
+        let new_max = self.flow_control.recv_max();
+        self.send_max_data(new_max)
+    }
+
+    /// ストリーム受信ウィンドウを拡張し、`WT_MAX_STREAM_DATA` を自動送信する
+    pub fn grow_stream_recv_window(
+        &mut self,
+        stream_id: WtStreamId,
+        increment: u64,
+    ) -> WtResult<()> {
+        let stream = self
+            .streams
+            .get_mut(&stream_id)
+            .ok_or_else(|| WtError::invalid_stream_id("stream not found"))?;
+        let new_max = stream.recv_max().saturating_add(increment);
+        stream.update_recv_max(new_max);
+        self.send_max_stream_data(stream_id, new_max)
+    }
+
+    /// ローカル側ストリーム上限を拡張し、`WT_MAX_STREAMS` を自動送信する
+    pub fn grow_max_streams(&mut self, increment: u64, bidirectional: bool) -> WtResult<()> {
+        self.flow_control
+            .add_max_streams_local(increment, bidirectional);
+        let new_max = if bidirectional {
+            self.flow_control.max_streams_bidi_local()
+        } else {
+            self.flow_control.max_streams_uni_local()
+        };
+        self.send_max_streams(new_max, bidirectional)
+    }
+
+    /// セッション設定への参照を取得する
+    #[must_use]
+    pub const fn config(&self) -> &WtConfig {
+        &self.config
+    }
+
     /// セッションをドレインする
     pub fn drain(&mut self) -> WtResult<()> {
         if self.state != WtSessionState::Active {

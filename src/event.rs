@@ -28,6 +28,11 @@ pub enum Event {
         headers: Vec<HeaderField>,
         /// END_STREAM フラグ
         end_stream: bool,
+        /// Extended CONNECT の :protocol 擬似ヘッダー値 (RFC 8441)
+        ///
+        /// `:method = CONNECT` かつ `:protocol` が指定されていた場合に `Some` になる。
+        /// それ以外は `None`。WebTransport over HTTP/2 では `Some(b"webtransport")` が入る。
+        protocol: Option<Vec<u8>>,
     },
 
     /// データを受信した

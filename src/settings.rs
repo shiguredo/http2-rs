@@ -91,6 +91,18 @@ pub enum SettingId {
     /// RFC 9218 で定義される設定パラメータ。
     /// 値が 1 の場合、RFC 7540 の優先度シグナリングを使用しないことを示す。
     NoRfc7540Priorities = 0x09,
+    /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61) (draft-ietf-webtrans-http2-14 Section 11.2)
+    WtInitialMaxData = 0x2b61,
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62)
+    WtInitialMaxStreamDataUni = 0x2b62,
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63)
+    WtInitialMaxStreamDataBidiLocal = 0x2b63,
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64)
+    WtInitialMaxStreamsUni = 0x2b64,
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65)
+    WtInitialMaxStreamsBidi = 0x2b65,
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66)
+    WtInitialMaxStreamDataBidiRemote = 0x2b66,
 }
 
 impl SettingId {
@@ -106,6 +118,12 @@ impl SettingId {
             0x06 => Some(Self::MaxHeaderListSize),
             0x08 => Some(Self::EnableConnectProtocol),
             0x09 => Some(Self::NoRfc7540Priorities),
+            0x2b61 => Some(Self::WtInitialMaxData),
+            0x2b62 => Some(Self::WtInitialMaxStreamDataUni),
+            0x2b63 => Some(Self::WtInitialMaxStreamDataBidiLocal),
+            0x2b64 => Some(Self::WtInitialMaxStreamsUni),
+            0x2b65 => Some(Self::WtInitialMaxStreamsBidi),
+            0x2b66 => Some(Self::WtInitialMaxStreamDataBidiRemote),
             _ => None,
         }
     }
@@ -167,6 +185,8 @@ pub struct Settings {
     /// true の場合、RFC 7540 の優先度シグナリング (PRIORITY フレーム、
     /// HEADERS フレームの優先度フィールド) を使用しないことを示す。
     pub no_rfc7540_priorities: bool,
+    /// WebTransport 初期設定 (draft-ietf-webtrans-http2-14 Section 11.2)
+    pub wt_initial: WtInitialSettings,
 }
 
 impl Default for Settings {
@@ -180,6 +200,7 @@ impl Default for Settings {
             max_header_list_size: DEFAULT_MAX_HEADER_LIST_SIZE,
             enable_connect_protocol: false,
             no_rfc7540_priorities: false,
+            wt_initial: WtInitialSettings::default(),
         }
     }
 }
@@ -237,6 +258,24 @@ impl Settings {
                 }
                 self.no_rfc7540_priorities = setting.value == 1;
             }
+            Some(SettingId::WtInitialMaxData) => {
+                self.wt_initial.initial_max_data = Some(setting.value);
+            }
+            Some(SettingId::WtInitialMaxStreamDataUni) => {
+                self.wt_initial.initial_max_stream_data_uni = Some(setting.value);
+            }
+            Some(SettingId::WtInitialMaxStreamDataBidiLocal) => {
+                self.wt_initial.initial_max_stream_data_bidi_local = Some(setting.value);
+            }
+            Some(SettingId::WtInitialMaxStreamsUni) => {
+                self.wt_initial.initial_max_streams_uni = Some(setting.value);
+            }
+            Some(SettingId::WtInitialMaxStreamsBidi) => {
+                self.wt_initial.initial_max_streams_bidi = Some(setting.value);
+            }
+            Some(SettingId::WtInitialMaxStreamDataBidiRemote) => {
+                self.wt_initial.initial_max_stream_data_bidi_remote = Some(setting.value);
+            }
             None => {
                 // RFC 9113 Section 6.5.2: unknown settings MUST be ignored
             }
@@ -285,6 +324,8 @@ impl Settings {
         if self.no_rfc7540_priorities {
             list.push(Setting::from_setting_id(SettingId::NoRfc7540Priorities, 1));
         }
+        // draft-ietf-webtrans-http2-14 Section 11.2: WebTransport 関連 SETTINGS
+        list.extend(self.wt_initial.to_settings_list());
         list
     }
 }
@@ -445,19 +486,5 @@ impl WtInitialSettings {
             list.push(Setting::new(SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI, v));
         }
         list
-    }
-}
-
-impl Settings {
-    /// WebTransport 設定を適用する
-    ///
-    /// WebTransport 関連の SETTINGS パラメータを抽出して `WtInitialSettings` を生成する。
-    #[must_use]
-    pub fn apply_webtransport(&self, settings: &[Setting]) -> WtInitialSettings {
-        let mut wt_settings = WtInitialSettings::new();
-        for setting in settings {
-            wt_settings.apply(*setting);
-        }
-        wt_settings
     }
 }

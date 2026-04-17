@@ -1,6 +1,7 @@
 # WT DATAGRAM capsule の送受信 API を実装する
 
 - Created: 2026-04-17
+- Completed: 2026-04-17
 - Model: Opus 4.7
 
 ## 概要
@@ -44,3 +45,10 @@ session.send_datagram(&datagram).await?;
 ## 依存
 
 - 0002, 0003, 0004
+
+## 解決方法
+
+- `WtServerSession::send_datagram(Vec<u8>) -> Result<()>` を実装 (`DriverCmd::SendDatagram` 経由で `WtSession::send_datagram`)
+- `WtServerSession::recv_datagram() -> Option<Vec<u8>>` を実装 (datagram_rx チャネルを await)
+- `WtEvent::DatagramReceived` を driver で datagram_tx チャネルに push
+- 実装は 0003 / 0004 と同一コミットに含めた

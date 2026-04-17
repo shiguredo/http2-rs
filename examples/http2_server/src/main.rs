@@ -94,6 +94,7 @@ async fn handle_connection(
                 stream_id,
                 headers,
                 end_stream,
+                ..
             } => {
                 println!(
                     "[{peer_addr}] stream {stream_id}: received headers (end_stream={end_stream})"

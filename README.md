@@ -85,7 +85,7 @@ conn.initiate()?;
 // イベントを処理してレスポンスを送信
 // while let Some(event) = conn.poll_event() {
 //     match event {
-//         Event::HeadersReceived { stream_id, headers, end_stream } => {
+//         Event::HeadersReceived { stream_id, headers, end_stream, .. } => {
 //             let response_headers = vec![
 //                 HeaderField::from_str(":status", "200"),
 //                 HeaderField::from_str("content-type", "text/plain"),
@@ -305,6 +305,16 @@ cargo run -p http2_client
 # または
 curl -k --http2 https://localhost:8443/
 ```
+
+### wt_server
+
+WebTransport over HTTP/2 (draft-ietf-webtrans-http2-14) エコーサーバーの例です。自己署名証明書を自動生成します。
+
+```bash
+cargo run -p wt_server
+```
+
+デフォルトは `127.0.0.1:4443` で起動し、bidi / uni ストリームと DATAGRAM capsule をそのままエコーします。詳しくは [examples/wt_server/README.md](examples/wt_server/README.md) を参照。
 
 ## 規格書
 

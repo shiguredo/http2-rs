@@ -1,6 +1,7 @@
 # CONNECT ストリームと WtSession を接続する glue を実装する
 
 - Created: 2026-04-17
+- Completed: 2026-04-17
 - Model: Opus 4.7
 
 ## 概要
@@ -53,3 +54,14 @@
 ## 依存
 
 - 0002, 0003
+
+## 解決方法
+
+- `crates/tokio-http2/src/webtransport.rs` の `DriverState` でルーティング層を実装
+- CONNECT ストリームへの `Event::DataReceived` 受信時に `WtSession::feed` → `process` を呼び、`poll_event()` でイベントをドレイン
+- `StreamOpened` / `StreamData` / `StreamReset` を stream 単位の mpsc チャネルに分配 (`stream_channels: HashMap<WtStreamId, Sender>`)
+- `DatagramReceived` は datagram_tx チャネルへ流す
+- `WtSession::poll_output()` の結果を `ServerConnection::send_data` で CONNECT ストリームに送出する `flush_wt_output`
+- `DriverCmd` を mpsc (unbounded) で driver に送信し、送信系 API (`send_stream_data`, `open_bidi`, `open_uni`, `send_datagram`, `reset_stream`, `stop_sending`, `close`, `drain`) を駆動
+- `tokio::select! { biased; cmd, event }` でコマンド優先のイベントループを実装 (backpressure なしのシンプル構成)
+- CONNECT ストリーム終了 (`StreamReset` / `StreamClosed` / `end_stream=true` の `DataReceived`) 検知時に driver を終了

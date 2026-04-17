@@ -1,6 +1,7 @@
 # examples/wt_server/ を実装する
 
 - Created: 2026-04-17
+- Completed: 2026-04-17
 - Model: Opus 4.7
 
 ## 概要
@@ -79,3 +80,16 @@ examples/wt_server/
 ## 依存
 
 - 0002〜0007 全て
+
+## 解決方法
+
+- `examples/wt_server/` 以下を新規追加
+  - `Cargo.toml` (workspace に含める)
+  - `src/main.rs`: CLI (`--listen`, `--reject-connect`)、サーバー起動、接続ごとに handle_connection
+  - `src/tls.rs`: ECDSA P-256 自己署名証明書を生成し SHA-256 ハッシュをログ出力 (13 日有効期間)
+  - `src/error.rs`: エラー型
+  - `README.md`: 使い方
+- ワークスペース設定 (ルート `Cargo.toml`) に `examples/wt_server` を追加
+- `WtServerSession::into_parts()` で bidi / uni / datagram を `tokio::select!` で並行処理
+- 単方向ストリームは `WtSessionHandle::open_uni()` で対向の送信ストリームを開いてエコー
+- `cargo check -p wt_server` / `cargo clippy -p wt_server` がすべて通る

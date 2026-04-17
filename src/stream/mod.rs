@@ -54,6 +54,11 @@ pub struct Stream {
     /// Extended CONNECT は通常の HTTP/2 ストリームとして動作するため、
     /// CONNECT トンネルのフレーム種別制限の対象外。
     has_protocol: bool,
+    /// Extended CONNECT の :protocol 擬似ヘッダー値
+    ///
+    /// RFC 8441 Section 4: Extended CONNECT で指定されたプロトコル名を保持する。
+    /// `has_protocol` が true の場合に設定される。
+    protocol: Option<Vec<u8>>,
     /// コンテンツを持たないレスポンス (RFC 9110 Section 6.4.1)
     ///
     /// 204/304 レスポンスおよび HEAD リクエストへのレスポンスは
@@ -90,6 +95,7 @@ impl Stream {
             connect_established: false,
             request_method: None,
             has_protocol: false,
+            protocol: None,
             no_content: false,
             final_response_sent: false,
         }
@@ -249,6 +255,17 @@ impl Stream {
     /// Extended CONNECT フラグを設定する
     pub fn set_has_protocol(&mut self, has_protocol: bool) {
         self.has_protocol = has_protocol;
+    }
+
+    /// Extended CONNECT の :protocol 擬似ヘッダー値を取得する
+    #[must_use]
+    pub fn protocol(&self) -> Option<&[u8]> {
+        self.protocol.as_deref()
+    }
+
+    /// Extended CONNECT の :protocol 擬似ヘッダー値を設定する
+    pub fn set_protocol(&mut self, protocol: Vec<u8>) {
+        self.protocol = Some(protocol);
     }
 
     /// コンテンツを持たないレスポンスかどうかを返す

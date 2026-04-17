@@ -319,6 +319,18 @@ impl WtStream {
         self.recv_max.saturating_sub(self.recv_offset)
     }
 
+    /// 送信上限 (ピアが許可した最大バイト数) を取得する
+    #[must_use]
+    pub const fn send_max(&self) -> u64 {
+        self.send_max
+    }
+
+    /// 受信上限 (ローカルが許可した最大バイト数) を取得する
+    #[must_use]
+    pub const fn recv_max(&self) -> u64 {
+        self.recv_max
+    }
+
     /// データを送信する
     ///
     /// # 引数

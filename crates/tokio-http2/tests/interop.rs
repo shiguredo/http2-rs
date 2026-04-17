@@ -1,4 +1,5 @@
 //! tokio-nghttp2 と tokio-http2 の相互運用テスト
+#![allow(clippy::collapsible_match)]
 
 use std::time::Duration;
 
@@ -90,6 +91,7 @@ async fn test_nghttp2_client_http2_server_basic() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 } => {
                     if end_stream {
                         let method = headers
@@ -145,6 +147,7 @@ async fn test_nghttp2_client_http2_server_basic() {
                 stream_id: recv_stream_id,
                 headers,
                 end_stream,
+                ..
             } => {
                 assert_eq!(recv_stream_id, stream_id);
                 assert!(end_stream);
@@ -189,6 +192,7 @@ async fn test_http2_client_nghttp2_server_basic() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 } => {
                     if end_stream {
                         let method = headers
@@ -246,6 +250,7 @@ async fn test_http2_client_nghttp2_server_basic() {
                 stream_id: recv_stream_id,
                 headers,
                 end_stream,
+                ..
             } => {
                 assert_eq!(recv_stream_id, stream_id);
                 assert!(end_stream);
@@ -344,6 +349,7 @@ async fn test_nghttp2_client_http2_server_multiple_streams() {
             stream_id,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert!(stream_ids.contains(&stream_id));
@@ -439,6 +445,7 @@ async fn test_http2_client_nghttp2_server_multiple_streams() {
             stream_id,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert!(stream_ids.contains(&stream_id));
@@ -1008,6 +1015,7 @@ async fn test_nghttp2_client_http2_server_post_with_body() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 })) => {
                     let method = headers
                         .iter()
@@ -1126,6 +1134,7 @@ async fn test_http2_client_nghttp2_server_post_with_body() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 })) => {
                     let method = headers
                         .iter()
@@ -1216,6 +1225,7 @@ async fn test_http2_client_nghttp2_server_post_with_body() {
                 stream_id: recv_stream_id,
                 headers,
                 end_stream,
+                ..
             } => {
                 assert_eq!(recv_stream_id, stream_id);
                 assert!(!end_stream);
@@ -1336,6 +1346,7 @@ async fn test_nghttp2_client_http2_server_response_body() {
                 stream_id: recv_stream_id,
                 headers,
                 end_stream,
+                ..
             } => {
                 assert_eq!(recv_stream_id, stream_id);
                 assert!(!end_stream); // ボディが続く
@@ -1448,6 +1459,7 @@ async fn test_http2_client_nghttp2_server_response_body() {
                 stream_id: recv_stream_id,
                 headers,
                 end_stream,
+                ..
             } => {
                 assert_eq!(recv_stream_id, stream_id);
                 assert!(!end_stream);
@@ -1506,6 +1518,7 @@ async fn test_nghttp2_client_http2_server_put() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 })) => {
                     if end_stream {
                         let method = headers
@@ -1596,6 +1609,7 @@ async fn test_http2_client_nghttp2_server_delete() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 })) => {
                     if end_stream {
                         let method = headers
@@ -1684,6 +1698,7 @@ async fn test_nghttp2_client_http2_server_head() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 })) => {
                     if end_stream {
                         let method = headers
@@ -1741,6 +1756,7 @@ async fn test_nghttp2_client_http2_server_head() {
             stream_id: recv_stream_id,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert_eq!(recv_stream_id, stream_id);
@@ -1959,6 +1975,7 @@ async fn test_nghttp2_client_http2_server_custom_headers() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 })) => {
                     if end_stream {
                         // カスタムヘッダーを検証
@@ -2075,6 +2092,7 @@ async fn test_http2_client_nghttp2_server_custom_headers() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 })) => {
                     if end_stream {
                         // カスタムヘッダーを検証
@@ -2829,6 +2847,7 @@ async fn test_nghttp2_client_http2_server_response_headers_then_data() {
                 stream_id: recv_stream_id,
                 headers,
                 end_stream,
+                ..
             } => {
                 assert_eq!(recv_stream_id, stream_id);
                 assert!(!end_stream);
@@ -2944,6 +2963,7 @@ async fn test_http2_client_http2_server_response_headers_then_data() {
                 stream_id: recv_stream_id,
                 headers,
                 end_stream,
+                ..
             } => {
                 assert_eq!(recv_stream_id, stream_id);
                 assert!(!end_stream);
@@ -3180,6 +3200,7 @@ async fn test_http2_client_nghttp2_server_multiple_data_frames() {
             stream_id: recv_stream_id,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert_eq!(recv_stream_id, stream_id);
@@ -3222,6 +3243,7 @@ async fn test_nghttp2_client_http2_server_post_empty_body() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 })) => {
                     let method = headers
                         .iter()
@@ -3283,6 +3305,7 @@ async fn test_nghttp2_client_http2_server_post_empty_body() {
             stream_id: recv_stream_id,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert_eq!(recv_stream_id, stream_id);
@@ -3321,6 +3344,7 @@ async fn test_http2_client_nghttp2_server_post_empty_body() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 })) => {
                     let method = headers
                         .iter()
@@ -3379,6 +3403,7 @@ async fn test_http2_client_nghttp2_server_post_empty_body() {
             stream_id: recv_stream_id,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert_eq!(recv_stream_id, stream_id);
@@ -3641,6 +3666,7 @@ async fn test_nghttp2_client_http2_server_options() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 })) => {
                     if end_stream {
                         let method = headers
@@ -3697,6 +3723,7 @@ async fn test_nghttp2_client_http2_server_options() {
             stream_id: recv_stream_id,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert_eq!(recv_stream_id, stream_id);
@@ -3741,6 +3768,7 @@ async fn test_http2_client_nghttp2_server_options() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 })) => {
                     if end_stream {
                         let method = headers
@@ -3795,6 +3823,7 @@ async fn test_http2_client_nghttp2_server_options() {
             stream_id: recv_stream_id,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert_eq!(recv_stream_id, stream_id);
@@ -3843,6 +3872,7 @@ async fn test_nghttp2_client_http2_server_many_headers() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 })) => {
                     if end_stream {
                         // 20 個のカスタムヘッダーが到着しているか検証
@@ -3915,6 +3945,7 @@ async fn test_nghttp2_client_http2_server_many_headers() {
             stream_id: recv_stream_id,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert_eq!(recv_stream_id, stream_id);
@@ -3963,6 +3994,7 @@ async fn test_http2_client_nghttp2_server_many_headers() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 })) => {
                     if end_stream {
                         for i in 0..20 {
@@ -4031,6 +4063,7 @@ async fn test_http2_client_nghttp2_server_many_headers() {
             stream_id: recv_stream_id,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert_eq!(recv_stream_id, stream_id);
@@ -4143,6 +4176,7 @@ async fn test_nghttp2_client_http2_server_goaway_after_stream() {
                 stream_id: recv_stream_id,
                 headers,
                 end_stream,
+                ..
             } => {
                 assert_eq!(recv_stream_id, stream_id);
                 assert!(end_stream);
@@ -4256,6 +4290,7 @@ async fn test_http2_client_nghttp2_server_goaway_after_stream() {
                 stream_id: recv_stream_id,
                 headers,
                 end_stream,
+                ..
             } => {
                 assert_eq!(recv_stream_id, stream_id);
                 assert!(end_stream);
@@ -4392,6 +4427,7 @@ async fn test_http2_client_http2_server_bidirectional_data() {
                 stream_id: recv_stream_id,
                 headers,
                 end_stream,
+                ..
             } => {
                 assert_eq!(recv_stream_id, stream_id);
                 let status = headers
@@ -4511,6 +4547,7 @@ async fn test_http2_client_nghttp2_server_bidirectional_data() {
             stream_id: recv_stream_id,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert_eq!(recv_stream_id, stream_id);
@@ -4554,6 +4591,7 @@ async fn test_nghttp2_client_http2_server_rst_one_stream_continue_other() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 })) => {
                     if end_stream {
                         let path = headers
@@ -4637,6 +4675,7 @@ async fn test_nghttp2_client_http2_server_rst_one_stream_continue_other() {
                 stream_id: recv_stream_id,
                 headers,
                 end_stream,
+                ..
             } => {
                 assert_eq!(recv_stream_id, ok_stream_id);
                 assert!(end_stream);
@@ -4694,6 +4733,7 @@ async fn test_http2_client_nghttp2_server_rst_one_stream_continue_other() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 })) => {
                     if end_stream {
                         let path = headers
@@ -4771,6 +4811,7 @@ async fn test_http2_client_nghttp2_server_rst_one_stream_continue_other() {
                 stream_id: recv_stream_id,
                 headers,
                 end_stream,
+                ..
             } => {
                 assert_eq!(recv_stream_id, ok_stream_id);
                 assert!(end_stream);
@@ -4879,6 +4920,7 @@ async fn test_nghttp2_client_http2_server_204_no_content() {
             stream_id: recv_stream_id,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert_eq!(recv_stream_id, stream_id);
@@ -4962,6 +5004,7 @@ async fn test_http2_client_nghttp2_server_204_no_content() {
             stream_id: recv_stream_id,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert_eq!(recv_stream_id, stream_id);
@@ -5855,6 +5898,7 @@ mod stress_tests {
                         stream_id,
                         headers,
                         end_stream,
+                        ..
                     } => {
                         if end_stream {
                             let custom_count = headers
@@ -5947,6 +5991,7 @@ mod stress_tests {
                         stream_id,
                         headers,
                         end_stream,
+                        ..
                     } => {
                         if end_stream {
                             let custom_count = headers

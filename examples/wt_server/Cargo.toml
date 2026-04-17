@@ -1,0 +1,21 @@
+[package]
+name = "wt_server"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+shiguredo_http2 = { path = "../.." }
+tokio-http2 = { path = "../../crates/tokio-http2" }
+rustls = "0.23"
+rustls-pki-types = "1"
+rcgen = "0.14"
+aws-lc-rs = "1"
+base64 = "0.22"
+time = "0.3"
+tokio = { version = "1", features = ["full"] }
+noargs = "0.4"
+nojson = "0.3"
+log = "0.4"
+env_logger = "0.11"

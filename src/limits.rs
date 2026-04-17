@@ -4,7 +4,7 @@
 
 use crate::settings::{
     DEFAULT_HEADER_TABLE_SIZE, DEFAULT_INITIAL_WINDOW_SIZE, DEFAULT_MAX_FRAME_SIZE,
-    MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, MIN_MAX_FRAME_SIZE,
+    MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, MIN_MAX_FRAME_SIZE, WtInitialSettings,
 };
 
 /// HTTP/2 接続の制限設定
@@ -26,6 +26,11 @@ pub struct Limits {
     pub enable_connect_protocol: bool,
     /// RFC 7540 優先度の無効化 (RFC 9218)
     pub no_rfc7540_priorities: bool,
+    /// WebTransport 初期設定 (draft-ietf-webtrans-http2-14 Section 11.2)
+    ///
+    /// サーバーが `enable_connect_protocol = true` と合わせて設定することで、
+    /// WebTransport セッションの初期フロー制御値を広告する。
+    pub wt_initial: WtInitialSettings,
 }
 
 impl Default for Limits {
@@ -39,6 +44,7 @@ impl Default for Limits {
             connection_window_size: DEFAULT_INITIAL_WINDOW_SIZE,
             enable_connect_protocol: false,
             no_rfc7540_priorities: false,
+            wt_initial: WtInitialSettings::default(),
         }
     }
 }
@@ -123,6 +129,16 @@ impl Limits {
     #[must_use]
     pub const fn with_no_rfc7540_priorities(mut self, enable: bool) -> Self {
         self.no_rfc7540_priorities = enable;
+        self
+    }
+
+    /// WebTransport 初期設定を設定する (draft-ietf-webtrans-http2-14 Section 11.2)
+    ///
+    /// WebTransport サーバーを構築する場合、`with_enable_connect_protocol(true)` と
+    /// 併用して初期 SETTINGS に WebTransport 関連パラメータを広告する。
+    #[must_use]
+    pub fn with_webtransport(mut self, wt_initial: WtInitialSettings) -> Self {
+        self.wt_initial = wt_initial;
         self
     }
 }

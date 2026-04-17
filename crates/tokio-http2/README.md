@@ -36,7 +36,7 @@ let stream_id = client.send_request(headers, true).await?;
 // レスポンス受信
 loop {
     match client.next_event().await? {
-        Event::HeadersReceived { stream_id, headers, end_stream } => {
+        Event::HeadersReceived { stream_id, headers, end_stream, .. } => {
             // ヘッダー処理
         }
         Event::DataReceived { stream_id, data, end_stream } => {
@@ -60,7 +60,7 @@ let mut conn = server.accept().await?;
 
 loop {
     match conn.next_event().await? {
-        Event::HeadersReceived { stream_id, headers, end_stream } => {
+        Event::HeadersReceived { stream_id, headers, end_stream, .. } => {
             // レスポンスヘッダー送信
             let response_headers = vec![
                 HeaderField::from_str(":status", "200"),

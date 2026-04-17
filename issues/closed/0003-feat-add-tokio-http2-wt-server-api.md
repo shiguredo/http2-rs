@@ -1,6 +1,7 @@
 # tokio-http2 に WebTransport サーバー API を追加する
 
 - Created: 2026-04-17
+- Completed: 2026-04-17
 - Model: Opus 4.7
 
 ## 概要
@@ -65,3 +66,14 @@
 ## 依存
 
 - 0002
+
+## 解決方法
+
+- `crates/tokio-http2/src/webtransport.rs` を新規追加
+- `WtServerRequest::{from_connection, path, authority, scheme, origin, accept, reject, stream_id, headers}` を公開
+- `WtServerSession::{session_id, accept_bidi, accept_uni, open_bidi, open_uni, send_datagram, recv_datagram, close, drain}` を公開
+- `WtBidiStream::{send, recv, stop_sending, reset, stream_id}` を公開
+- `WtUniRecvStream::{recv, stop_sending, stream_id}` / `WtUniSendStream::{send, reset, stream_id}` を公開
+- `WEBTRANSPORT_PROTOCOL` 定数 (`b"webtransport"`) を公開
+- `tokio-http2` クレートから再 export
+- 本 issue の実装は 0004 (glue) / 0005 (DATAGRAM) と同一コミットに含めた

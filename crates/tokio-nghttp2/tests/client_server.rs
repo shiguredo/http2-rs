@@ -1,4 +1,5 @@
 //! クライアント/サーバー統合テスト
+#![allow(clippy::collapsible_match)]
 
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};

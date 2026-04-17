@@ -78,6 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 stream_id: sid,
                 headers,
                 end_stream,
+                ..
             } => {
                 println!("Stream {sid}: received headers (end_stream={end_stream})");
 

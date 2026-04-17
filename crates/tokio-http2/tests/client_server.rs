@@ -1,4 +1,5 @@
 //! クライアント/サーバー統合テスト
+#![allow(clippy::collapsible_match)]
 
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -49,6 +50,7 @@ async fn test_basic_request_response() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 } => {
                     // リクエストヘッダー受信
                     assert!(end_stream);
@@ -108,6 +110,7 @@ async fn test_basic_request_response() {
                 stream_id: recv_stream_id,
                 headers,
                 end_stream,
+                ..
             } => {
                 assert_eq!(recv_stream_id, stream_id);
                 assert!(end_stream);
@@ -341,6 +344,7 @@ async fn test_multiple_streams() {
             stream_id,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert!(stream_ids.contains(&stream_id));
@@ -854,6 +858,7 @@ async fn test_many_headers() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 } => {
                     if end_stream {
                         let custom_count = headers
@@ -1328,6 +1333,7 @@ async fn test_post_request_with_body() {
                     stream_id: sid,
                     headers,
                     end_stream,
+                    ..
                 } => {
                     assert!(!end_stream, "POST should not have end_stream on headers");
                     let method = headers
@@ -1544,6 +1550,7 @@ async fn test_status_codes() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 } => {
                     if end_stream {
                         let path = headers
@@ -1876,6 +1883,7 @@ async fn test_multiple_clients() {
                     stream_id: sid,
                     headers,
                     end_stream,
+                    ..
                 } = event
                 {
                     assert_eq!(sid, stream_id);
@@ -2391,6 +2399,7 @@ async fn test_multiple_streams_with_bodies() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 }) => {
                     if end_stream {
                         let path = headers
@@ -2584,6 +2593,7 @@ async fn test_rst_stream_then_continue() {
             stream_id,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert_eq!(stream_id, stream2);
@@ -2621,6 +2631,7 @@ async fn test_head_request() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 }) => {
                     if end_stream {
                         let method = headers
@@ -2675,6 +2686,7 @@ async fn test_head_request() {
             stream_id: sid,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert_eq!(sid, stream_id);
@@ -2715,6 +2727,7 @@ async fn test_delete_request() {
                     stream_id,
                     headers,
                     end_stream,
+                    ..
                 }) => {
                     if end_stream {
                         let method = headers
@@ -2765,6 +2778,7 @@ async fn test_delete_request() {
             stream_id: sid,
             headers,
             end_stream,
+            ..
         } = event
         {
             assert_eq!(sid, stream_id);
