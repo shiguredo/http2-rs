@@ -51,15 +51,11 @@ WT サーバー API (0003〜0006) は個別のユニットテストでは全体�
 ## 解決方法
 
 - `crates/tokio-http2/tests/test_webtransport.rs` を新規追加
-- `test_wt_bidi_echo`: Extended CONNECT → accept → bidi エコーを検証
-- `test_wt_reject`: `WtServerRequest::reject(404)` でクライアントが 404 を受信できることを検証
 - クライアント側は `WtSession::client` を手動で駆動し、CONNECT ストリーム上で Capsule を送受信
-
-## 残件 (フォローアップ用)
-
-以下のテストは今後追加する (実装自体は 0005/0006 で完了している):
-
-- `test_wt_uni_echo`: 単方向ストリームのラウンドトリップ
-- `test_wt_datagram_echo`: DATAGRAM capsule のラウンドトリップ
-- `test_wt_close`: `WT_CLOSE_SESSION` 送受信
-- `test_wt_drain`: `WT_DRAIN_SESSION` 送受信
+- 以下 6 ケースを実装:
+  - `test_wt_bidi_echo`: Extended CONNECT → accept → bidi エコーを検証
+  - `test_wt_uni_echo`: 単方向ストリームのラウンドトリップ
+  - `test_wt_datagram_echo`: DATAGRAM capsule のラウンドトリップ
+  - `test_wt_reject`: `WtServerRequest::reject(404)` でクライアントが 404 を受信できることを検証
+  - `test_wt_close`: `WT_CLOSE_SESSION` 送受信
+  - `test_wt_drain`: `WT_DRAIN_SESSION` 送受信
