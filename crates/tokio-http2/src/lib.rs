@@ -16,8 +16,8 @@ pub use server::{Server, ServerConnection};
 pub use shiguredo_http2::{ErrorCode, Event, HeaderField, Limits, StreamId};
 pub use tls::{TlsClientConfig, TlsServerConfig};
 pub use webtransport::{
-    WEBTRANSPORT_PROTOCOL, WtBidiStream, WtServerRequest, WtServerSession, WtUniRecvStream,
-    WtUniSendStream,
+    WEBTRANSPORT_PROTOCOL, WtBidiStream, WtServerRequest, WtServerSession, WtSessionHandle,
+    WtSessionParts, WtUniRecvStream, WtUniSendStream,
 };
 
 /// HTTP/2 コネクションプリフェイス

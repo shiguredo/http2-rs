@@ -16,6 +16,7 @@ include = ["/src/**", "LICENSE", "README.md"]
 members = [
     "examples/http2_client",
     "examples/http2_server",
+    "examples/wt_server",
     "pbt",
     "crates/nghttp2-sys",
     "crates/shiguredo_nghttp2",

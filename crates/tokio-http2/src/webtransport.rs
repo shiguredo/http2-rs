@@ -190,6 +190,22 @@ impl WtServerSession {
         self.session_id
     }
 
+    /// セッションを分解して bidi_rx / uni_rx / datagram_rx / handle を取り出す
+    ///
+    /// `tokio::select!` で並列に bidi / uni / datagram を扱いたい場合に使用する。
+    pub fn into_parts(mut self) -> WtSessionParts {
+        WtSessionParts {
+            session_id: self.session_id,
+            bidi_rx: std::mem::replace(&mut self.bidi_rx, mpsc::unbounded_channel().1),
+            uni_rx: std::mem::replace(&mut self.uni_rx, mpsc::unbounded_channel().1),
+            datagram_rx: std::mem::replace(&mut self.datagram_rx, mpsc::unbounded_channel().1),
+            handle: WtSessionHandle {
+                cmd_tx: self.cmd_tx.clone(),
+            },
+            driver: self.driver.take().expect("driver must be present"),
+        }
+    }
+
     /// 次の双方向ストリームの到着を待つ
     pub async fn accept_bidi(&mut self) -> Option<WtBidiStream> {
         self.bidi_rx.recv().await
@@ -262,6 +278,82 @@ impl Drop for WtServerSession {
         if let Some(driver) = self.driver.take() {
             driver.abort();
         }
+    }
+}
+
+/// `WtServerSession::into_parts` で分解された構成要素
+pub struct WtSessionParts {
+    /// セッション ID
+    pub session_id: u64,
+    /// 対向からの双方向ストリーム到着チャネル
+    pub bidi_rx: mpsc::UnboundedReceiver<WtBidiStream>,
+    /// 対向からの単方向ストリーム到着チャネル
+    pub uni_rx: mpsc::UnboundedReceiver<WtUniRecvStream>,
+    /// DATAGRAM 受信チャネル
+    pub datagram_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    /// 送信系 API を提供するハンドル
+    pub handle: WtSessionHandle,
+    /// driver タスクの JoinHandle。drop で abort される。
+    pub driver: JoinHandle<Result<()>>,
+}
+
+/// `WtServerSession` の送信系 API を提供するハンドル
+///
+/// `into_parts` で複製され、複数の async タスクから送信操作を行える。
+/// 内部的には driver タスクへの mpsc sender のみを保持する。
+#[derive(Clone)]
+pub struct WtSessionHandle {
+    cmd_tx: mpsc::UnboundedSender<DriverCmd>,
+}
+
+impl WtSessionHandle {
+    /// 双方向ストリームをローカルから開く
+    pub async fn open_bidi(&self) -> Result<WtBidiStream> {
+        let (ack, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(DriverCmd::OpenBidi { ack })
+            .map_err(|_| Error::ConnectionClosed)?;
+        rx.await.map_err(|_| Error::ConnectionClosed)?
+    }
+
+    /// 単方向送信ストリームをローカルから開く
+    pub async fn open_uni(&self) -> Result<WtUniSendStream> {
+        let (ack, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(DriverCmd::OpenUni { ack })
+            .map_err(|_| Error::ConnectionClosed)?;
+        rx.await.map_err(|_| Error::ConnectionClosed)?
+    }
+
+    /// DATAGRAM を送信する
+    pub async fn send_datagram(&self, data: Vec<u8>) -> Result<()> {
+        let (ack, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(DriverCmd::SendDatagram { data, ack })
+            .map_err(|_| Error::ConnectionClosed)?;
+        rx.await.map_err(|_| Error::ConnectionClosed)?
+    }
+
+    /// セッションを `WT_CLOSE_SESSION` で終了する
+    pub async fn close(&self, error_code: u32, reason: &str) -> Result<()> {
+        let (ack, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(DriverCmd::Close {
+                error_code,
+                reason: reason.to_string(),
+                ack,
+            })
+            .map_err(|_| Error::ConnectionClosed)?;
+        rx.await.map_err(|_| Error::ConnectionClosed)?
+    }
+
+    /// セッションを `WT_DRAIN_SESSION` で drain する
+    pub async fn drain(&self) -> Result<()> {
+        let (ack, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(DriverCmd::Drain { ack })
+            .map_err(|_| Error::ConnectionClosed)?;
+        rx.await.map_err(|_| Error::ConnectionClosed)?
     }
 }
 
