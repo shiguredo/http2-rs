@@ -35,15 +35,17 @@ fn stream_level_event() -> impl Strategy<Value = Event> {
         (
             valid_stream_id(),
             prop::collection::vec(header_field_strategy(), 0..5),
-            any::<bool>()
+            any::<bool>(),
+            prop::option::of(prop::collection::vec(any::<u8>(), 1..20)),
         )
-            .prop_map(|(stream_id, headers, end_stream)| {
+            .prop_map(|(stream_id, headers, end_stream, protocol)| {
                 Event::HeadersReceived {
                     stream_id,
                     headers,
                     end_stream,
+                    protocol,
                 }
-            }),
+            },),
         // DataReceived
         (
             valid_stream_id(),
@@ -188,7 +190,7 @@ proptest! {
         data in prop::collection::vec(any::<u8>(), 0..10),
     ) {
         let events = vec![
-            Event::HeadersReceived { stream_id, headers: vec![], end_stream: false },
+            Event::HeadersReceived { stream_id, headers: vec![], end_stream: false, protocol: None },
             Event::DataReceived { stream_id, data: data.clone(), end_stream: false },
             Event::TrailersReceived { stream_id, trailers: vec![] },
             Event::StreamReset { stream_id, error_code: ErrorCode::NoError },

@@ -134,6 +134,7 @@ impl Connection {
         local_settings.max_header_list_size = limits.max_header_list_size;
         local_settings.enable_connect_protocol = limits.enable_connect_protocol;
         local_settings.no_rfc7540_priorities = limits.no_rfc7540_priorities;
+        local_settings.wt_initial = limits.wt_initial.clone();
 
         let next_stream_id = match role {
             Role::Client => 1,
@@ -191,6 +192,25 @@ impl Connection {
     #[must_use]
     pub const fn state(&self) -> ConnectionState {
         self.state
+    }
+
+    /// ローカル設定を取得する
+    ///
+    /// 送信済みの SETTINGS に対応する設定。WebTransport 初期設定 (`wt_initial`) を
+    /// 含む拡張 SETTINGS もここから参照できる。
+    #[must_use]
+    pub const fn local_settings(&self) -> &Settings {
+        &self.local_settings
+    }
+
+    /// リモート設定を取得する
+    ///
+    /// ピアから受信して ACK した SETTINGS に対応する設定。
+    /// WebTransport セッションを張る前に `enable_connect_protocol` や
+    /// `wt_initial` を確認する用途で使用する。
+    #[must_use]
+    pub const fn remote_settings(&self) -> &Settings {
+        &self.remote_settings
     }
 
     /// 接続がアクティブかどうかを返す
@@ -447,10 +467,14 @@ impl Connection {
             .find(|h| h.name == validation::pseudo_headers::METHOD)
         {
             stream.set_request_method(method_header.value.clone());
-            let has_protocol = headers
+            let protocol_value = headers
                 .iter()
-                .any(|h| h.name == validation::pseudo_headers::PROTOCOL);
-            stream.set_has_protocol(has_protocol);
+                .find(|h| h.name == validation::pseudo_headers::PROTOCOL)
+                .map(|h| h.value.clone());
+            stream.set_has_protocol(protocol_value.is_some());
+            if let Some(proto) = protocol_value {
+                stream.set_protocol(proto);
+            }
         }
 
         self.streams.insert(stream_id, stream);
@@ -1213,9 +1237,11 @@ impl Connection {
                     // RFC 8441: Extended CONNECT のネゴシエーションチェック
                     // :protocol を含むリクエストは ENABLE_CONNECT_PROTOCOL=1 を
                     // 送信済みの場合のみ許可
-                    let has_protocol = headers
+                    let protocol_value = headers
                         .iter()
-                        .any(|h| h.name == validation::pseudo_headers::PROTOCOL);
+                        .find(|h| h.name == validation::pseudo_headers::PROTOCOL)
+                        .map(|h| h.value.clone());
+                    let has_protocol = protocol_value.is_some();
                     if has_protocol && !self.local_settings.enable_connect_protocol {
                         return Err(Error::stream_error(
                             ErrorCode::ProtocolError,
@@ -1239,6 +1265,9 @@ impl Connection {
                         });
                         stream.set_request_method(method);
                         stream.set_has_protocol(has_protocol);
+                        if let Some(proto) = protocol_value {
+                            stream.set_protocol(proto);
+                        }
                     }
                 }
                 Role::Client => {
@@ -1360,10 +1389,12 @@ impl Connection {
                     }
                 }
 
+                let protocol = stream.protocol().map(|p| p.to_vec());
                 self.events.push_back(Event::HeadersReceived {
                     stream_id,
                     headers,
                     end_stream,
+                    protocol,
                 });
             }
 

@@ -85,7 +85,7 @@ conn.initiate()?;
 // イベントを処理してレスポンスを送信
 // while let Some(event) = conn.poll_event() {
 //     match event {
-//         Event::HeadersReceived { stream_id, headers, end_stream } => {
+//         Event::HeadersReceived { stream_id, headers, end_stream, .. } => {
 //             let response_headers = vec![
 //                 HeaderField::from_str(":status", "200"),
 //                 HeaderField::from_str("content-type", "text/plain"),

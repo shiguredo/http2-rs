@@ -1,6 +1,7 @@
 # shiguredo_http2 の WebTransport 統合層を整備する
 
 - Created: 2026-04-17
+- Completed: 2026-04-17
 - Model: Opus 4.7
 
 ## 概要
@@ -76,3 +77,31 @@
 ## 依存
 
 - なし (この issue が最初)
+
+## 解決方法
+
+- `src/settings.rs`
+  - `SettingId` enum に WT SETTINGS 6 項目 (`0x2b61`〜`0x2b66`) を追加し、`from_u16` / `as_u16` を拡張
+  - `Settings` に `wt_initial: WtInitialSettings` フィールドを埋め込み
+  - `Settings::apply()` で WT SETTINGS を `wt_initial` に分配
+  - `Settings::to_settings_list()` で `wt_initial` の Setting を出力に含める
+  - 廃止予定だった `Settings::apply_webtransport()` は重複するため削除
+- `src/limits.rs`
+  - `Limits` に `wt_initial: WtInitialSettings` フィールドを追加し、`Limits::with_webtransport(WtInitialSettings)` ビルダーを提供
+- `src/connection/mod.rs`
+  - `Connection::new()` で `local_settings.wt_initial = limits.wt_initial.clone()` を反映
+  - `Connection::local_settings()` / `remote_settings()` public アクセサを追加
+  - サーバー受信時と クライアント送信時に `:protocol` 擬似ヘッダー値を `Stream::set_protocol` で保存
+  - `Event::HeadersReceived` 生成時に `protocol: stream.protocol().map(|p| p.to_vec())` を付与
+- `src/stream/mod.rs`
+  - `Stream` に `protocol: Option<Vec<u8>>` フィールドを追加し、`protocol()` / `set_protocol()` を公開
+- `src/event.rs`
+  - `Event::HeadersReceived` に `protocol: Option<Vec<u8>>` フィールドを追加
+- 追随修正
+  - `pbt/tests/prop_event.rs`: `protocol` strategy を追加
+  - `examples/http2_server/src/main.rs`, `examples/http2_client/src/main.rs`: pattern に `..` を追加
+  - `crates/tokio-http2/tests/client_server.rs`, `crates/tokio-http2/tests/interop.rs`: `..` を一括追加 + `#![allow(clippy::collapsible_match)]` を追記
+  - `crates/tokio-nghttp2/tests/client_server.rs`: 既存の潜在 clippy 警告を抑える `#![allow(clippy::collapsible_match)]` を追記
+  - `README.md`, `crates/tokio-http2/README.md`: サンプルコードを `..` に追随
+- 検証
+  - `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` がすべて green
