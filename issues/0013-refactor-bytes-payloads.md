@@ -4,8 +4,12 @@
 - Reopened: 2026-05-07 (送信側 encoder/output_buffer/stream buffer の抜け漏れ)
 - Reopened: 2026-05-07 (HPACK ヘッダーブロック分割経路の抜け漏れ + varint デッドコード)
 - Reopened: 2026-05-07 (README サンプルとテスト 1 箇所が新 API に追従していない)
-- Completed: 2026-05-07
+- Reopened: 2026-05-07 (空 DATA フレーム生成で `vec![]` が残っていた)
 - Model: Opus 4.7
+
+## 再 Reopen 理由 (4 回目)
+
+`Connection::send_data` の RFC 9113 Section 6.9 に従う空 DATA + END_STREAM 送出 (src/connection/mod.rs:636) で `DataFrame::new(stream_id, vec![])` のままになっていた。`DataFrame::new` は `impl Into<Bytes>` を取るため動作はするが、`Vec::new()` から `Bytes::from(Vec)` への変換を経由する。`Bytes::new()` を直接渡せば中間変換不要で意図も明確。本番コード (src/) で `vec![]` を Bytes 受け API に渡している箇所はここ 1 箇所だけ残っていた。
 
 ## 再 Reopen 理由 (3 回目)
 
