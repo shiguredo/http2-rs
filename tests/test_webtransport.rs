@@ -107,13 +107,17 @@ fn send_after_close_errors() {
     session.close(0, "bye").unwrap();
 
     // draft-ietf-webtrans-http2-14 Section 6.12: close 後は新規 capsule を送れない
-    let err = session.send_stream_data(bidi_id, b"x", false).unwrap_err();
+    let err = session
+        .send_stream_data(bidi_id, bytes::Bytes::from_static(b"x"), false)
+        .unwrap_err();
     assert_eq!(
         err.kind,
         shiguredo_http2::webtransport::WtErrorKind::SessionStateError
     );
 
-    let err = session.send_datagram(b"x").unwrap_err();
+    let err = session
+        .send_datagram(bytes::Bytes::from_static(b"x"))
+        .unwrap_err();
     assert_eq!(
         err.kind,
         shiguredo_http2::webtransport::WtErrorKind::SessionStateError
@@ -164,7 +168,7 @@ fn getters_return_expected_state() {
     let mut encoder = CapsuleEncoder::new();
     encoder.encode(&Capsule::WtStream {
         stream_id: peer_id,
-        data: b"hi".to_vec(),
+        data: bytes::Bytes::from_static(b"hi"),
         fin: false,
     });
     session.feed(&encoder.take()).unwrap();
@@ -179,7 +183,7 @@ fn getters_return_expected_state() {
             WtEvent::StreamData {
                 stream_id, data, ..
             } if stream_id == peer_id => {
-                assert_eq!(data, b"hi");
+                assert_eq!(&data[..], b"hi");
                 got_data = true;
             }
             _ => {}

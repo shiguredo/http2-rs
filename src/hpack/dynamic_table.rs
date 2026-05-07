@@ -2,6 +2,8 @@
 //!
 //! HPACK で使用される動的テーブルを提供する。
 
+use bytes::Bytes;
+
 use crate::hpack::table::{HeaderField, STATIC_TABLE_SIZE};
 
 /// 動的テーブル
@@ -65,7 +67,7 @@ impl DynamicTable {
     ///
     /// 新しいエントリは先頭に追加される。
     /// サイズ制限を超える場合、古いエントリが削除される。
-    pub fn insert(&mut self, name: Vec<u8>, value: Vec<u8>) {
+    pub fn insert(&mut self, name: impl Into<Bytes>, value: impl Into<Bytes>) {
         let entry = HeaderField::new(name, value);
         let entry_size = entry.size();
 
@@ -171,8 +173,8 @@ mod tests {
         assert_eq!(table.len(), 1);
 
         let entry = table.get(0).unwrap();
-        assert_eq!(entry.name, b"content-type");
-        assert_eq!(entry.value, b"text/html");
+        assert_eq!(&entry.name[..], b"content-type");
+        assert_eq!(&entry.value[..], b"text/html");
     }
 
     #[test]
@@ -184,9 +186,9 @@ mod tests {
         table.insert(b"third".to_vec(), b"3".to_vec());
 
         // 最新のエントリがインデックス 0
-        assert_eq!(table.get(0).unwrap().name, b"third");
-        assert_eq!(table.get(1).unwrap().name, b"second");
-        assert_eq!(table.get(2).unwrap().name, b"first");
+        assert_eq!(&table.get(0).unwrap().name[..], b"third");
+        assert_eq!(&table.get(1).unwrap().name[..], b"second");
+        assert_eq!(&table.get(2).unwrap().name[..], b"first");
     }
 
     #[test]
@@ -203,8 +205,8 @@ mod tests {
         // 3つ目を追加すると最初のエントリが削除される
         table.insert(b"name3".to_vec(), b"3".to_vec());
         assert_eq!(table.len(), 2);
-        assert_eq!(table.get(0).unwrap().name, b"name3");
-        assert_eq!(table.get(1).unwrap().name, b"name2");
+        assert_eq!(&table.get(0).unwrap().name[..], b"name3");
+        assert_eq!(&table.get(1).unwrap().name[..], b"name2");
     }
 
     #[test]

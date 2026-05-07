@@ -2,6 +2,8 @@
 //!
 //! HTTP/2 リクエストおよびレスポンスのヘッダー検証を提供する。
 
+use bytes::Bytes;
+
 use crate::error::{Error, ErrorCode};
 use crate::hpack::HeaderField;
 
@@ -37,9 +39,9 @@ pub enum ValidationError {
     /// 疑似ヘッダーが通常ヘッダーの後に出現
     PseudoHeaderAfterRegular,
     /// 不正な疑似ヘッダー
-    InvalidPseudoHeader(Vec<u8>),
+    InvalidPseudoHeader(Bytes),
     /// 禁止されたヘッダー
-    ForbiddenHeader(Vec<u8>),
+    ForbiddenHeader(Bytes),
     /// TE ヘッダーの不正な値
     InvalidTeHeader,
     /// :path が空
@@ -61,21 +63,21 @@ pub enum ValidationError {
     /// http/https スキームで :authority も Host もない
     MissingAuthority,
     /// 不正なヘッダー名（禁止文字を含む）
-    InvalidHeaderName(Vec<u8>),
+    InvalidHeaderName(Bytes),
     /// 不正なヘッダー値（NUL/CR/LF を含む）
-    InvalidHeaderValue(Vec<u8>),
+    InvalidHeaderValue(Bytes),
     /// 不正なステータスコード
-    InvalidStatusCode(Vec<u8>),
+    InvalidStatusCode(Bytes),
     /// :authority に userinfo が含まれている
     AuthorityWithUserinfo,
     /// :protocol の値が不正 (空または非 token 文字を含む)
-    InvalidProtocolValue(Vec<u8>),
+    InvalidProtocolValue(Bytes),
     /// :method の値が不正 (空または非 token 文字を含む)
-    InvalidMethodValue(Vec<u8>),
+    InvalidMethodValue(Bytes),
     /// :scheme の値が不正 (RFC 3986 Section 3.1 の scheme 構文に違反)
-    InvalidSchemeValue(Vec<u8>),
+    InvalidSchemeValue(Bytes),
     /// :path の値が不正 (http/https で絶対パスでない)
-    InvalidPathValue(Vec<u8>),
+    InvalidPathValue(Bytes),
 }
 
 impl std::fmt::Display for ValidationError {
@@ -410,7 +412,7 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
             && !path.starts_with(b"/")
         {
             return Err(malformed_error(ValidationError::InvalidPathValue(
-                path.to_vec(),
+                Bytes::copy_from_slice(path),
             )));
         }
 
@@ -458,7 +460,7 @@ pub fn validate_response_headers(headers: &[HeaderField]) -> Result<(), Error> {
                 // HTTP/2 は 101 (Switching Protocols) をサポートしない。
                 if header.value.len() != 3
                     || !header.value.iter().all(|b| b.is_ascii_digit())
-                    || header.value == b"101"
+                    || &header.value[..] == b"101"
                 {
                     return Err(malformed_error(ValidationError::InvalidStatusCode(
                         header.value.clone(),
@@ -540,14 +542,14 @@ pub fn validate_trailers(headers: &[HeaderField]) -> Result<(), Error> {
 fn validate_header_name_chars(name: &[u8]) -> Result<(), Error> {
     if name.is_empty() {
         return Err(malformed_error(ValidationError::InvalidHeaderName(
-            name.to_vec(),
+            Bytes::copy_from_slice(name),
         )));
     }
 
     for &b in name {
         if !is_token_char(b) {
             return Err(malformed_error(ValidationError::InvalidHeaderName(
-                name.to_vec(),
+                Bytes::copy_from_slice(name),
             )));
         }
     }
@@ -608,7 +610,7 @@ fn validate_header_value_chars(value: &[u8]) -> Result<(), Error> {
         && (first == 0x20 || first == 0x09)
     {
         return Err(malformed_error(ValidationError::InvalidHeaderValue(
-            value.to_vec(),
+            Bytes::copy_from_slice(value),
         )));
     }
     // RFC 9113 Section 8.2.1: 末尾の SP/HTAB は禁止
@@ -616,13 +618,13 @@ fn validate_header_value_chars(value: &[u8]) -> Result<(), Error> {
         && (last == 0x20 || last == 0x09)
     {
         return Err(malformed_error(ValidationError::InvalidHeaderValue(
-            value.to_vec(),
+            Bytes::copy_from_slice(value),
         )));
     }
     for &b in value {
         if b == 0x00 || b == 0x0d || b == 0x0a {
             return Err(malformed_error(ValidationError::InvalidHeaderValue(
-                value.to_vec(),
+                Bytes::copy_from_slice(value),
             )));
         }
     }
@@ -654,7 +656,7 @@ fn validate_forbidden_header_for_response(name: &[u8]) -> Result<(), Error> {
     // RFC 9113 Section 8.2.2: レスポンス・トレーラーでは TE ヘッダーは禁止
     if name.eq_ignore_ascii_case(b"te") {
         return Err(malformed_error(ValidationError::ForbiddenHeader(
-            name.to_vec(),
+            Bytes::copy_from_slice(name),
         )));
     }
 
@@ -670,7 +672,7 @@ fn validate_forbidden_header_common(name: &[u8]) -> Result<(), Error> {
         || name.eq_ignore_ascii_case(forbidden_headers::UPGRADE)
     {
         return Err(malformed_error(ValidationError::ForbiddenHeader(
-            name.to_vec(),
+            Bytes::copy_from_slice(name),
         )));
     }
 

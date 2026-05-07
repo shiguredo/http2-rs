@@ -1,5 +1,6 @@
 //! HTTP/2 コネクション
 
+use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use shiguredo_http2::{
@@ -125,7 +126,7 @@ where
     pub async fn send_data(
         &mut self,
         stream_id: StreamId,
-        data: Vec<u8>,
+        data: Bytes,
         end_stream: bool,
     ) -> Result<()> {
         self.inner.send_data(stream_id, data, end_stream)?;
@@ -145,7 +146,7 @@ where
     }
 
     /// GOAWAY を送信
-    pub async fn send_goaway(&mut self, error_code: ErrorCode, debug_data: Vec<u8>) -> Result<()> {
+    pub async fn send_goaway(&mut self, error_code: ErrorCode, debug_data: Bytes) -> Result<()> {
         self.inner.send_goaway(error_code, debug_data)?;
         self.flush().await
     }

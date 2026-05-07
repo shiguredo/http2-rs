@@ -43,7 +43,7 @@ fn stream_level_event() -> impl Strategy<Value = Event> {
                     stream_id,
                     headers,
                     end_stream,
-                    protocol,
+                    protocol: protocol.map(bytes::Bytes::from),
                 }
             },),
         // DataReceived
@@ -55,7 +55,7 @@ fn stream_level_event() -> impl Strategy<Value = Event> {
             .prop_map(|(stream_id, data, end_stream)| {
                 Event::DataReceived {
                     stream_id,
-                    data,
+                    data: data.into(),
                     end_stream,
                 }
             }),
@@ -91,7 +91,7 @@ fn stream_level_event() -> impl Strategy<Value = Event> {
             |(stream_id, priority_field_value)| {
                 Event::PriorityUpdateReceived {
                     stream_id,
-                    priority_field_value,
+                    priority_field_value: priority_field_value.into(),
                 }
             }
         ),
@@ -118,7 +118,7 @@ fn connection_level_event() -> impl Strategy<Value = Event> {
                 Event::GoawayReceived {
                     last_stream_id,
                     error_code,
-                    debug_data,
+                    debug_data: debug_data.into(),
                 }
             }),
         // WindowUpdateReceived (stream_id == 0)
@@ -191,12 +191,12 @@ proptest! {
     ) {
         let events = vec![
             Event::HeadersReceived { stream_id, headers: vec![], end_stream: false, protocol: None },
-            Event::DataReceived { stream_id, data: data.clone(), end_stream: false },
+            Event::DataReceived { stream_id, data: data.clone().into(), end_stream: false },
             Event::TrailersReceived { stream_id, trailers: vec![] },
             Event::StreamReset { stream_id, error_code: ErrorCode::NoError },
             Event::StreamClosed { stream_id },
             Event::WindowUpdateReceived { stream_id, increment: 1000 },
-            Event::PriorityUpdateReceived { stream_id, priority_field_value: vec![] },
+            Event::PriorityUpdateReceived { stream_id, priority_field_value: bytes::Bytes::new() },
         ];
 
         for event in events {
@@ -230,7 +230,7 @@ mod tests {
     fn test_priority_update_is_stream_level() {
         let event = Event::PriorityUpdateReceived {
             stream_id: 1,
-            priority_field_value: vec![],
+            priority_field_value: bytes::Bytes::new(),
         };
         assert_eq!(event.stream_id(), Some(1));
         assert!(!event.is_connection_level());
@@ -250,7 +250,7 @@ mod tests {
             Event::GoawayReceived {
                 last_stream_id: 0,
                 error_code: ErrorCode::NoError,
-                debug_data: vec![],
+                debug_data: bytes::Bytes::new(),
             },
             Event::WindowUpdateReceived {
                 stream_id: 0,

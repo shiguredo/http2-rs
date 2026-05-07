@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 
+use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
@@ -93,7 +94,7 @@ impl WtServerRequest {
         self.headers
             .iter()
             .find(|h| h.name == name)
-            .map(|h| h.value.as_slice())
+            .map(|h| h.value.as_ref())
     }
 
     /// セッションを受け入れる
@@ -179,7 +180,7 @@ pub struct WtServerSession {
     cmd_tx: mpsc::UnboundedSender<DriverCmd>,
     bidi_rx: mpsc::UnboundedReceiver<WtBidiStream>,
     uni_rx: mpsc::UnboundedReceiver<WtUniRecvStream>,
-    datagram_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    datagram_rx: mpsc::UnboundedReceiver<Bytes>,
     driver: Option<JoinHandle<Result<()>>>,
 }
 
@@ -217,7 +218,7 @@ impl WtServerSession {
     }
 
     /// 次の DATAGRAM を待つ
-    pub async fn recv_datagram(&mut self) -> Option<Vec<u8>> {
+    pub async fn recv_datagram(&mut self) -> Option<Bytes> {
         self.datagram_rx.recv().await
     }
 
@@ -240,7 +241,7 @@ impl WtServerSession {
     }
 
     /// DATAGRAM を送信する
-    pub async fn send_datagram(&mut self, data: Vec<u8>) -> Result<()> {
+    pub async fn send_datagram(&mut self, data: Bytes) -> Result<()> {
         let (ack, rx) = oneshot::channel();
         self.cmd_tx
             .send(DriverCmd::SendDatagram { data, ack })
@@ -290,7 +291,7 @@ pub struct WtSessionParts {
     /// 対向からの単方向ストリーム到着チャネル
     pub uni_rx: mpsc::UnboundedReceiver<WtUniRecvStream>,
     /// DATAGRAM 受信チャネル
-    pub datagram_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    pub datagram_rx: mpsc::UnboundedReceiver<Bytes>,
     /// 送信系 API を提供するハンドル
     pub handle: WtSessionHandle,
     /// driver タスクの JoinHandle。drop で abort される。
@@ -326,7 +327,7 @@ impl WtSessionHandle {
     }
 
     /// DATAGRAM を送信する
-    pub async fn send_datagram(&self, data: Vec<u8>) -> Result<()> {
+    pub async fn send_datagram(&self, data: Bytes) -> Result<()> {
         let (ack, rx) = oneshot::channel();
         self.cmd_tx
             .send(DriverCmd::SendDatagram { data, ack })
@@ -373,12 +374,12 @@ impl WtBidiStream {
     }
 
     /// データを送信する (fin=true で END_STREAM)
-    pub async fn send(&self, data: Vec<u8>, fin: bool) -> Result<()> {
+    pub async fn send(&self, data: Bytes, fin: bool) -> Result<()> {
         send_stream_data(&self.cmd_tx, self.stream_id, data, fin).await
     }
 
     /// 受信データを待つ。`Ok(None)` は FIN で正常終了。
-    pub async fn recv(&mut self) -> Result<Option<Vec<u8>>> {
+    pub async fn recv(&mut self) -> Result<Option<Bytes>> {
         if self.recv_finished {
             return Ok(None);
         }
@@ -431,7 +432,7 @@ impl WtUniRecvStream {
     }
 
     /// 受信データを待つ。`Ok(None)` は FIN で正常終了。
-    pub async fn recv(&mut self) -> Result<Option<Vec<u8>>> {
+    pub async fn recv(&mut self) -> Result<Option<Bytes>> {
         if self.recv_finished {
             return Ok(None);
         }
@@ -477,7 +478,7 @@ impl WtUniSendStream {
     }
 
     /// データを送信する (fin=true で END_STREAM)
-    pub async fn send(&self, data: Vec<u8>, fin: bool) -> Result<()> {
+    pub async fn send(&self, data: Bytes, fin: bool) -> Result<()> {
         send_stream_data(&self.cmd_tx, self.stream_id, data, fin).await
     }
 
@@ -490,7 +491,7 @@ impl WtUniSendStream {
 async fn send_stream_data(
     cmd_tx: &mpsc::UnboundedSender<DriverCmd>,
     stream_id: WtStreamId,
-    data: Vec<u8>,
+    data: Bytes,
     fin: bool,
 ) -> Result<()> {
     let (ack, rx) = oneshot::channel();
@@ -541,7 +542,7 @@ async fn reset_stream(
 enum DriverCmd {
     SendStreamData {
         stream_id: WtStreamId,
-        data: Vec<u8>,
+        data: Bytes,
         fin: bool,
         ack: oneshot::Sender<Result<()>>,
     },
@@ -552,7 +553,7 @@ enum DriverCmd {
         ack: oneshot::Sender<Result<WtUniSendStream>>,
     },
     SendDatagram {
-        data: Vec<u8>,
+        data: Bytes,
         ack: oneshot::Sender<Result<()>>,
     },
     ResetStream {
@@ -577,7 +578,7 @@ enum DriverCmd {
 
 /// Stream チャネルに流すメッセージ
 enum StreamPacket {
-    Data { data: Vec<u8>, fin: bool },
+    Data { data: Bytes, fin: bool },
     Reset { error_code: u64 },
 }
 
@@ -587,7 +588,7 @@ struct DriverState {
     wt_session: WtSession,
     bidi_tx: mpsc::UnboundedSender<WtBidiStream>,
     uni_tx: mpsc::UnboundedSender<WtUniRecvStream>,
-    datagram_tx: mpsc::UnboundedSender<Vec<u8>>,
+    datagram_tx: mpsc::UnboundedSender<Bytes>,
     cmd_rx: mpsc::UnboundedReceiver<DriverCmd>,
     cmd_tx: mpsc::UnboundedSender<DriverCmd>,
     stream_channels: HashMap<WtStreamId, mpsc::UnboundedSender<StreamPacket>>,
@@ -634,7 +635,7 @@ impl DriverState {
             } => {
                 let res = self
                     .wt_session
-                    .send_stream_data(stream_id, &data, fin)
+                    .send_stream_data(stream_id, data, fin)
                     .map_err(wt_err);
                 if res.is_ok() {
                     self.flush_wt_output().await?;
@@ -672,7 +673,7 @@ impl DriverState {
                 let _ = ack.send(res);
             }
             DriverCmd::SendDatagram { data, ack } => {
-                let res = self.wt_session.send_datagram(&data).map_err(wt_err);
+                let res = self.wt_session.send_datagram(data).map_err(wt_err);
                 if res.is_ok() {
                     self.flush_wt_output().await?;
                 }

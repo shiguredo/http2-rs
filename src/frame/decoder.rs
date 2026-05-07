@@ -1,5 +1,7 @@
 //! HTTP/2 フレームデコーダー
 
+use bytes::{Bytes, BytesMut};
+
 use crate::error::{Error, ErrorCode, Result};
 use crate::frame::{
     CONNECTION_STREAM_ID, ContinuationFrame, DataFrame, FRAME_HEADER_SIZE, Frame, FrameFlags,
@@ -11,12 +13,17 @@ use crate::settings::Setting;
 /// フレームデコーダー
 ///
 /// ストリーミング方式でフレームをデコードする。
+///
+/// 内部バッファに `BytesMut` を使用し、ペイロード切り出し時に
+/// `split_to(payload_len).freeze()` で zero-copy に `Bytes` を生成する。
+/// これにより relay (1:N 配信) で同じ DATA フレームペイロードを N 個の宛先に
+/// 送る際に `Bytes::clone()` (Arc inc) で複製でき、メモリコピーを避けられる。
 #[derive(Debug)]
 pub struct FrameDecoder {
     /// 最大フレームサイズ
     max_frame_size: u32,
     /// 内部バッファ
-    buf: Vec<u8>,
+    buf: BytesMut,
     /// 現在パース中のフレームヘッダー
     current_header: Option<FrameHeader>,
     /// 最後にデコード試行したフレームのストリーム ID
@@ -30,7 +37,7 @@ impl FrameDecoder {
     pub fn new(max_frame_size: u32) -> Self {
         Self {
             max_frame_size,
-            buf: Vec::new(),
+            buf: BytesMut::new(),
             current_header: None,
             last_decoded_stream_id: None,
         }
@@ -69,7 +76,8 @@ impl FrameDecoder {
             }
 
             self.current_header = Some(header);
-            self.buf.drain(..FRAME_HEADER_SIZE);
+            // ヘッダー部分を切り捨て (split_to で前半を捨てる)
+            let _ = self.buf.split_to(FRAME_HEADER_SIZE);
         }
 
         // ここに到達する時点で current_header は必ず Some (上の分岐で設定済み)
@@ -89,9 +97,10 @@ impl FrameDecoder {
             .take()
             .expect("current_header must be set");
         self.last_decoded_stream_id = Some(header.stream_id);
-        let payload: Vec<u8> = self.buf.drain(..payload_len).collect();
+        // payload を BytesMut から zero-copy で切り出して Bytes 化
+        let payload: Bytes = self.buf.split_to(payload_len).freeze();
 
-        decode_frame(header, &payload).map(Some)
+        decode_frame(header, payload).map(Some)
     }
 
     /// 内部バッファの残りデータ長を取得する
@@ -155,28 +164,32 @@ pub fn decode_header(buf: &[u8]) -> Result<FrameHeader> {
 }
 
 /// フレームをデコードする
-fn decode_frame(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
+///
+/// `payload` は `Bytes` で受け取り、ペイロードを保持する variant では
+/// `payload.slice(range)` で zero-copy に切り出した `Bytes` を格納する。
+fn decode_frame(header: FrameHeader, payload: Bytes) -> Result<Frame> {
     match FrameType::from_u8(header.frame_type) {
         Some(FrameType::Data) => decode_data(header, payload),
         Some(FrameType::Headers) => decode_headers(header, payload),
-        Some(FrameType::Priority) => decode_priority(header, payload),
-        Some(FrameType::RstStream) => decode_rst_stream(header, payload),
-        Some(FrameType::Settings) => decode_settings(header, payload),
-        Some(FrameType::PushPromise) => decode_push_promise(header, payload),
-        Some(FrameType::Ping) => decode_ping(header, payload),
+        Some(FrameType::Priority) => decode_priority(header, &payload),
+        Some(FrameType::RstStream) => decode_rst_stream(header, &payload),
+        Some(FrameType::Settings) => decode_settings(header, &payload),
+        Some(FrameType::PushPromise) => decode_push_promise(header, &payload),
+        Some(FrameType::Ping) => decode_ping(header, &payload),
         Some(FrameType::Goaway) => decode_goaway(header, payload),
-        Some(FrameType::WindowUpdate) => decode_window_update(header, payload),
+        Some(FrameType::WindowUpdate) => decode_window_update(header, &payload),
         Some(FrameType::Continuation) => decode_continuation(header, payload),
         Some(FrameType::PriorityUpdate) => decode_priority_update(header, payload),
-        None => Ok(Frame::Unknown {
-            header,
-            payload: payload.to_vec(),
-        }),
+        None => Ok(Frame::Unknown { header, payload }),
     }
 }
 
 /// DATA フレームをデコードする
-fn decode_data(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
+///
+/// padded フラグが立っている場合のみ pad length を読み、データ部分は
+/// `payload.slice(range)` で zero-copy に切り出す。padded でない場合は
+/// `payload` をそのままデータとして使う。
+fn decode_data(header: FrameHeader, payload: Bytes) -> Result<Frame> {
     // DATA フレームはストリーム ID が 0 であってはならない
     if header.stream_id == CONNECTION_STREAM_ID {
         return Err(Error::protocol_error("DATA frame with stream ID 0"));
@@ -197,12 +210,11 @@ fn decode_data(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
                 "padding length exceeds frame payload",
             ));
         }
-        (
-            payload[1..payload.len() - pad_len].to_vec(),
-            Some(payload[0]),
-        )
+        let pad_byte = payload[0];
+        let data = payload.slice(1..payload.len() - pad_len);
+        (data, Some(pad_byte))
     } else {
-        (payload.to_vec(), None)
+        (payload, None)
     };
 
     Ok(Frame::Data(DataFrame {
@@ -214,7 +226,7 @@ fn decode_data(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 }
 
 /// HEADERS フレームをデコードする
-fn decode_headers(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
+fn decode_headers(header: FrameHeader, payload: Bytes) -> Result<Frame> {
     // HEADERS フレームはストリーム ID が 0 であってはならない
     if header.stream_id == CONNECTION_STREAM_ID {
         return Err(Error::protocol_error("HEADERS frame with stream ID 0"));
@@ -270,7 +282,8 @@ fn decode_headers(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
         None
     };
 
-    let header_block_fragment = payload[offset..data_end].to_vec();
+    // header_block_fragment は payload から zero-copy で切り出す
+    let header_block_fragment = payload.slice(offset..data_end);
 
     Ok(Frame::Headers(HeadersFrame {
         stream_id: header.stream_id,
@@ -288,7 +301,7 @@ fn decode_headers(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 ///
 /// RFC 9113 で優先度シグナリングは非推奨となった。
 /// 相互運用性のため受信は処理するが、優先度制御には使用しない。
-fn decode_priority(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
+fn decode_priority(header: FrameHeader, payload: &Bytes) -> Result<Frame> {
     // PRIORITY フレームはストリーム ID が 0 であってはならない
     if header.stream_id == CONNECTION_STREAM_ID {
         return Err(Error::protocol_error("PRIORITY frame with stream ID 0"));
@@ -319,7 +332,7 @@ fn decode_priority(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 }
 
 /// RST_STREAM フレームをデコードする
-fn decode_rst_stream(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
+fn decode_rst_stream(header: FrameHeader, payload: &Bytes) -> Result<Frame> {
     // RST_STREAM フレームはストリーム ID が 0 であってはならない
     if header.stream_id == CONNECTION_STREAM_ID {
         return Err(Error::protocol_error("RST_STREAM frame with stream ID 0"));
@@ -339,7 +352,7 @@ fn decode_rst_stream(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 }
 
 /// SETTINGS フレームをデコードする
-fn decode_settings(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
+fn decode_settings(header: FrameHeader, payload: &Bytes) -> Result<Frame> {
     // SETTINGS フレームはストリーム ID が 0 でなければならない
     if header.stream_id != CONNECTION_STREAM_ID {
         return Err(Error::protocol_error(
@@ -380,7 +393,7 @@ fn decode_settings(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 }
 
 /// PING フレームをデコードする
-fn decode_ping(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
+fn decode_ping(header: FrameHeader, payload: &Bytes) -> Result<Frame> {
     // PING フレームはストリーム ID が 0 でなければならない
     if header.stream_id != CONNECTION_STREAM_ID {
         return Err(Error::protocol_error("PING frame with non-zero stream ID"));
@@ -393,13 +406,13 @@ fn decode_ping(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 
     let ack = header.flags.is_ack();
     let mut opaque_data = [0u8; 8];
-    opaque_data.copy_from_slice(payload);
+    opaque_data.copy_from_slice(&payload[..]);
 
     Ok(Frame::Ping(PingFrame { ack, opaque_data }))
 }
 
 /// GOAWAY フレームをデコードする
-fn decode_goaway(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
+fn decode_goaway(header: FrameHeader, payload: Bytes) -> Result<Frame> {
     // GOAWAY フレームはストリーム ID が 0 でなければならない
     if header.stream_id != CONNECTION_STREAM_ID {
         return Err(Error::protocol_error(
@@ -421,10 +434,11 @@ fn decode_goaway(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 
     let error_code = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
 
+    // debug_data は payload から zero-copy で切り出す
     let debug_data = if payload.len() > 8 {
-        payload[8..].to_vec()
+        payload.slice(8..)
     } else {
-        Vec::new()
+        Bytes::new()
     };
 
     Ok(Frame::Goaway(GoawayFrame {
@@ -435,7 +449,7 @@ fn decode_goaway(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 }
 
 /// WINDOW_UPDATE フレームをデコードする
-fn decode_window_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
+fn decode_window_update(header: FrameHeader, payload: &Bytes) -> Result<Frame> {
     // WINDOW_UPDATE フレームは常に 4 バイト
     if payload.len() != 4 {
         return Err(Error::frame_size_error(
@@ -469,19 +483,18 @@ fn decode_window_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 }
 
 /// CONTINUATION フレームをデコードする
-fn decode_continuation(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
+fn decode_continuation(header: FrameHeader, payload: Bytes) -> Result<Frame> {
     // CONTINUATION フレームはストリーム ID が 0 であってはならない
     if header.stream_id == CONNECTION_STREAM_ID {
         return Err(Error::protocol_error("CONTINUATION frame with stream ID 0"));
     }
 
     let end_headers = header.flags.is_end_headers();
-    let header_block_fragment = payload.to_vec();
 
     Ok(Frame::Continuation(ContinuationFrame {
         stream_id: header.stream_id,
         end_headers,
-        header_block_fragment,
+        header_block_fragment: payload,
     }))
 }
 
@@ -492,7 +505,7 @@ fn decode_continuation(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 /// サーバープッシュは主要ブラウザでサポートが削除されているため、
 /// このライブラリでは送信機能を提供しない。
 /// 受信時はストリーム ID のみ抽出し、connection モジュールでエラー処理する。
-fn decode_push_promise(header: FrameHeader, _payload: &[u8]) -> Result<Frame> {
+fn decode_push_promise(header: FrameHeader, _payload: &Bytes) -> Result<Frame> {
     // PUSH_PROMISE フレームはストリーム ID が 0 であってはならない
     if header.stream_id == CONNECTION_STREAM_ID {
         return Err(Error::protocol_error("PUSH_PROMISE frame with stream ID 0"));
@@ -505,7 +518,7 @@ fn decode_push_promise(header: FrameHeader, _payload: &[u8]) -> Result<Frame> {
 }
 
 /// PRIORITY_UPDATE フレームをデコードする (RFC 9218 Section 4)
-fn decode_priority_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
+fn decode_priority_update(header: FrameHeader, payload: Bytes) -> Result<Frame> {
     // RFC 9218 Section 4: PRIORITY_UPDATE フレームはストリーム ID が 0 でなければならない
     if header.stream_id != CONNECTION_STREAM_ID {
         return Err(Error::protocol_error(
@@ -526,11 +539,11 @@ fn decode_priority_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> 
         | (u32::from(payload[2]) << 8)
         | u32::from(payload[3]);
 
-    // Priority Field Value (残りのバイト)
+    // Priority Field Value (残りのバイト) は payload から zero-copy で切り出す
     let priority_field_value = if payload.len() > 4 {
-        payload[4..].to_vec()
+        payload.slice(4..)
     } else {
-        Vec::new()
+        Bytes::new()
     };
 
     Ok(Frame::PriorityUpdate(PriorityUpdateFrame {

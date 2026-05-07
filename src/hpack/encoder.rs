@@ -1,5 +1,7 @@
 //! HPACK エンコーダー (RFC 7541)
 
+use bytes::Bytes;
+
 use crate::hpack::dynamic_table::DynamicTable;
 use crate::hpack::huffman;
 use crate::hpack::integer;
@@ -69,7 +71,8 @@ impl Encoder {
             if indexing {
                 // Literal Header Field with Incremental Indexing (Section 6.2.1)
                 self.encode_literal_indexed(buf, index, value);
-                self.dynamic_table.insert(name.to_vec(), value.to_vec());
+                self.dynamic_table
+                    .insert(Bytes::copy_from_slice(name), Bytes::copy_from_slice(value));
             } else {
                 // Literal Header Field without Indexing (Section 6.2.2)
                 self.encode_literal_without_indexing_indexed(buf, index, value);
@@ -77,7 +80,8 @@ impl Encoder {
         } else if indexing {
             // Literal Header Field with Incremental Indexing (Section 6.2.1)
             self.encode_literal_new(buf, name, value);
-            self.dynamic_table.insert(name.to_vec(), value.to_vec());
+            self.dynamic_table
+                .insert(Bytes::copy_from_slice(name), Bytes::copy_from_slice(value));
         } else {
             // Literal Header Field without Indexing (Section 6.2.2)
             self.encode_literal_without_indexing_new(buf, name, value);

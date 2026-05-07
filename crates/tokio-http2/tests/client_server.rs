@@ -58,16 +58,16 @@ async fn test_basic_request_response() {
                     // :method ヘッダーを確認
                     let method = headers
                         .iter()
-                        .find(|h| h.name == b":method")
+                        .find(|h| &h.name[..] == b":method")
                         .expect("missing :method header");
-                    assert_eq!(method.value, b"GET");
+                    assert_eq!(&method.value[..], b"GET");
 
                     // :path ヘッダーを確認
                     let path = headers
                         .iter()
-                        .find(|h| h.name == b":path")
+                        .find(|h| &h.name[..] == b":path")
                         .expect("missing :path header");
-                    assert_eq!(path.value, b"/");
+                    assert_eq!(&path.value[..], b"/");
 
                     // レスポンス送信
                     let response_headers = vec![HeaderField::from_str(":status", "200")];
@@ -118,9 +118,9 @@ async fn test_basic_request_response() {
                 // :status ヘッダーを確認
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(&status.value[..], b"200");
 
                 break;
             }
@@ -352,9 +352,9 @@ async fn test_multiple_streams() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
 
             responses_received += 1;
             if responses_received >= 3 {
@@ -776,7 +776,7 @@ async fn test_many_small_data_frames() {
 
                         for i in 0..chunk_count {
                             let is_last = i == chunk_count - 1;
-                            conn.send_data(stream_id, vec![i as u8], is_last)
+                            conn.send_data(stream_id, bytes::Bytes::from(vec![i as u8]), is_last)
                                 .await
                                 .expect("failed to send data");
                         }
@@ -1087,15 +1087,15 @@ async fn test_bidirectional_streaming() {
         .expect("failed to send request");
 
     client
-        .send_data(stream_id, b"chunk1-".to_vec(), false)
+        .send_data(stream_id, bytes::Bytes::from_static(b"chunk1-"), false)
         .await
         .expect("failed to send data 1");
     client
-        .send_data(stream_id, b"chunk2-".to_vec(), false)
+        .send_data(stream_id, bytes::Bytes::from_static(b"chunk2-"), false)
         .await
         .expect("failed to send data 2");
     client
-        .send_data(stream_id, b"chunk3".to_vec(), true)
+        .send_data(stream_id, bytes::Bytes::from_static(b"chunk3"), true)
         .await
         .expect("failed to send data 3");
 
@@ -1151,7 +1151,7 @@ async fn test_interleaved_streams() {
                             .expect("failed to send response");
                         conn.send_data(
                             stream_id,
-                            format!("response-{}", responded).into_bytes(),
+                            bytes::Bytes::from(format!("response-{}", responded).into_bytes()),
                             true,
                         )
                         .await
@@ -1245,7 +1245,7 @@ async fn test_response_with_data() {
                             .await
                             .expect("failed to send response");
 
-                        conn.send_data(stream_id, b"content".to_vec(), true)
+                        conn.send_data(stream_id, bytes::Bytes::from_static(b"content"), true)
                             .await
                             .expect("failed to send data");
                         // GOAWAY を送信して正常終了
@@ -1338,9 +1338,9 @@ async fn test_post_request_with_body() {
                     assert!(!end_stream, "POST should not have end_stream on headers");
                     let method = headers
                         .iter()
-                        .find(|h| h.name == b":method")
+                        .find(|h| &h.name[..] == b":method")
                         .expect("missing :method");
-                    assert_eq!(method.value, b"POST");
+                    assert_eq!(&method.value[..], b"POST");
                     stream_id = sid;
                 }
                 Event::DataReceived {
@@ -1359,7 +1359,7 @@ async fn test_post_request_with_body() {
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
-                        conn.send_data(stream_id, request_body.clone(), true)
+                        conn.send_data(stream_id, request_body.clone().into(), true)
                             .await
                             .expect("failed to send data");
                         break;
@@ -1396,7 +1396,7 @@ async fn test_post_request_with_body() {
 
     let body = b"{\"key\":\"value\",\"number\":42}";
     client
-        .send_data(stream_id, body.to_vec(), true)
+        .send_data(stream_id, bytes::Bytes::copy_from_slice(body), true)
         .await
         .expect("failed to send data");
 
@@ -1415,9 +1415,9 @@ async fn test_post_request_with_body() {
             Event::HeadersReceived { headers, .. } => {
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status");
-                assert_eq!(status.value, b"200");
+                assert_eq!(&status.value[..], b"200");
             }
             _ => {}
         }
@@ -1474,7 +1474,7 @@ async fn test_large_body() {
         let chunks: Vec<&[u8]> = data.chunks(chunk_size).collect();
         for (i, chunk) in chunks.iter().enumerate() {
             let is_last = i == chunks.len() - 1;
-            conn.send_data(stream_id, chunk.to_vec(), is_last)
+            conn.send_data(stream_id, bytes::Bytes::copy_from_slice(chunk), is_last)
                 .await
                 .expect("failed to send data chunk");
         }
@@ -1555,7 +1555,7 @@ async fn test_status_codes() {
                     if end_stream {
                         let path = headers
                             .iter()
-                            .find(|h| h.name == b":path")
+                            .find(|h| &h.name[..] == b":path")
                             .map(|h| &h.value[..])
                             .unwrap_or(b"/");
 
@@ -1621,9 +1621,9 @@ async fn test_status_codes() {
         {
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status");
-            received_statuses.push((stream_id, status.value.clone()));
+            received_statuses.push((stream_id, status.value.to_vec()));
             if received_statuses.len() >= 3 {
                 break;
             }
@@ -1890,9 +1890,9 @@ async fn test_multiple_clients() {
                     assert!(end_stream);
                     let status = headers
                         .iter()
-                        .find(|h| h.name == b":status")
+                        .find(|h| &h.name[..] == b":status")
                         .expect("missing :status");
-                    assert_eq!(status.value, b"200");
+                    assert_eq!(&status.value[..], b"200");
                     break;
                 }
             }
@@ -2161,7 +2161,7 @@ async fn test_large_request_body() {
     for (i, chunk) in chunks.iter().enumerate() {
         let is_last = i == chunks.len() - 1;
         client
-            .send_data(stream_id, chunk.to_vec(), is_last)
+            .send_data(stream_id, bytes::Bytes::copy_from_slice(chunk), is_last)
             .await
             .expect("failed to send data chunk");
     }
@@ -2178,7 +2178,7 @@ async fn test_large_request_body() {
             assert!(end_stream);
             let received_size = headers
                 .iter()
-                .find(|h| h.name == b"x-received-size")
+                .find(|h| &h.name[..] == b"x-received-size")
                 .expect("missing x-received-size");
             let size: usize = std::str::from_utf8(&received_size.value)
                 .unwrap()
@@ -2310,7 +2310,7 @@ async fn test_content_length_response() {
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
-                        conn.send_data(stream_id, body.to_vec(), true)
+                        conn.send_data(stream_id, bytes::Bytes::copy_from_slice(body), true)
                             .await
                             .expect("failed to send data");
                         break;
@@ -2351,7 +2351,7 @@ async fn test_content_length_response() {
         let event = client.next_event().await.expect("failed to get event");
         match event {
             Event::HeadersReceived { headers, .. } => {
-                let cl = headers.iter().find(|h| h.name == b"content-length");
+                let cl = headers.iter().find(|h| &h.name[..] == b"content-length");
                 if let Some(cl) = cl {
                     assert_eq!(cl.value, body.len().to_string().as_bytes());
                     got_content_length = true;
@@ -2404,7 +2404,7 @@ async fn test_multiple_streams_with_bodies() {
                     if end_stream {
                         let path = headers
                             .iter()
-                            .find(|h| h.name == b":path")
+                            .find(|h| &h.name[..] == b":path")
                             .map(|h| String::from_utf8_lossy(&h.value).to_string())
                             .unwrap_or_default();
 
@@ -2412,9 +2412,13 @@ async fn test_multiple_streams_with_bodies() {
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
-                        conn.send_data(stream_id, format!("body-for-{}", path).into_bytes(), true)
-                            .await
-                            .expect("failed to send data");
+                        conn.send_data(
+                            stream_id,
+                            bytes::Bytes::from(format!("body-for-{}", path).into_bytes()),
+                            true,
+                        )
+                        .await
+                        .expect("failed to send data");
 
                         responded += 1;
                         if responded >= stream_count {
@@ -2600,9 +2604,9 @@ async fn test_rst_stream_then_continue() {
             assert!(end_stream);
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
             break;
         }
     }
@@ -2636,7 +2640,7 @@ async fn test_head_request() {
                     if end_stream {
                         let method = headers
                             .iter()
-                            .find(|h| h.name == b":method")
+                            .find(|h| &h.name[..] == b":method")
                             .map(|h| &h.value[..]);
                         assert_eq!(method, Some(b"HEAD" as &[u8]));
 
@@ -2693,11 +2697,11 @@ async fn test_head_request() {
             assert!(end_stream);
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
             // content-length はあるがボディはない
-            let cl = headers.iter().find(|h| h.name == b"content-length");
+            let cl = headers.iter().find(|h| &h.name[..] == b"content-length");
             assert!(cl.is_some());
             break;
         }
@@ -2732,7 +2736,7 @@ async fn test_delete_request() {
                     if end_stream {
                         let method = headers
                             .iter()
-                            .find(|h| h.name == b":method")
+                            .find(|h| &h.name[..] == b":method")
                             .map(|h| &h.value[..]);
                         assert_eq!(method, Some(b"DELETE" as &[u8]));
 
@@ -2785,9 +2789,9 @@ async fn test_delete_request() {
             assert!(end_stream);
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status");
-            assert_eq!(status.value, b"204");
+            assert_eq!(&status.value[..], b"204");
             break;
         }
     }
@@ -2823,7 +2827,7 @@ async fn test_put_request_with_body() {
                 } => {
                     let method = headers
                         .iter()
-                        .find(|h| h.name == b":method")
+                        .find(|h| &h.name[..] == b":method")
                         .map(|h| &h.value[..]);
                     assert_eq!(method, Some(b"PUT" as &[u8]));
                     stream_id = sid;
@@ -2872,7 +2876,7 @@ async fn test_put_request_with_body() {
 
     let body = b"updated resource content";
     client
-        .send_data(stream_id, body.to_vec(), true)
+        .send_data(stream_id, bytes::Bytes::copy_from_slice(body), true)
         .await
         .expect("failed to send data");
 
@@ -2922,7 +2926,7 @@ async fn test_drive() {
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
-                        conn.send_data(stream_id, b"driven".to_vec(), true)
+                        conn.send_data(stream_id, bytes::Bytes::from_static(b"driven"), true)
                             .await
                             .expect("failed to send data");
                         break;
@@ -3048,7 +3052,7 @@ async fn test_send_data_after_reset() {
 
     // データ送信 (サーバーがリセットする前に)
     client
-        .send_data(stream_id, b"data1".to_vec(), false)
+        .send_data(stream_id, bytes::Bytes::from_static(b"data1"), false)
         .await
         .expect("failed to send data");
 
@@ -3067,7 +3071,9 @@ async fn test_send_data_after_reset() {
     }
 
     // リセット後のデータ送信はエラーになるべき
-    let result = client.send_data(stream_id, b"data2".to_vec(), true).await;
+    let result = client
+        .send_data(stream_id, bytes::Bytes::from_static(b"data2"), true)
+        .await;
     assert!(result.is_err(), "send_data after reset should fail");
 
     client.shutdown().await.ok();
@@ -3111,9 +3117,13 @@ async fn test_custom_initial_window_size() {
                         let chunks: Vec<&[u8]> = data.chunks(chunk_size).collect();
                         for (i, chunk) in chunks.iter().enumerate() {
                             let is_last = i == chunks.len() - 1;
-                            conn.send_data(stream_id, chunk.to_vec(), is_last)
-                                .await
-                                .expect("failed to send data");
+                            conn.send_data(
+                                stream_id,
+                                bytes::Bytes::copy_from_slice(chunk),
+                                is_last,
+                            )
+                            .await
+                            .expect("failed to send data");
                         }
                         // GOAWAY を送信して正常終了
                         conn.shutdown().await.expect("failed to shutdown");

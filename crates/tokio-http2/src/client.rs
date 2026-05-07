@@ -101,7 +101,7 @@ impl Client {
     pub async fn send_data(
         &mut self,
         stream_id: StreamId,
-        data: Vec<u8>,
+        data: bytes::Bytes,
         end_stream: bool,
     ) -> Result<()> {
         self.conn.send_data(stream_id, data, end_stream).await
@@ -139,6 +139,8 @@ impl Client {
 
     /// GOAWAY を送信して接続を終了
     pub async fn shutdown(&mut self) -> Result<()> {
-        self.conn.send_goaway(ErrorCode::NoError, vec![]).await
+        self.conn
+            .send_goaway(ErrorCode::NoError, bytes::Bytes::new())
+            .await
     }
 }

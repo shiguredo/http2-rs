@@ -2,6 +2,8 @@
 //!
 //! Sans I/O パターンで使用されるイベントを定義する。
 
+use bytes::Bytes;
+
 use crate::error::ErrorCode;
 use crate::frame::StreamId;
 use crate::hpack::HeaderField;
@@ -32,7 +34,7 @@ pub enum Event {
         ///
         /// `:method = CONNECT` かつ `:protocol` が指定されていた場合に `Some` になる。
         /// それ以外は `None`。WebTransport over HTTP/2 では `Some(b"webtransport")` が入る。
-        protocol: Option<Vec<u8>>,
+        protocol: Option<Bytes>,
     },
 
     /// データを受信した
@@ -40,7 +42,7 @@ pub enum Event {
         /// ストリーム ID
         stream_id: StreamId,
         /// データ
-        data: Vec<u8>,
+        data: Bytes,
         /// END_STREAM フラグ
         end_stream: bool,
     },
@@ -82,7 +84,7 @@ pub enum Event {
         /// エラーコード
         error_code: ErrorCode,
         /// デバッグデータ
-        debug_data: Vec<u8>,
+        debug_data: Bytes,
     },
 
     /// WINDOW_UPDATE を受信した
@@ -98,7 +100,7 @@ pub enum Event {
         /// 優先度を更新するストリーム ID
         stream_id: StreamId,
         /// Priority Field Value (Structured Fields 形式)
-        priority_field_value: Vec<u8>,
+        priority_field_value: Bytes,
     },
 
     /// 接続エラーが発生した

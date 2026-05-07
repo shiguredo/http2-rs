@@ -9,3 +9,5 @@ proptest = "1.9"
 
 [dev-dependencies]
 shiguredo_http2 = { path = "../" }
+# Bytes 化された Frame / Event / Capsule の値を構築するために使用する
+bytes = { version = "1.11", default-features = false }

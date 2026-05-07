@@ -2,13 +2,15 @@
 //!
 //! HTTP/2 ヘッダー圧縮で使用される静的テーブル（61 エントリ）を提供する。
 
+use bytes::Bytes;
+
 /// ヘッダーフィールド
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeaderField {
     /// ヘッダー名
-    pub name: Vec<u8>,
+    pub name: Bytes,
     /// ヘッダー値
-    pub value: Vec<u8>,
+    pub value: Bytes,
     /// 機密フラグ（Never Indexed を使用するかどうか）
     ///
     /// RFC 7541 Section 7.1.3: Never-Indexed Literal
@@ -20,20 +22,20 @@ pub struct HeaderField {
 impl HeaderField {
     /// 新しい `HeaderField` を生成する
     #[must_use]
-    pub fn new(name: Vec<u8>, value: Vec<u8>) -> Self {
+    pub fn new(name: impl Into<Bytes>, value: impl Into<Bytes>) -> Self {
         Self {
-            name,
-            value,
+            name: name.into(),
+            value: value.into(),
             sensitive: false,
         }
     }
 
     /// 機密フラグ付きで `HeaderField` を生成する
     #[must_use]
-    pub fn new_sensitive(name: Vec<u8>, value: Vec<u8>, sensitive: bool) -> Self {
+    pub fn new_sensitive(name: impl Into<Bytes>, value: impl Into<Bytes>, sensitive: bool) -> Self {
         Self {
-            name,
-            value,
+            name: name.into(),
+            value: value.into(),
             sensitive,
         }
     }
@@ -42,8 +44,8 @@ impl HeaderField {
     #[must_use]
     pub fn from_str(name: &str, value: &str) -> Self {
         Self {
-            name: name.as_bytes().to_vec(),
-            value: value.as_bytes().to_vec(),
+            name: Bytes::copy_from_slice(name.as_bytes()),
+            value: Bytes::copy_from_slice(value.as_bytes()),
             sensitive: false,
         }
     }
@@ -52,8 +54,8 @@ impl HeaderField {
     #[must_use]
     pub fn sensitive(name: &str, value: &str) -> Self {
         Self {
-            name: name.as_bytes().to_vec(),
-            value: value.as_bytes().to_vec(),
+            name: Bytes::copy_from_slice(name.as_bytes()),
+            value: Bytes::copy_from_slice(value.as_bytes()),
             sensitive: true,
         }
     }
@@ -78,11 +80,14 @@ pub struct StaticEntry {
 
 impl StaticEntry {
     /// `HeaderField` に変換する
+    ///
+    /// 静的テーブルのエントリは `'static [u8]` で持つため、`Bytes::from_static` で
+    /// ヒープ確保なしに `HeaderField` を生成できる。
     #[must_use]
     pub fn to_header_field(&self) -> HeaderField {
         HeaderField {
-            name: self.name.to_vec(),
-            value: self.value.to_vec(),
+            name: Bytes::from_static(self.name),
+            value: Bytes::from_static(self.value),
             sensitive: false,
         }
     }

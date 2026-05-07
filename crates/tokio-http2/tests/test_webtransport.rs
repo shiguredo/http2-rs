@@ -181,7 +181,7 @@ async fn test_wt_bidi_echo() {
 
     let bidi_id = wt_client.open_bidi_stream().expect("open bidi");
     wt_client
-        .send_stream_data(bidi_id, b"ping-pong", false)
+        .send_stream_data(bidi_id, bytes::Bytes::from_static(b"ping-pong"), false)
         .expect("send stream data");
     while let Some(out) = wt_client.poll_output() {
         client
@@ -288,11 +288,11 @@ async fn test_wt_reject() {
             if stream_id == connect_stream {
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("status header")
                     .value
                     .clone();
-                assert_eq!(status.as_slice(), b"404");
+                assert_eq!(&status[..], b"404");
                 got_404 = true;
                 break;
             }
@@ -332,7 +332,7 @@ async fn test_wt_uni_echo() {
     wt_client.initiate().expect("initiate");
     let uni_id = wt_client.open_uni_stream().expect("open uni");
     wt_client
-        .send_stream_data(uni_id, b"unicorn", true)
+        .send_stream_data(uni_id, bytes::Bytes::from_static(b"unicorn"), true)
         .expect("send");
     while let Some(out) = wt_client.poll_output() {
         client
@@ -398,7 +398,9 @@ async fn test_wt_datagram_echo() {
 
     let mut wt_client = WtSession::client(WtConfig::default());
     wt_client.initiate().expect("initiate");
-    wt_client.send_datagram(b"dgram-payload").expect("send");
+    wt_client
+        .send_datagram(bytes::Bytes::from_static(b"dgram-payload"))
+        .expect("send");
     while let Some(out) = wt_client.poll_output() {
         client
             .send_data(connect_stream, out, false)
@@ -406,7 +408,7 @@ async fn test_wt_datagram_echo() {
             .expect("send data");
     }
 
-    let mut received: Option<Vec<u8>> = None;
+    let mut received: Option<bytes::Bytes> = None;
     while received.is_none() {
         let ev = tokio::time::timeout(Duration::from_secs(5), client.next_event())
             .await
@@ -426,7 +428,7 @@ async fn test_wt_datagram_echo() {
             }
         }
     }
-    assert_eq!(received.unwrap(), b"dgram-payload");
+    assert_eq!(&received.unwrap()[..], b"dgram-payload");
     server_task.await.expect("server join");
 }
 

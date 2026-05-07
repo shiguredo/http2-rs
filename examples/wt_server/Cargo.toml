@@ -8,6 +8,8 @@ publish = false
 [dependencies]
 shiguredo_http2 = { path = "../.." }
 tokio-http2 = { path = "../../crates/tokio-http2" }
+# WebTransport ストリームの送受信ペイロードを Bytes で扱うために使用する
+bytes = { version = "1.11", default-features = false }
 rustls = "0.23"
 rustls-pki-types = "1"
 rcgen = "0.14"

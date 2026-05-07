@@ -241,7 +241,7 @@ async fn handle_uni(
         send_stream.send(data, false).await?;
     }
     // FIN を送って送信側を閉じる
-    send_stream.send(Vec::new(), true).await?;
+    send_stream.send(bytes::Bytes::new(), true).await?;
     log::info!("[{remote}] uni streams finished (recv={recv_id}, send={send_id})");
     Ok(())
 }

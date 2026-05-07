@@ -54,7 +54,9 @@ proptest! {
         let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
 
-        let capsule = Capsule::Datagram { data: data.clone() };
+        let capsule = Capsule::Datagram {
+            data: bytes::Bytes::from(data.clone()),
+        };
         encoder.encode(&capsule);
 
         decoder.feed(encoder.buffer());
@@ -74,7 +76,7 @@ proptest! {
 
         let capsule = Capsule::WtStream {
             stream_id,
-            data: data.clone(),
+            data: data.clone().into(),
             fin,
         };
         encoder.encode(&capsule);
@@ -205,7 +207,7 @@ proptest! {
 
         let mut capsules: Vec<Capsule> = Vec::new();
         for (i, &size) in data_sizes.iter().enumerate().take(count) {
-            let data = vec![i as u8; size];
+            let data = bytes::Bytes::from(vec![i as u8; size]);
             let capsule = Capsule::Datagram { data };
             encoder.encode(&capsule);
             capsules.push(capsule);
@@ -246,7 +248,7 @@ proptest! {
 
         let capsule = Capsule::Unknown {
             capsule_type: capsule_type_value,
-            data: data.clone(),
+            data: data.clone().into(),
         };
         encoder.encode(&capsule);
 
@@ -457,7 +459,9 @@ fn apply_session_op(session: &mut WtSession, op: &SessionOp) -> Result<(), ()> {
         SessionOp::Close => session.close(0, "close").map_err(|_| ()),
         SessionOp::OpenBidiStream => session.open_bidi_stream().map(|_| ()).map_err(|_| ()),
         SessionOp::OpenUniStream => session.open_uni_stream().map(|_| ()).map_err(|_| ()),
-        SessionOp::SendDatagram(data) => session.send_datagram(data).map_err(|_| ()),
+        SessionOp::SendDatagram(data) => session
+            .send_datagram(bytes::Bytes::from(data.clone()))
+            .map_err(|_| ()),
         SessionOp::RecvCloseSession => {
             let mut encoder = CapsuleEncoder::new();
             encoder.encode(&Capsule::WtCloseSession {
@@ -691,7 +695,7 @@ proptest! {
     ) {
         let original = Capsule::WtStream {
             stream_id,
-            data: data.clone(),
+            data: data.clone().into(),
             fin,
         };
 

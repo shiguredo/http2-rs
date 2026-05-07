@@ -22,6 +22,8 @@ pub mod varint;
 
 use std::collections::{HashMap, VecDeque};
 
+use bytes::{Bytes, BytesMut};
+
 use crate::connection::Role;
 
 pub use capsule::{Capsule, CapsuleDecoder, CapsuleEncoder, capsule_type};
@@ -55,7 +57,7 @@ pub enum WtEvent {
     /// ストリームデータを受信
     StreamData {
         stream_id: WtStreamId,
-        data: Vec<u8>,
+        data: Bytes,
         fin: bool,
     },
     /// ストリームがリセットされた
@@ -69,7 +71,7 @@ pub enum WtEvent {
         error_code: u64,
     },
     /// データグラムを受信
-    DatagramReceived { data: Vec<u8> },
+    DatagramReceived { data: Bytes },
     /// セッションがドレイン中
     SessionDraining,
     /// セッションがクローズされた
@@ -132,7 +134,10 @@ pub struct WtSession {
     /// Capsule エンコーダー
     capsule_encoder: CapsuleEncoder,
     /// 出力バッファ
-    output_buffer: VecDeque<u8>,
+    ///
+    /// `BytesMut` を使い、`poll_output` で `split().freeze()` により
+    /// zero-copy に `Bytes` を取り出す。
+    output_buffer: BytesMut,
     /// イベントキュー
     events: VecDeque<WtEvent>,
     /// 次の双方向ストリーム ID
@@ -171,7 +176,7 @@ impl WtSession {
             flow_control,
             capsule_decoder: CapsuleDecoder::new(),
             capsule_encoder: CapsuleEncoder::new(),
-            output_buffer: VecDeque::new(),
+            output_buffer: BytesMut::new(),
             events: VecDeque::new(),
             next_bidi_stream_id: stream::stream_id::first(is_client, true),
             next_uni_stream_id: stream::stream_id::first(is_client, false),
@@ -230,12 +235,15 @@ impl WtSession {
     }
 
     /// 送信データを取得する
+    ///
+    /// 蓄積されたバイト列を `Bytes` で返す。`Bytes::clone()` は Arc inc なので、
+    /// relay 配信時に N 個の宛先に送る場合のコピーを排除できる。
     #[must_use]
-    pub fn poll_output(&mut self) -> Option<Vec<u8>> {
+    pub fn poll_output(&mut self) -> Option<Bytes> {
         if self.output_buffer.is_empty() {
             None
         } else {
-            Some(self.output_buffer.drain(..).collect())
+            Some(self.output_buffer.split().freeze())
         }
     }
 
@@ -310,10 +318,14 @@ impl WtSession {
     }
 
     /// ストリームにデータを送信する
+    ///
+    /// `data` を `Bytes` で受け取り、そのまま `Capsule::WtStream` に格納する。
+    /// `Bytes::clone()` は Arc inc なので、relay で 1 つの `Bytes` を複数の
+    /// `WtSession` に配布するときのコピーを排除できる。
     pub fn send_stream_data(
         &mut self,
         stream_id: WtStreamId,
-        data: &[u8],
+        data: Bytes,
         fin: bool,
     ) -> WtResult<()> {
         // draft-ietf-webtrans-http2-14 Section 6.13: Draining 状態でもデータ送信を許可
@@ -336,20 +348,23 @@ impl WtSession {
             return Err(WtError::stream_state_error("cannot send on this stream"));
         }
 
+        let data_len = data.len() as u64;
+
         // WT_STREAM Capsule をエンコード
         let capsule = Capsule::WtStream {
             stream_id,
-            data: data.to_vec(),
+            data,
             fin,
         };
         self.capsule_encoder.encode(&capsule);
-        self.output_buffer.extend(self.capsule_encoder.take());
+        self.output_buffer
+            .extend_from_slice(&self.capsule_encoder.take());
 
         // 送信状態を更新
-        stream.send_data(data.len() as u64, fin)?;
+        stream.send_data(data_len, fin)?;
 
         // フロー制御を更新
-        self.flow_control.consume_send(data.len() as u64)?;
+        self.flow_control.consume_send(data_len)?;
 
         Ok(())
     }
@@ -378,7 +393,8 @@ impl WtSession {
             reliable_size,
         };
         self.capsule_encoder.encode(&capsule);
-        self.output_buffer.extend(self.capsule_encoder.take());
+        self.output_buffer
+            .extend_from_slice(&self.capsule_encoder.take());
 
         // 送信状態を更新
         stream.send_reset();
@@ -407,7 +423,8 @@ impl WtSession {
             error_code,
         };
         self.capsule_encoder.encode(&capsule);
-        self.output_buffer.extend(self.capsule_encoder.take());
+        self.output_buffer
+            .extend_from_slice(&self.capsule_encoder.take());
 
         // 送信済みフラグを設定
         stream.set_stop_sending_sent();
@@ -416,7 +433,9 @@ impl WtSession {
     }
 
     /// データグラムを送信する
-    pub fn send_datagram(&mut self, data: &[u8]) -> WtResult<()> {
+    ///
+    /// `data` を `Bytes` で受け取り、そのまま `Capsule::Datagram` に格納する。
+    pub fn send_datagram(&mut self, data: Bytes) -> WtResult<()> {
         // draft-ietf-webtrans-http2-14 Section 6.13: Draining 状態でもデータグラム送信を許可
         if !matches!(
             self.state,
@@ -428,11 +447,10 @@ impl WtSession {
         }
 
         // DATAGRAM Capsule をエンコード
-        let capsule = Capsule::Datagram {
-            data: data.to_vec(),
-        };
+        let capsule = Capsule::Datagram { data };
         self.capsule_encoder.encode(&capsule);
-        self.output_buffer.extend(self.capsule_encoder.take());
+        self.output_buffer
+            .extend_from_slice(&self.capsule_encoder.take());
 
         Ok(())
     }
@@ -449,7 +467,8 @@ impl WtSession {
             reason: reason.to_string(),
         };
         self.capsule_encoder.encode(&capsule);
-        self.output_buffer.extend(self.capsule_encoder.take());
+        self.output_buffer
+            .extend_from_slice(&self.capsule_encoder.take());
 
         self.state = WtSessionState::Closed;
 
@@ -463,7 +482,8 @@ impl WtSession {
     pub fn send_max_data(&mut self, maximum: u64) -> WtResult<()> {
         let capsule = Capsule::WtMaxData { maximum };
         self.capsule_encoder.encode(&capsule);
-        self.output_buffer.extend(self.capsule_encoder.take());
+        self.output_buffer
+            .extend_from_slice(&self.capsule_encoder.take());
         Ok(())
     }
 
@@ -473,7 +493,8 @@ impl WtSession {
     pub fn send_max_stream_data(&mut self, stream_id: WtStreamId, maximum: u64) -> WtResult<()> {
         let capsule = Capsule::WtMaxStreamData { stream_id, maximum };
         self.capsule_encoder.encode(&capsule);
-        self.output_buffer.extend(self.capsule_encoder.take());
+        self.output_buffer
+            .extend_from_slice(&self.capsule_encoder.take());
         Ok(())
     }
 
@@ -486,7 +507,8 @@ impl WtSession {
             bidirectional,
         };
         self.capsule_encoder.encode(&capsule);
-        self.output_buffer.extend(self.capsule_encoder.take());
+        self.output_buffer
+            .extend_from_slice(&self.capsule_encoder.take());
         Ok(())
     }
 
@@ -558,7 +580,8 @@ impl WtSession {
         // WT_DRAIN_SESSION Capsule をエンコード
         let capsule = Capsule::WtDrainSession;
         self.capsule_encoder.encode(&capsule);
-        self.output_buffer.extend(self.capsule_encoder.take());
+        self.output_buffer
+            .extend_from_slice(&self.capsule_encoder.take());
 
         self.state = WtSessionState::Draining;
 
@@ -705,7 +728,7 @@ impl WtSession {
     fn handle_stream_data(
         &mut self,
         stream_id: WtStreamId,
-        data: Vec<u8>,
+        data: Bytes,
         fin: bool,
     ) -> WtResult<()> {
         let is_new_stream = !self.streams.contains_key(&stream_id);
@@ -844,7 +867,7 @@ mod tests {
         let mut session = WtSession::client(WtConfig::default());
         session.initiate().unwrap();
 
-        session.send_datagram(b"hello").unwrap();
+        session.send_datagram(Bytes::from_static(b"hello")).unwrap();
         assert!(session.has_output());
     }
 

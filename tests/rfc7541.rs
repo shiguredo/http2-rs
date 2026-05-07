@@ -47,8 +47,8 @@ fn test_c2_1_literal_header_with_indexing() {
 
     let headers = decoder.decode(&encoded).unwrap();
     assert_eq!(headers.len(), 1);
-    assert_eq!(headers[0].name, b"custom-key");
-    assert_eq!(headers[0].value, b"custom-header");
+    assert_eq!(&headers[0].name[..], b"custom-key");
+    assert_eq!(&headers[0].value[..], b"custom-header");
 
     // 動的テーブルにエントリが追加されていることを確認
     assert_eq!(decoder.dynamic_table().len(), 1);
@@ -66,8 +66,8 @@ fn test_c2_2_literal_header_without_indexing() {
 
     let headers = decoder.decode(&encoded).unwrap();
     assert_eq!(headers.len(), 1);
-    assert_eq!(headers[0].name, b":path");
-    assert_eq!(headers[0].value, b"/sample/path");
+    assert_eq!(&headers[0].name[..], b":path");
+    assert_eq!(&headers[0].value[..], b"/sample/path");
 
     // 動的テーブルにエントリが追加されていないことを確認
     assert_eq!(decoder.dynamic_table().len(), 0);
@@ -86,8 +86,8 @@ fn test_c2_3_literal_header_never_indexed() {
 
     let headers = decoder.decode(&encoded).unwrap();
     assert_eq!(headers.len(), 1);
-    assert_eq!(headers[0].name, b"password");
-    assert_eq!(headers[0].value, b"secret");
+    assert_eq!(&headers[0].name[..], b"password");
+    assert_eq!(&headers[0].value[..], b"secret");
 
     // 動的テーブルにエントリが追加されていないことを確認
     assert_eq!(decoder.dynamic_table().len(), 0);
@@ -103,8 +103,8 @@ fn test_c2_4_indexed_header_field() {
 
     let headers = decoder.decode(&encoded).unwrap();
     assert_eq!(headers.len(), 1);
-    assert_eq!(headers[0].name, b":method");
-    assert_eq!(headers[0].value, b"GET");
+    assert_eq!(&headers[0].name[..], b":method");
+    assert_eq!(&headers[0].value[..], b"GET");
 }
 
 /// C.3.1 - First Request (without Huffman)
@@ -124,17 +124,17 @@ fn test_c3_1_first_request() {
     let headers = decoder.decode(&encoded).unwrap();
     assert_eq!(headers.len(), 4);
 
-    assert_eq!(headers[0].name, b":method");
-    assert_eq!(headers[0].value, b"GET");
+    assert_eq!(&headers[0].name[..], b":method");
+    assert_eq!(&headers[0].value[..], b"GET");
 
-    assert_eq!(headers[1].name, b":scheme");
-    assert_eq!(headers[1].value, b"http");
+    assert_eq!(&headers[1].name[..], b":scheme");
+    assert_eq!(&headers[1].value[..], b"http");
 
-    assert_eq!(headers[2].name, b":path");
-    assert_eq!(headers[2].value, b"/");
+    assert_eq!(&headers[2].name[..], b":path");
+    assert_eq!(&headers[2].value[..], b"/");
 
-    assert_eq!(headers[3].name, b":authority");
-    assert_eq!(headers[3].value, b"www.example.com");
+    assert_eq!(&headers[3].name[..], b":authority");
+    assert_eq!(&headers[3].value[..], b"www.example.com");
 }
 
 /// C.4.1 - First Request (with Huffman)
@@ -155,17 +155,17 @@ fn test_c4_1_first_request_huffman() {
     let headers = decoder.decode(&encoded).unwrap();
     assert_eq!(headers.len(), 4);
 
-    assert_eq!(headers[0].name, b":method");
-    assert_eq!(headers[0].value, b"GET");
+    assert_eq!(&headers[0].name[..], b":method");
+    assert_eq!(&headers[0].value[..], b"GET");
 
-    assert_eq!(headers[1].name, b":scheme");
-    assert_eq!(headers[1].value, b"http");
+    assert_eq!(&headers[1].name[..], b":scheme");
+    assert_eq!(&headers[1].value[..], b"http");
 
-    assert_eq!(headers[2].name, b":path");
-    assert_eq!(headers[2].value, b"/");
+    assert_eq!(&headers[2].name[..], b":path");
+    assert_eq!(&headers[2].value[..], b"/");
 
-    assert_eq!(headers[3].name, b":authority");
-    assert_eq!(headers[3].value, b"www.example.com");
+    assert_eq!(&headers[3].name[..], b":authority");
+    assert_eq!(&headers[3].value[..], b"www.example.com");
 }
 
 /// C.5 - Response Examples without Huffman
@@ -190,14 +190,14 @@ fn test_c5_1_first_response() {
 
     let headers1 = decoder.decode(&encoded1).unwrap();
     assert_eq!(headers1.len(), 4);
-    assert_eq!(headers1[0].name, b":status");
-    assert_eq!(headers1[0].value, b"302");
-    assert_eq!(headers1[1].name, b"cache-control");
-    assert_eq!(headers1[1].value, b"private");
-    assert_eq!(headers1[2].name, b"date");
-    assert_eq!(headers1[2].value, b"Mon, 21 Oct 2013 20:13:21 GMT");
-    assert_eq!(headers1[3].name, b"location");
-    assert_eq!(headers1[3].value, b"https://www.example.com");
+    assert_eq!(&headers1[0].name[..], b":status");
+    assert_eq!(&headers1[0].value[..], b"302");
+    assert_eq!(&headers1[1].name[..], b"cache-control");
+    assert_eq!(&headers1[1].value[..], b"private");
+    assert_eq!(&headers1[2].name[..], b"date");
+    assert_eq!(&headers1[2].value[..], b"Mon, 21 Oct 2013 20:13:21 GMT");
+    assert_eq!(&headers1[3].name[..], b"location");
+    assert_eq!(&headers1[3].value[..], b"https://www.example.com");
 }
 
 /// Huffman encoding test for "www.example.com"
@@ -272,8 +272,8 @@ fn test_multiple_requests_dynamic_table() {
 
     let decoded2 = decoder.decode(&encoded2).unwrap();
     assert_eq!(decoded2.len(), 3);
-    assert_eq!(decoded2[2].name, b"custom-header");
-    assert_eq!(decoded2[2].value, b"value2");
+    assert_eq!(&decoded2[2].name[..], b"custom-header");
+    assert_eq!(&decoded2[2].value[..], b"value2");
 
     // 2番目のリクエストは動的テーブルを活用するため、より短くなるはず
     // （ただし、これは最適化の度合いによる）

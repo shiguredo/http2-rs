@@ -11,6 +11,10 @@ readme = "README.md"
 include = ["/src/**", "LICENSE", "README.md"]
 
 [dependencies]
+# Frame / HPACK / Capsule などのバイト列ペイロードを Bytes / BytesMut で扱い、
+# relay 配信時の clone を Arc inc に置き換えて zero-copy 化するために使用する。
+# 将来の no_std 化に備えて default-features を無効化する。
+bytes = { version = "1.11", default-features = false }
 
 [workspace]
 members = [

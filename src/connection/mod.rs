@@ -4,6 +4,8 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use bytes::{Bytes, BytesMut};
+
 use crate::error::{Error, ErrorCode, Result};
 use crate::event::Event;
 use crate::flow_control::{FlowControl, MAX_WINDOW_SIZE};
@@ -95,7 +97,7 @@ pub struct Connection {
     /// ヘッダーブロック継続中のストリーム ID
     header_continuation_stream: Option<StreamId>,
     /// ヘッダーブロックフラグメント
-    header_block_fragment: Vec<u8>,
+    header_block_fragment: BytesMut,
     /// ヘッダーブロック継続中の END_STREAM フラグ
     ///
     /// HEADERS フレームで END_HEADERS が未設定の場合、END_STREAM フラグを保存し、
@@ -162,7 +164,7 @@ impl Connection {
             preface_received: false,
             preface_sent: false,
             header_continuation_stream: None,
-            header_block_fragment: Vec::new(),
+            header_block_fragment: BytesMut::new(),
             header_end_stream: false,
             initial_no_rfc7540_priorities: None,
             pending_table_size_update: None,
@@ -493,12 +495,7 @@ impl Connection {
     /// フロー制御に従い、送信可能な分だけ送信する。
     /// 送信できないデータは内部バッファにキューイングされ、
     /// WINDOW_UPDATE 受信時に自動的に送信される。
-    pub fn send_data(
-        &mut self,
-        stream_id: StreamId,
-        data: Vec<u8>,
-        end_stream: bool,
-    ) -> Result<()> {
+    pub fn send_data(&mut self, stream_id: StreamId, data: Bytes, end_stream: bool) -> Result<()> {
         // ストリームの存在確認と状態遷移
         {
             let stream = self
@@ -524,13 +521,13 @@ impl Connection {
     }
 
     /// ストリームのデータをキューに追加する
-    fn queue_data(&mut self, stream_id: StreamId, data: Vec<u8>, end_stream: bool) -> Result<()> {
+    fn queue_data(&mut self, stream_id: StreamId, data: Bytes, end_stream: bool) -> Result<()> {
         let stream = self
             .streams
             .get_mut(&stream_id)
             .ok_or_else(|| Error::stream_error(ErrorCode::StreamClosed, "stream not found"))?;
 
-        // 送信バッファにデータを追加
+        // 送信バッファにデータを追加 (Bytes は Deref<Target=[u8]> で &[u8] として渡せる)
         let remaining = stream.send_buffer_mut().push(&data);
         if remaining > 0 {
             // バッファが満杯の場合はエラー
@@ -695,7 +692,7 @@ impl Connection {
     }
 
     /// GOAWAY を送信する
-    pub fn send_goaway(&mut self, error_code: ErrorCode, debug_data: Vec<u8>) -> Result<()> {
+    pub fn send_goaway(&mut self, error_code: ErrorCode, debug_data: Bytes) -> Result<()> {
         let goaway_frame = GoawayFrame::new(self.last_successful_stream_id, error_code.as_u32())
             .with_debug_data(debug_data);
         self.send_frame(&Frame::Goaway(goaway_frame))?;
@@ -1157,7 +1154,9 @@ impl Connection {
             // ヘッダーブロック継続
             // RFC 9113 Section 6.2: END_STREAM フラグは最初の HEADERS フレームで決まる
             self.header_continuation_stream = Some(frame.stream_id);
-            self.header_block_fragment = frame.header_block_fragment;
+            self.header_block_fragment.clear();
+            self.header_block_fragment
+                .extend_from_slice(&frame.header_block_fragment);
             self.header_end_stream = frame.end_stream;
         }
 
@@ -1389,7 +1388,7 @@ impl Connection {
                     }
                 }
 
-                let protocol = stream.protocol().map(|p| p.to_vec());
+                let protocol = stream.protocol().map(Bytes::copy_from_slice);
                 self.events.push_back(Event::HeadersReceived {
                     stream_id,
                     headers,
@@ -1416,7 +1415,7 @@ impl Connection {
     fn extract_content_length(headers: &[HeaderField]) -> Result<Option<u64>> {
         let mut content_length: Option<u64> = None;
         for header in headers {
-            if header.name == b"content-length" {
+            if &header.name[..] == b"content-length" {
                 let value_str = std::str::from_utf8(&header.value).map_err(|_| {
                     Error::stream_error(ErrorCode::ProtocolError, "invalid content-length encoding")
                 })?;
@@ -1949,7 +1948,7 @@ fn concatenate_cookies(headers: Vec<HeaderField>) -> Vec<HeaderField> {
     }
 
     let mut result = Vec::with_capacity(headers.len() - cookie_count + 1);
-    let mut cookie_values: Vec<Vec<u8>> = Vec::with_capacity(cookie_count);
+    let mut cookie_values: Vec<Bytes> = Vec::with_capacity(cookie_count);
     let mut cookie_sensitive = false;
 
     for header in headers {
@@ -1963,10 +1962,20 @@ fn concatenate_cookies(headers: Vec<HeaderField>) -> Vec<HeaderField> {
         }
     }
 
-    let concatenated = cookie_values.join(&b"; "[..]);
+    // BytesMut で必要量を一度に確保して連結する
+    const SEPARATOR: &[u8] = b"; ";
+    let total_len = cookie_values.iter().map(|v| v.len()).sum::<usize>()
+        + SEPARATOR.len() * cookie_values.len().saturating_sub(1);
+    let mut concatenated = BytesMut::with_capacity(total_len);
+    for (i, v) in cookie_values.iter().enumerate() {
+        if i > 0 {
+            concatenated.extend_from_slice(SEPARATOR);
+        }
+        concatenated.extend_from_slice(v);
+    }
     result.push(HeaderField {
-        name: b"cookie".to_vec(),
-        value: concatenated,
+        name: Bytes::from_static(b"cookie"),
+        value: concatenated.freeze(),
         sensitive: cookie_sensitive,
     });
 

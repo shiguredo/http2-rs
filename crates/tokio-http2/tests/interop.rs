@@ -96,9 +96,9 @@ async fn test_nghttp2_client_http2_server_basic() {
                     if end_stream {
                         let method = headers
                             .iter()
-                            .find(|h| h.name == b":method")
+                            .find(|h| &h.name[..] == b":method")
                             .expect("missing :method header");
-                        assert_eq!(method.value, b"GET");
+                        assert_eq!(&method.value[..], b"GET");
 
                         let response_headers = vec![HeaderField::from_str(":status", "200")];
                         conn.send_response(stream_id, response_headers, true)
@@ -154,9 +154,9 @@ async fn test_nghttp2_client_http2_server_basic() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(&status.value[..], b"200");
                 break;
             }
             NgHttp2Event::SettingsReceived { .. } => {}
@@ -197,9 +197,9 @@ async fn test_http2_client_nghttp2_server_basic() {
                     if end_stream {
                         let method = headers
                             .iter()
-                            .find(|h| h.name == b":method")
+                            .find(|h| &h.name[..] == b":method")
                             .expect("missing :method header");
-                        assert_eq!(method.value, b"GET");
+                        assert_eq!(&method.value[..], b"GET");
 
                         let response_headers = vec![NgHeader::status(200)];
                         conn.send_response(stream_id, &response_headers, true)
@@ -257,9 +257,9 @@ async fn test_http2_client_nghttp2_server_basic() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(&status.value[..], b"200");
                 break;
             }
             Http2Event::SettingsReceived { .. } | Http2Event::ConnectionPreface => {}
@@ -357,9 +357,9 @@ async fn test_nghttp2_client_http2_server_multiple_streams() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
 
             responses_received += 1;
             if responses_received >= 3 {
@@ -453,9 +453,9 @@ async fn test_http2_client_nghttp2_server_multiple_streams() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
 
             responses_received += 1;
             if responses_received >= 3 {
@@ -1019,9 +1019,9 @@ async fn test_nghttp2_client_http2_server_post_with_body() {
                 })) => {
                     let method = headers
                         .iter()
-                        .find(|h| h.name == b":method")
+                        .find(|h| &h.name[..] == b":method")
                         .expect("missing :method header");
-                    assert_eq!(method.value, b"POST");
+                    assert_eq!(&method.value[..], b"POST");
                     request_stream_id = stream_id;
                     headers_received = true;
 
@@ -1076,7 +1076,10 @@ async fn test_nghttp2_client_http2_server_post_with_body() {
         NgHeader::scheme("https"),
         NgHeader::authority("localhost"),
         NgHeader::path("/"),
-        NgHeader::new(b"content-type".to_vec(), b"text/plain".to_vec()),
+        NgHeader::new(
+            bytes::Bytes::from_static(b"content-type"),
+            bytes::Bytes::from_static(b"text/plain"),
+        ),
     ];
 
     let stream_id = client
@@ -1100,9 +1103,9 @@ async fn test_nghttp2_client_http2_server_post_with_body() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
             break;
         }
     }
@@ -1138,9 +1141,9 @@ async fn test_http2_client_nghttp2_server_post_with_body() {
                 })) => {
                     let method = headers
                         .iter()
-                        .find(|h| h.name == b":method")
+                        .find(|h| &h.name[..] == b":method")
                         .expect("missing :method header");
-                    assert_eq!(method.value, b"POST");
+                    assert_eq!(&method.value[..], b"POST");
                     request_stream_id = stream_id;
                     headers_received = true;
 
@@ -1207,7 +1210,11 @@ async fn test_http2_client_nghttp2_server_post_with_body() {
 
     // リクエストボディを送信
     client
-        .send_data(stream_id, b"Hello, Server!".to_vec(), true)
+        .send_data(
+            stream_id,
+            bytes::Bytes::from_static(b"Hello, Server!"),
+            true,
+        )
         .await
         .expect("failed to send request body");
 
@@ -1232,9 +1239,9 @@ async fn test_http2_client_nghttp2_server_post_with_body() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(&status.value[..], b"200");
                 received_headers = true;
             }
             Http2Event::DataReceived {
@@ -1298,9 +1305,13 @@ async fn test_nghttp2_client_http2_server_response_body() {
                             .expect("failed to send response headers");
 
                         // レスポンスボディを送信
-                        conn.send_data(stream_id, response_body.to_vec(), true)
-                            .await
-                            .expect("failed to send response body");
+                        conn.send_data(
+                            stream_id,
+                            bytes::Bytes::copy_from_slice(response_body),
+                            true,
+                        )
+                        .await
+                        .expect("failed to send response body");
                         break;
                     }
                 }
@@ -1353,9 +1364,9 @@ async fn test_nghttp2_client_http2_server_response_body() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(&status.value[..], b"200");
                 received_headers = true;
             }
             NgHttp2Event::DataReceived {
@@ -1466,9 +1477,9 @@ async fn test_http2_client_nghttp2_server_response_body() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(&status.value[..], b"200");
                 received_headers = true;
             }
             Http2Event::DataReceived {
@@ -1523,9 +1534,9 @@ async fn test_nghttp2_client_http2_server_put() {
                     if end_stream {
                         let method = headers
                             .iter()
-                            .find(|h| h.name == b":method")
+                            .find(|h| &h.name[..] == b":method")
                             .expect("missing :method header");
-                        assert_eq!(method.value, b"PUT");
+                        assert_eq!(&method.value[..], b"PUT");
 
                         let response_headers = vec![HeaderField::from_str(":status", "204")];
                         conn.send_response(stream_id, response_headers, true)
@@ -1578,9 +1589,9 @@ async fn test_nghttp2_client_http2_server_put() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"204");
+            assert_eq!(&status.value[..], b"204");
             break;
         }
     }
@@ -1614,9 +1625,9 @@ async fn test_http2_client_nghttp2_server_delete() {
                     if end_stream {
                         let method = headers
                             .iter()
-                            .find(|h| h.name == b":method")
+                            .find(|h| &h.name[..] == b":method")
                             .expect("missing :method header");
-                        assert_eq!(method.value, b"DELETE");
+                        assert_eq!(&method.value[..], b"DELETE");
 
                         let response_headers = vec![NgHeader::status(204)];
                         conn.send_response(stream_id, &response_headers, true)
@@ -1667,9 +1678,9 @@ async fn test_http2_client_nghttp2_server_delete() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"204");
+            assert_eq!(&status.value[..], b"204");
             break;
         }
     }
@@ -1703,9 +1714,9 @@ async fn test_nghttp2_client_http2_server_head() {
                     if end_stream {
                         let method = headers
                             .iter()
-                            .find(|h| h.name == b":method")
+                            .find(|h| &h.name[..] == b":method")
                             .expect("missing :method header");
-                        assert_eq!(method.value, b"HEAD");
+                        assert_eq!(&method.value[..], b"HEAD");
 
                         // HEAD レスポンスはボディなし
                         let response_headers = vec![
@@ -1764,15 +1775,15 @@ async fn test_nghttp2_client_http2_server_head() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
 
             let content_length = headers
                 .iter()
-                .find(|h| h.name == b"content-length")
+                .find(|h| &h.name[..] == b"content-length")
                 .expect("missing content-length header");
-            assert_eq!(content_length.value, b"1234");
+            assert_eq!(&content_length.value[..], b"1234");
             break;
         }
     }
@@ -1858,9 +1869,9 @@ async fn test_nghttp2_client_http2_server_404() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"404");
+            assert_eq!(&status.value[..], b"404");
             break;
         }
     }
@@ -1940,9 +1951,9 @@ async fn test_http2_client_nghttp2_server_500() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"500");
+            assert_eq!(&status.value[..], b"500");
             break;
         }
     }
@@ -1981,15 +1992,15 @@ async fn test_nghttp2_client_http2_server_custom_headers() {
                         // カスタムヘッダーを検証
                         let x_custom = headers
                             .iter()
-                            .find(|h| h.name == b"x-custom-header")
+                            .find(|h| &h.name[..] == b"x-custom-header")
                             .expect("missing x-custom-header");
-                        assert_eq!(x_custom.value, b"custom-value");
+                        assert_eq!(&x_custom.value[..], b"custom-value");
 
                         let x_request_id = headers
                             .iter()
-                            .find(|h| h.name == b"x-request-id")
+                            .find(|h| &h.name[..] == b"x-request-id")
                             .expect("missing x-request-id");
-                        assert_eq!(x_request_id.value, b"12345");
+                        assert_eq!(&x_request_id.value[..], b"12345");
 
                         // レスポンスにもカスタムヘッダーを付与
                         let response_headers = vec![
@@ -2025,8 +2036,14 @@ async fn test_nghttp2_client_http2_server_custom_headers() {
         NgHeader::scheme("https"),
         NgHeader::authority("localhost"),
         NgHeader::path("/"),
-        NgHeader::new(b"x-custom-header".to_vec(), b"custom-value".to_vec()),
-        NgHeader::new(b"x-request-id".to_vec(), b"12345".to_vec()),
+        NgHeader::new(
+            bytes::Bytes::from_static(b"x-custom-header"),
+            bytes::Bytes::from_static(b"custom-value"),
+        ),
+        NgHeader::new(
+            bytes::Bytes::from_static(b"x-request-id"),
+            bytes::Bytes::from_static(b"12345"),
+        ),
     ];
     let stream_id = client
         .send_request(&request_headers, None, true)
@@ -2049,21 +2066,21 @@ async fn test_nghttp2_client_http2_server_custom_headers() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
 
             let x_response_id = headers
                 .iter()
-                .find(|h| h.name == b"x-response-id")
+                .find(|h| &h.name[..] == b"x-response-id")
                 .expect("missing x-response-id header");
-            assert_eq!(x_response_id.value, b"67890");
+            assert_eq!(&x_response_id.value[..], b"67890");
 
             let x_server = headers
                 .iter()
-                .find(|h| h.name == b"x-server")
+                .find(|h| &h.name[..] == b"x-server")
                 .expect("missing x-server header");
-            assert_eq!(x_server.value, b"test-server");
+            assert_eq!(&x_server.value[..], b"test-server");
             break;
         }
     }
@@ -2098,14 +2115,17 @@ async fn test_http2_client_nghttp2_server_custom_headers() {
                         // カスタムヘッダーを検証
                         let x_custom = headers
                             .iter()
-                            .find(|h| h.name == b"x-custom-header")
+                            .find(|h| &h.name[..] == b"x-custom-header")
                             .expect("missing x-custom-header");
-                        assert_eq!(x_custom.value, b"custom-value");
+                        assert_eq!(&x_custom.value[..], b"custom-value");
 
                         // レスポンスにもカスタムヘッダーを付与
                         let response_headers = vec![
                             NgHeader::status(200),
-                            NgHeader::new(b"x-response-id".to_vec(), b"67890".to_vec()),
+                            NgHeader::new(
+                                bytes::Bytes::from_static(b"x-response-id"),
+                                bytes::Bytes::from_static(b"67890"),
+                            ),
                         ];
                         conn.send_response(stream_id, &response_headers, true)
                             .await
@@ -2156,15 +2176,15 @@ async fn test_http2_client_nghttp2_server_custom_headers() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
 
             let x_response_id = headers
                 .iter()
-                .find(|h| h.name == b"x-response-id")
+                .find(|h| &h.name[..] == b"x-response-id")
                 .expect("missing x-response-id header");
-            assert_eq!(x_response_id.value, b"67890");
+            assert_eq!(&x_response_id.value[..], b"67890");
             break;
         }
     }
@@ -2364,7 +2384,7 @@ async fn test_nghttp2_client_http2_server_large_response() {
                             .await
                             .expect("failed to send response headers");
 
-                        conn.send_data(stream_id, response_body_clone.clone(), true)
+                        conn.send_data(stream_id, response_body_clone.clone().into(), true)
                             .await
                             .expect("failed to send response body");
                         break;
@@ -2511,7 +2531,7 @@ async fn test_http2_client_nghttp2_server_large_request() {
         .expect("failed to send request headers");
 
     client
-        .send_data(stream_id, request_body, true)
+        .send_data(stream_id, request_body.clone().into(), true)
         .await
         .expect("failed to send request body");
 
@@ -2530,9 +2550,9 @@ async fn test_http2_client_nghttp2_server_large_request() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
             break;
         }
     }
@@ -2799,9 +2819,13 @@ async fn test_nghttp2_client_http2_server_response_headers_then_data() {
                             .expect("failed to send response headers");
 
                         // ボディ送信 (end_stream=true)
-                        conn.send_data(stream_id, response_body.to_vec(), true)
-                            .await
-                            .expect("failed to send response body");
+                        conn.send_data(
+                            stream_id,
+                            bytes::Bytes::copy_from_slice(response_body),
+                            true,
+                        )
+                        .await
+                        .expect("failed to send response body");
                         break;
                     }
                 }
@@ -2854,9 +2878,9 @@ async fn test_nghttp2_client_http2_server_response_headers_then_data() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(&status.value[..], b"200");
                 received_headers = true;
             }
             NgHttp2Event::DataReceived {
@@ -2915,9 +2939,13 @@ async fn test_http2_client_http2_server_response_headers_then_data() {
                             .await
                             .expect("failed to send response headers");
 
-                        conn.send_data(stream_id, response_body.to_vec(), true)
-                            .await
-                            .expect("failed to send response body");
+                        conn.send_data(
+                            stream_id,
+                            bytes::Bytes::copy_from_slice(response_body),
+                            true,
+                        )
+                        .await
+                        .expect("failed to send response body");
                         break;
                     }
                 }
@@ -2970,9 +2998,9 @@ async fn test_http2_client_http2_server_response_headers_then_data() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(&status.value[..], b"200");
                 received_headers = true;
             }
             Http2Event::DataReceived {
@@ -3035,13 +3063,13 @@ async fn test_nghttp2_client_http2_server_multiple_data_frames() {
                             .expect("failed to send response headers");
 
                         // 3 回に分けてデータ送信
-                        conn.send_data(stream_id, b"chunk1-".to_vec(), false)
+                        conn.send_data(stream_id, bytes::Bytes::from_static(b"chunk1-"), false)
                             .await
                             .expect("failed to send chunk1");
-                        conn.send_data(stream_id, b"chunk2-".to_vec(), false)
+                        conn.send_data(stream_id, bytes::Bytes::from_static(b"chunk2-"), false)
                             .await
                             .expect("failed to send chunk2");
-                        conn.send_data(stream_id, b"chunk3".to_vec(), true)
+                        conn.send_data(stream_id, bytes::Bytes::from_static(b"chunk3"), true)
                             .await
                             .expect("failed to send chunk3");
                         break;
@@ -3179,15 +3207,15 @@ async fn test_http2_client_nghttp2_server_multiple_data_frames() {
 
     // 3 回に分けてリクエストボディ送信
     client
-        .send_data(stream_id, b"chunk1-".to_vec(), false)
+        .send_data(stream_id, bytes::Bytes::from_static(b"chunk1-"), false)
         .await
         .expect("failed to send chunk1");
     client
-        .send_data(stream_id, b"chunk2-".to_vec(), false)
+        .send_data(stream_id, bytes::Bytes::from_static(b"chunk2-"), false)
         .await
         .expect("failed to send chunk2");
     client
-        .send_data(stream_id, b"chunk3".to_vec(), true)
+        .send_data(stream_id, bytes::Bytes::from_static(b"chunk3"), true)
         .await
         .expect("failed to send chunk3");
 
@@ -3208,9 +3236,9 @@ async fn test_http2_client_nghttp2_server_multiple_data_frames() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
             break;
         }
     }
@@ -3247,15 +3275,15 @@ async fn test_nghttp2_client_http2_server_post_empty_body() {
                 })) => {
                     let method = headers
                         .iter()
-                        .find(|h| h.name == b":method")
+                        .find(|h| &h.name[..] == b":method")
                         .expect("missing :method header");
-                    assert_eq!(method.value, b"POST");
+                    assert_eq!(&method.value[..], b"POST");
 
                     let content_length = headers
                         .iter()
-                        .find(|h| h.name == b"content-length")
+                        .find(|h| &h.name[..] == b"content-length")
                         .expect("missing content-length header");
-                    assert_eq!(content_length.value, b"0");
+                    assert_eq!(&content_length.value[..], b"0");
 
                     // end_stream=true であることを確認 (ボディなし)
                     assert!(end_stream);
@@ -3288,7 +3316,10 @@ async fn test_nghttp2_client_http2_server_post_empty_body() {
         NgHeader::scheme("https"),
         NgHeader::authority("localhost"),
         NgHeader::path("/"),
-        NgHeader::new(b"content-length".to_vec(), b"0".to_vec()),
+        NgHeader::new(
+            bytes::Bytes::from_static(b"content-length"),
+            bytes::Bytes::from_static(b"0"),
+        ),
     ];
     let stream_id = client
         .send_request(&request_headers, None, true)
@@ -3313,9 +3344,9 @@ async fn test_nghttp2_client_http2_server_post_empty_body() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
             break;
         }
     }
@@ -3348,15 +3379,15 @@ async fn test_http2_client_nghttp2_server_post_empty_body() {
                 })) => {
                     let method = headers
                         .iter()
-                        .find(|h| h.name == b":method")
+                        .find(|h| &h.name[..] == b":method")
                         .expect("missing :method header");
-                    assert_eq!(method.value, b"POST");
+                    assert_eq!(&method.value[..], b"POST");
 
                     let content_length = headers
                         .iter()
-                        .find(|h| h.name == b"content-length")
+                        .find(|h| &h.name[..] == b"content-length")
                         .expect("missing content-length header");
-                    assert_eq!(content_length.value, b"0");
+                    assert_eq!(&content_length.value[..], b"0");
 
                     assert!(end_stream);
 
@@ -3411,9 +3442,9 @@ async fn test_http2_client_nghttp2_server_post_empty_body() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
             break;
         }
     }
@@ -3458,7 +3489,7 @@ async fn test_nghttp2_client_http2_server_404_with_body() {
                             .await
                             .expect("failed to send response headers");
 
-                        conn.send_data(stream_id, error_body.to_vec(), true)
+                        conn.send_data(stream_id, bytes::Bytes::copy_from_slice(error_body), true)
                             .await
                             .expect("failed to send error body");
                         break;
@@ -3510,7 +3541,7 @@ async fn test_nghttp2_client_http2_server_404_with_body() {
                 assert_eq!(recv_stream_id, stream_id);
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status header");
                 received_status = status.value.clone();
             }
@@ -3566,7 +3597,7 @@ async fn test_nghttp2_client_http2_server_500_with_body() {
                             .await
                             .expect("failed to send response headers");
 
-                        conn.send_data(stream_id, error_body.to_vec(), true)
+                        conn.send_data(stream_id, bytes::Bytes::copy_from_slice(error_body), true)
                             .await
                             .expect("failed to send error body");
                         break;
@@ -3618,7 +3649,7 @@ async fn test_nghttp2_client_http2_server_500_with_body() {
                 assert_eq!(recv_stream_id, stream_id);
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status header");
                 received_status = status.value.clone();
             }
@@ -3671,9 +3702,9 @@ async fn test_nghttp2_client_http2_server_options() {
                     if end_stream {
                         let method = headers
                             .iter()
-                            .find(|h| h.name == b":method")
+                            .find(|h| &h.name[..] == b":method")
                             .expect("missing :method header");
-                        assert_eq!(method.value, b"OPTIONS");
+                        assert_eq!(&method.value[..], b"OPTIONS");
 
                         let response_headers = vec![
                             HeaderField::from_str(":status", "204"),
@@ -3731,15 +3762,15 @@ async fn test_nghttp2_client_http2_server_options() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"204");
+            assert_eq!(&status.value[..], b"204");
 
             let allow = headers
                 .iter()
-                .find(|h| h.name == b"allow")
+                .find(|h| &h.name[..] == b"allow")
                 .expect("missing allow header");
-            assert_eq!(allow.value, b"GET, POST, OPTIONS");
+            assert_eq!(&allow.value[..], b"GET, POST, OPTIONS");
             break;
         }
     }
@@ -3773,13 +3804,16 @@ async fn test_http2_client_nghttp2_server_options() {
                     if end_stream {
                         let method = headers
                             .iter()
-                            .find(|h| h.name == b":method")
+                            .find(|h| &h.name[..] == b":method")
                             .expect("missing :method header");
-                        assert_eq!(method.value, b"OPTIONS");
+                        assert_eq!(&method.value[..], b"OPTIONS");
 
                         let response_headers = vec![
                             NgHeader::status(204),
-                            NgHeader::new(b"allow".to_vec(), b"GET, POST, OPTIONS".to_vec()),
+                            NgHeader::new(
+                                bytes::Bytes::from_static(b"allow"),
+                                bytes::Bytes::from_static(b"GET, POST, OPTIONS"),
+                            ),
                         ];
                         conn.send_response(stream_id, &response_headers, true)
                             .await
@@ -3831,15 +3865,15 @@ async fn test_http2_client_nghttp2_server_options() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"204");
+            assert_eq!(&status.value[..], b"204");
 
             let allow = headers
                 .iter()
-                .find(|h| h.name == b"allow")
+                .find(|h| &h.name[..] == b"allow")
                 .expect("missing allow header");
-            assert_eq!(allow.value, b"GET, POST, OPTIONS");
+            assert_eq!(&allow.value[..], b"GET, POST, OPTIONS");
             break;
         }
     }
@@ -3953,9 +3987,9 @@ async fn test_nghttp2_client_http2_server_many_headers() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
 
             for i in 0..20 {
                 let name = format!("x-resp-{}", i);
@@ -4071,9 +4105,9 @@ async fn test_http2_client_nghttp2_server_many_headers() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
 
             for i in 0..20 {
                 let name = format!("x-resp-{}", i);
@@ -4183,9 +4217,9 @@ async fn test_nghttp2_client_http2_server_goaway_after_stream() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(&status.value[..], b"200");
                 received_response = true;
             }
             NgHttp2Event::GoawayReceived {
@@ -4297,9 +4331,9 @@ async fn test_http2_client_nghttp2_server_goaway_after_stream() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(&status.value[..], b"200");
                 received_response = true;
             }
             Http2Event::GoawayReceived {
@@ -4385,9 +4419,13 @@ async fn test_http2_client_http2_server_bidirectional_data() {
             .await
             .expect("failed to send response headers");
 
-        conn.send_data(request_stream_id, response_body.to_vec(), true)
-            .await
-            .expect("failed to send response body");
+        conn.send_data(
+            request_stream_id,
+            bytes::Bytes::copy_from_slice(response_body),
+            true,
+        )
+        .await
+        .expect("failed to send response body");
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -4411,7 +4449,11 @@ async fn test_http2_client_http2_server_bidirectional_data() {
         .expect("failed to send request headers");
 
     client
-        .send_data(stream_id, request_body_expected.to_vec(), true)
+        .send_data(
+            stream_id,
+            bytes::Bytes::copy_from_slice(request_body_expected),
+            true,
+        )
         .await
         .expect("failed to send request body");
 
@@ -4432,9 +4474,9 @@ async fn test_http2_client_http2_server_bidirectional_data() {
                 assert_eq!(recv_stream_id, stream_id);
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(&status.value[..], b"200");
 
                 if end_stream {
                     break;
@@ -4534,7 +4576,11 @@ async fn test_http2_client_nghttp2_server_bidirectional_data() {
         .expect("failed to send request headers");
 
     client
-        .send_data(stream_id, request_body_expected.to_vec(), true)
+        .send_data(
+            stream_id,
+            bytes::Bytes::copy_from_slice(request_body_expected),
+            true,
+        )
         .await
         .expect("failed to send request body");
 
@@ -4555,9 +4601,9 @@ async fn test_http2_client_nghttp2_server_bidirectional_data() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(&status.value[..], b"200");
             break;
         }
     }
@@ -4596,7 +4642,7 @@ async fn test_nghttp2_client_http2_server_rst_one_stream_continue_other() {
                     if end_stream {
                         let path = headers
                             .iter()
-                            .find(|h| h.name == b":path")
+                            .find(|h| &h.name[..] == b":path")
                             .expect("missing :path header");
 
                         streams_received.push((stream_id, path.value.clone()));
@@ -4605,7 +4651,7 @@ async fn test_nghttp2_client_http2_server_rst_one_stream_continue_other() {
                             // /reset パスのストリームを RST_STREAM
                             // /ok パスのストリームには正常レスポンス
                             for (sid, p) in &streams_received {
-                                if p == b"/reset" {
+                                if &p[..] == b"/reset" {
                                     conn.reset_stream(*sid, Http2ErrorCode::Cancel)
                                         .await
                                         .expect("failed to send rst_stream");
@@ -4682,9 +4728,9 @@ async fn test_nghttp2_client_http2_server_rst_one_stream_continue_other() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(&status.value[..], b"200");
                 got_response = true;
             }
             NgHttp2Event::StreamClosed {
@@ -4738,14 +4784,14 @@ async fn test_http2_client_nghttp2_server_rst_one_stream_continue_other() {
                     if end_stream {
                         let path = headers
                             .iter()
-                            .find(|h| h.name == b":path")
+                            .find(|h| &h.name[..] == b":path")
                             .expect("missing :path header");
 
                         streams_received.push((stream_id, path.value.clone()));
 
                         if streams_received.len() == 2 {
                             for (sid, p) in &streams_received {
-                                if p == b"/reset" {
+                                if &p[..] == b"/reset" {
                                     conn.reset_stream(*sid, NgErrorCode::Cancel)
                                         .await
                                         .expect("failed to send rst_stream");
@@ -4818,9 +4864,9 @@ async fn test_http2_client_nghttp2_server_rst_one_stream_continue_other() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| &h.name[..] == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(&status.value[..], b"200");
                 got_response = true;
             }
             Http2Event::StreamReset {
@@ -4928,9 +4974,9 @@ async fn test_nghttp2_client_http2_server_204_no_content() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"204");
+            assert_eq!(&status.value[..], b"204");
             break;
         }
     }
@@ -5012,9 +5058,9 @@ async fn test_http2_client_nghttp2_server_204_no_content() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| &h.name[..] == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"204");
+            assert_eq!(&status.value[..], b"204");
             break;
         }
     }
@@ -5409,9 +5455,13 @@ mod stress_tests {
 
                             for i in 0..chunk_count {
                                 let is_last = i == chunk_count - 1;
-                                conn.send_data(stream_id, vec![i as u8], is_last)
-                                    .await
-                                    .expect("failed to send data");
+                                conn.send_data(
+                                    stream_id,
+                                    bytes::Bytes::from(vec![i as u8]),
+                                    is_last,
+                                )
+                                .await
+                                .expect("failed to send data");
                             }
                             break;
                         }
@@ -5710,11 +5760,11 @@ mod stress_tests {
             .expect("failed to send request");
 
         client
-            .send_data(stream_id, b"hello-".to_vec(), false)
+            .send_data(stream_id, bytes::Bytes::from_static(b"hello-"), false)
             .await
             .expect("failed to send data 1");
         client
-            .send_data(stream_id, b"world".to_vec(), true)
+            .send_data(stream_id, bytes::Bytes::from_static(b"world"), true)
             .await
             .expect("failed to send data 2");
 

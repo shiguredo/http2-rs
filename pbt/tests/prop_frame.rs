@@ -30,7 +30,7 @@ proptest! {
         let frame = Frame::Data(DataFrame {
             stream_id,
             end_stream,
-            data: data.clone(),
+            data: data.clone().into(),
             pad_length: None,
         });
 
@@ -64,7 +64,7 @@ proptest! {
             end_stream,
             end_headers,
             priority_fields: None,
-            header_block_fragment: header_block.clone(),
+            header_block_fragment: header_block.clone().into(),
             pad_length: None,
         });
 
@@ -175,7 +175,7 @@ proptest! {
         let frame = Frame::Goaway(GoawayFrame {
             last_stream_id,
             error_code,
-            debug_data: debug_data.clone(),
+            debug_data: debug_data.clone().into(),
         });
 
         let mut encoder = FrameEncoder::new();
@@ -247,7 +247,7 @@ proptest! {
         let frame = Frame::Continuation(ContinuationFrame {
             stream_id,
             end_headers,
-            header_block_fragment: header_block.clone(),
+            header_block_fragment: header_block.clone().into(),
         });
 
         let mut encoder = FrameEncoder::new();
@@ -279,7 +279,7 @@ proptest! {
     ) {
         let frame = Frame::PriorityUpdate(PriorityUpdateFrame {
             prioritized_element_id,
-            priority_field_value: priority_field_value.clone(),
+            priority_field_value: priority_field_value.clone().into(),
         });
 
         let mut encoder = FrameEncoder::new();
@@ -325,7 +325,7 @@ proptest! {
 
         let frame = Frame::Unknown {
             header,
-            payload: payload.clone(),
+            payload: payload.clone().into(),
         };
 
         let mut encoder = FrameEncoder::new();
@@ -360,7 +360,7 @@ proptest! {
         let frame = Frame::Data(DataFrame {
             stream_id,
             end_stream,
-            data: data.clone(),
+            data: data.clone().into(),
             pad_length: Some(pad_length),
         });
 
@@ -396,7 +396,7 @@ proptest! {
             end_stream,
             end_headers,
             priority_fields: None,
-            header_block_fragment: header_block.clone(),
+            header_block_fragment: header_block.clone().into(),
             pad_length: Some(pad_length),
         });
 
@@ -484,7 +484,7 @@ proptest! {
         let frame = Frame::Data(DataFrame {
             stream_id,
             end_stream: false,
-            data: data.clone(),
+            data: data.clone().into(),
             pad_length: None,
         });
 
@@ -573,7 +573,7 @@ proptest! {
         let frame = Frame::Data(DataFrame {
             stream_id: 1,
             end_stream: false,
-            data: vec![0u8; data_len],
+            data: bytes::Bytes::from(vec![0u8; data_len]),
             pad_length: None,
         });
 
@@ -604,7 +604,7 @@ proptest! {
         let frame = Frame::Data(DataFrame {
             stream_id,
             end_stream: false,
-            data: data.clone(),
+            data: data.clone().into(),
             pad_length: None,
         });
 
@@ -1146,7 +1146,7 @@ proptest! {
         let frame = Frame::Data(DataFrame {
             stream_id,
             end_stream: false,
-            data: data.clone(),
+            data: data.clone().into(),
             pad_length,
         });
 
@@ -1187,15 +1187,15 @@ proptest! {
         data in arbitrary_bytes(100),
     ) {
         let test_cases: Vec<(Frame, u8)> = vec![
-            (Frame::Data(DataFrame { stream_id, end_stream: false, data: data.clone(), pad_length: None }), 0x00),
-            (Frame::Headers(HeadersFrame { stream_id, end_stream: false, end_headers: true, priority_fields: None, header_block_fragment: data.clone(), pad_length: None }), 0x01),
+            (Frame::Data(DataFrame { stream_id, end_stream: false, data: data.clone().into(), pad_length: None }), 0x00),
+            (Frame::Headers(HeadersFrame { stream_id, end_stream: false, end_headers: true, priority_fields: None, header_block_fragment: data.clone().into(), pad_length: None }), 0x01),
             (Frame::RstStream(RstStreamFrame { stream_id, error_code: 0 }), 0x03),
             (Frame::Settings(SettingsFrame { ack: false, settings: vec![] }), 0x04),
             (Frame::Ping(PingFrame { ack: false, opaque_data: [0; 8] }), 0x06),
-            (Frame::Goaway(GoawayFrame { last_stream_id: 0, error_code: 0, debug_data: vec![] }), 0x07),
+            (Frame::Goaway(GoawayFrame { last_stream_id: 0, error_code: 0, debug_data: bytes::Bytes::new() }), 0x07),
             (Frame::WindowUpdate(WindowUpdateFrame { stream_id, window_size_increment: 1 }), 0x08),
-            (Frame::Continuation(ContinuationFrame { stream_id, end_headers: true, header_block_fragment: data.clone() }), 0x09),
-            (Frame::PriorityUpdate(PriorityUpdateFrame { prioritized_element_id: stream_id, priority_field_value: vec![] }), 0x10),
+            (Frame::Continuation(ContinuationFrame { stream_id, end_headers: true, header_block_fragment: data.clone().into() }), 0x09),
+            (Frame::PriorityUpdate(PriorityUpdateFrame { prioritized_element_id: stream_id, priority_field_value: bytes::Bytes::new() }), 0x10),
         ];
 
         for (frame, expected_type) in test_cases {
@@ -1226,7 +1226,7 @@ proptest! {
         let frame = Frame::Data(DataFrame {
             stream_id,
             end_stream,
-            data,
+            data: data.into(),
             pad_length: None,
         });
 
@@ -1252,7 +1252,7 @@ proptest! {
         let frame = Frame::Data(DataFrame {
             stream_id,
             end_stream: false,
-            data,
+            data: data.into(),
             pad_length: None,
         });
 
@@ -1287,7 +1287,7 @@ proptest! {
             let frame = Frame::Data(DataFrame {
                 stream_id: *stream_id,
                 end_stream: false,
-                data: data.clone(),
+                data: data.clone().into(),
                 pad_length: None,
             });
             encoder.encode(&frame).unwrap();
@@ -1383,7 +1383,7 @@ proptest! {
             end_stream,
             end_headers,
             priority_fields: None,
-            header_block_fragment: header_block,
+            header_block_fragment: header_block.into(),
             pad_length: None,
         });
 
@@ -1424,7 +1424,7 @@ proptest! {
         let frame = Frame::Data(DataFrame {
             stream_id,
             end_stream: false,
-            data: data.clone(),
+            data: data.clone().into(),
             pad_length: Some(pad_length),
         });
 

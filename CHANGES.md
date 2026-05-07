@@ -8,6 +8,16 @@
 
 ## develop
 
+- [ADD] `shiguredo_http2` の依存に `bytes` (1.11, no_std + alloc 構成) を追加する
+  - @voluntas
+- [CHANGE] `shiguredo_http2` の Frame / HeaderField / Event / Capsule / WtEvent のバイト列ペイロードを `Vec<u8>` から `bytes::Bytes` に置き換えて relay 配信時の clone を Arc inc 化する
+  - @voluntas
+- [CHANGE] `shiguredo_http2::FrameDecoder` / `CapsuleDecoder` の内部バッファを `BytesMut` 化し、`split_to(payload).freeze()` でペイロードを zero-copy に切り出す
+  - @voluntas
+- [CHANGE] `shiguredo_http2::Connection::send_data` / `send_goaway`、`webtransport::WtSession::send_stream_data` / `send_datagram` / `poll_output` を `bytes::Bytes` ベースに変更する
+  - @voluntas
+- [CHANGE] `tokio-http2` の DATA フレーム送出 API (`Connection::send_data`, `Connection::send_goaway`, `ServerConnection::send_data`, `ClientConnection::send_data`) と WebTransport ストリーム / DATAGRAM API (`WtBidiStream::send` / `recv`, `WtUniSendStream::send`, `WtUniRecvStream::recv`, `WtServerSession::send_datagram` / `recv_datagram`) を `bytes::Bytes` ベースに変更する
+  - @voluntas
 - [ADD] `shiguredo_http2` の `Settings` に WebTransport 関連 SETTINGS (`0x2b61`〜`0x2b66`) を統合する
   - @voluntas
 - [ADD] `shiguredo_http2::Limits` に `with_webtransport` ビルダーを追加する

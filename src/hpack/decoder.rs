@@ -1,5 +1,7 @@
 //! HPACK デコーダー (RFC 7541)
 
+use bytes::Bytes;
+
 use crate::error::{Error, Result};
 use crate::hpack::dynamic_table::DynamicTable;
 use crate::hpack::huffman;
@@ -183,7 +185,12 @@ impl Decoder {
     }
 
     /// 文字列をデコードする
-    fn decode_string(&self, data: &[u8]) -> Result<(Vec<u8>, usize)> {
+    ///
+    /// Huffman 符号化されている場合は復号後の所有バッファを `Bytes::from(Vec<u8>)` で
+    /// 包む (allocation 1 回)。リテラルの場合は入力 `&[u8]` から `Bytes::copy_from_slice`
+    /// で複製する (将来 HPACK Decoder の入力を `BytesMut` 化すれば split_to で zero-copy
+    /// にできるが、本 issue では非スコープ)。
+    fn decode_string(&self, data: &[u8]) -> Result<(Bytes, usize)> {
         if data.is_empty() {
             return Err(Error::incomplete());
         }
@@ -200,9 +207,9 @@ impl Decoder {
         consumed += length;
 
         let result = if huffman_encoded {
-            huffman::decode(string_data)?
+            Bytes::from(huffman::decode(string_data)?)
         } else {
-            string_data.to_vec()
+            Bytes::copy_from_slice(string_data)
         };
 
         Ok((result, consumed))
@@ -245,8 +252,8 @@ mod tests {
         let headers = decoder.decode(&data).unwrap();
 
         assert_eq!(headers.len(), 1);
-        assert_eq!(headers[0].name, b":method");
-        assert_eq!(headers[0].value, b"GET");
+        assert_eq!(&headers[0].name[..], b":method");
+        assert_eq!(&headers[0].value[..], b"GET");
     }
 
     #[test]
@@ -263,8 +270,8 @@ mod tests {
         let headers = decoder.decode(&data).unwrap();
 
         assert_eq!(headers.len(), 1);
-        assert_eq!(headers[0].name, b":authority");
-        assert_eq!(headers[0].value, b"example.com");
+        assert_eq!(&headers[0].name[..], b":authority");
+        assert_eq!(&headers[0].value[..], b"example.com");
 
         // 動的テーブルに追加されていることを確認
         assert_eq!(decoder.dynamic_table().len(), 1);
@@ -326,8 +333,8 @@ mod tests {
         let headers = decoder.decode(&data).unwrap();
 
         assert_eq!(headers.len(), 1);
-        assert_eq!(headers[0].name, b"x-token");
-        assert_eq!(headers[0].value, b"secret");
+        assert_eq!(&headers[0].name[..], b"x-token");
+        assert_eq!(&headers[0].value[..], b"secret");
         assert!(headers[0].sensitive);
 
         // Never Indexed should not be added to dynamic table
@@ -348,8 +355,8 @@ mod tests {
         let headers = decoder.decode(&data).unwrap();
 
         assert_eq!(headers.len(), 1);
-        assert_eq!(headers[0].name, b":scheme");
-        assert_eq!(headers[0].value, b"https");
+        assert_eq!(&headers[0].name[..], b":scheme");
+        assert_eq!(&headers[0].value[..], b"https");
         assert!(headers[0].sensitive);
     }
 
@@ -370,11 +377,11 @@ mod tests {
         let decoded = decoder.decode(&encoded).unwrap();
 
         assert_eq!(decoded.len(), 3);
-        assert_eq!(decoded[0].name, b":method");
+        assert_eq!(&decoded[0].name[..], b":method");
         assert!(!decoded[0].sensitive);
-        assert_eq!(decoded[1].name, b"authorization");
+        assert_eq!(&decoded[1].name[..], b"authorization");
         assert!(decoded[1].sensitive);
-        assert_eq!(decoded[2].name, b":path");
+        assert_eq!(&decoded[2].name[..], b":path");
         assert!(!decoded[2].sensitive);
     }
 }

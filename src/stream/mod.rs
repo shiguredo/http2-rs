@@ -8,6 +8,8 @@ pub mod state;
 pub use buffer::{RecvBuffer, SendBuffer};
 pub use state::{StateMachine, StreamState};
 
+use bytes::Bytes;
+
 use crate::flow_control::FlowControl;
 use crate::frame::StreamId;
 use crate::hpack::HeaderField;
@@ -48,7 +50,7 @@ pub struct Stream {
     /// リクエストメソッド
     ///
     /// Content-Length チェック (204/304/HEAD の例外) と CONNECT 判定に使用する。
-    request_method: Option<Vec<u8>>,
+    request_method: Option<Bytes>,
     /// Extended CONNECT (:protocol 付き) かどうか
     ///
     /// Extended CONNECT は通常の HTTP/2 ストリームとして動作するため、
@@ -58,7 +60,7 @@ pub struct Stream {
     ///
     /// RFC 8441 Section 4: Extended CONNECT で指定されたプロトコル名を保持する。
     /// `has_protocol` が true の場合に設定される。
-    protocol: Option<Vec<u8>>,
+    protocol: Option<Bytes>,
     /// コンテンツを持たないレスポンス (RFC 9110 Section 6.4.1)
     ///
     /// 204/304 レスポンスおよび HEAD リクエストへのレスポンスは
@@ -242,8 +244,8 @@ impl Stream {
     }
 
     /// リクエストメソッドを設定する
-    pub fn set_request_method(&mut self, method: Vec<u8>) {
-        self.request_method = Some(method);
+    pub fn set_request_method(&mut self, method: impl Into<Bytes>) {
+        self.request_method = Some(method.into());
     }
 
     /// Extended CONNECT (:protocol 付き) かどうかを返す
@@ -264,8 +266,8 @@ impl Stream {
     }
 
     /// Extended CONNECT の :protocol 擬似ヘッダー値を設定する
-    pub fn set_protocol(&mut self, protocol: Vec<u8>) {
-        self.protocol = Some(protocol);
+    pub fn set_protocol(&mut self, protocol: impl Into<Bytes>) {
+        self.protocol = Some(protocol.into());
     }
 
     /// コンテンツを持たないレスポンスかどうかを返す

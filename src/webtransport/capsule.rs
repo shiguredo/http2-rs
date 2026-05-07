@@ -10,6 +10,8 @@
 //! }
 //! ```
 
+use bytes::{Bytes, BytesMut};
+
 use crate::webtransport::error::{WtError, WtErrorKind, WtResult};
 use crate::webtransport::varint;
 
@@ -77,7 +79,7 @@ const MAX_APPLICATION_ERROR_CODE: u64 = 0xffff_ffff;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Capsule {
     /// DATAGRAM (RFC 9297 Section 3.5)
-    Datagram { data: Vec<u8> },
+    Datagram { data: Bytes },
 
     /// PADDING (Section 6.1)
     Padding { length: usize },
@@ -95,7 +97,7 @@ pub enum Capsule {
     /// WT_STREAM (Section 6.4)
     WtStream {
         stream_id: u64,
-        data: Vec<u8>,
+        data: Bytes,
         fin: bool,
     },
 
@@ -125,20 +127,26 @@ pub enum Capsule {
     WtDrainSession,
 
     /// 未知の Capsule タイプ (RFC 9297: MUST silently drop)
-    Unknown { capsule_type: u64, data: Vec<u8> },
+    Unknown { capsule_type: u64, data: Bytes },
 }
 
 /// Capsule エンコーダー
+///
+/// 内部バッファに `BytesMut` を使用する。`take()` の戻り値を
+/// `freeze()` で `Bytes` に変換することで、relay 配信時の clone を
+/// Arc inc に置き換えられる。
 #[derive(Debug, Default)]
 pub struct CapsuleEncoder {
-    buffer: Vec<u8>,
+    buffer: BytesMut,
 }
 
 impl CapsuleEncoder {
     /// 新しいエンコーダーを生成する
     #[must_use]
     pub fn new() -> Self {
-        Self { buffer: Vec::new() }
+        Self {
+            buffer: BytesMut::new(),
+        }
     }
 
     /// Capsule をエンコードする
@@ -150,7 +158,8 @@ impl CapsuleEncoder {
             }
             Capsule::Padding { length } => {
                 self.encode_header(capsule_type::PADDING, *length);
-                self.buffer.resize(self.buffer.len() + length, 0);
+                let new_len = self.buffer.len() + length;
+                self.buffer.resize(new_len, 0);
             }
             Capsule::WtResetStream {
                 stream_id,
@@ -273,8 +282,12 @@ impl CapsuleEncoder {
     }
 
     /// バッファを取得してクリアする
-    pub fn take(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.buffer)
+    ///
+    /// 戻り値の `Bytes` は内部 `BytesMut` を `freeze` したもので、
+    /// 後続の `clone()` は Arc inc になる。
+    pub fn take(&mut self) -> Bytes {
+        let taken = core::mem::take(&mut self.buffer);
+        taken.freeze()
     }
 
     /// バッファの参照を取得する
@@ -290,16 +303,22 @@ impl CapsuleEncoder {
 }
 
 /// Capsule デコーダー (ストリーミング対応)
+///
+/// 内部バッファに `BytesMut` を使用し、`split_to(len).freeze()` で
+/// payload を zero-copy に切り出す。これにより relay 配信時の
+/// データ複製を Arc inc に置き換えられる。
 #[derive(Debug, Default)]
 pub struct CapsuleDecoder {
-    buffer: Vec<u8>,
+    buffer: BytesMut,
 }
 
 impl CapsuleDecoder {
     /// 新しいデコーダーを生成する
     #[must_use]
     pub fn new() -> Self {
-        Self { buffer: Vec::new() }
+        Self {
+            buffer: BytesMut::new(),
+        }
     }
 
     /// データを追加する
@@ -346,28 +365,28 @@ impl CapsuleDecoder {
             return Ok(None);
         }
 
-        let payload = &self.buffer[offset..offset + payload_len];
-        let capsule = self.decode_payload(capsule_type, payload)?;
-
-        // 消費したデータを削除
-        let total_len = offset + payload_len;
-        self.buffer.drain(..total_len);
+        // Type + Length のヘッダー部分を捨て、payload を zero-copy で切り出す
+        let _ = self.buffer.split_to(offset);
+        let payload = self.buffer.split_to(payload_len).freeze();
+        let capsule = Self::decode_payload(capsule_type, payload)?;
 
         Ok(Some(capsule))
     }
 
     /// Payload をデコードする
-    fn decode_payload(&self, capsule_type: u64, payload: &[u8]) -> WtResult<Capsule> {
+    ///
+    /// `payload: Bytes` を受け取り、ペイロードを保持する variant では
+    /// `payload.slice(range)` で zero-copy に切り出す。
+    fn decode_payload(capsule_type: u64, payload: Bytes) -> WtResult<Capsule> {
         match capsule_type {
-            capsule_type::DATAGRAM => Ok(Capsule::Datagram {
-                data: payload.to_vec(),
-            }),
+            capsule_type::DATAGRAM => Ok(Capsule::Datagram { data: payload }),
 
             capsule_type::PADDING => Ok(Capsule::Padding {
                 length: payload.len(),
             }),
 
             capsule_type::WT_RESET_STREAM => {
+                let payload = &payload[..];
                 let mut offset = 0;
                 let (stream_id, len) = varint::decode(&payload[offset..])?;
                 offset += len;
@@ -396,6 +415,7 @@ impl CapsuleDecoder {
             }
 
             capsule_type::WT_STOP_SENDING => {
+                let payload = &payload[..];
                 let mut offset = 0;
                 let (stream_id, len) = varint::decode(&payload[offset..])?;
                 offset += len;
@@ -421,8 +441,9 @@ impl CapsuleDecoder {
             }
 
             capsule_type::WT_STREAM | capsule_type::WT_STREAM_FIN => {
-                let (stream_id, len) = varint::decode(payload)?;
-                let data = payload[len..].to_vec();
+                let (stream_id, len) = varint::decode(&payload)?;
+                // varint 部分を切り捨てて zero-copy で data を切り出す
+                let data = payload.slice(len..);
                 let fin = capsule_type == capsule_type::WT_STREAM_FIN;
                 Ok(Capsule::WtStream {
                     stream_id,
@@ -432,7 +453,7 @@ impl CapsuleDecoder {
             }
 
             capsule_type::WT_MAX_DATA => {
-                let (maximum, len) = varint::decode(payload)?;
+                let (maximum, len) = varint::decode(&payload)?;
                 // RFC 9297 Section 3.3: 余剰バイトは不正
                 if len != payload.len() {
                     return Err(WtError::capsule_decode(
@@ -443,6 +464,7 @@ impl CapsuleDecoder {
             }
 
             capsule_type::WT_MAX_STREAM_DATA => {
+                let payload = &payload[..];
                 let mut offset = 0;
                 let (stream_id, len) = varint::decode(&payload[offset..])?;
                 offset += len;
@@ -458,7 +480,7 @@ impl CapsuleDecoder {
             }
 
             capsule_type::WT_MAX_STREAMS_BIDI => {
-                let (maximum, len) = varint::decode(payload)?;
+                let (maximum, len) = varint::decode(&payload)?;
                 // RFC 9297 Section 3.3: 余剰バイトは不正
                 if len != payload.len() {
                     return Err(WtError::capsule_decode(
@@ -472,7 +494,7 @@ impl CapsuleDecoder {
             }
 
             capsule_type::WT_MAX_STREAMS_UNI => {
-                let (maximum, len) = varint::decode(payload)?;
+                let (maximum, len) = varint::decode(&payload)?;
                 // RFC 9297 Section 3.3: 余剰バイトは不正
                 if len != payload.len() {
                     return Err(WtError::capsule_decode(
@@ -486,7 +508,7 @@ impl CapsuleDecoder {
             }
 
             capsule_type::WT_DATA_BLOCKED => {
-                let (maximum, len) = varint::decode(payload)?;
+                let (maximum, len) = varint::decode(&payload)?;
                 // RFC 9297 Section 3.3: 余剰バイトは不正
                 if len != payload.len() {
                     return Err(WtError::capsule_decode(
@@ -497,6 +519,7 @@ impl CapsuleDecoder {
             }
 
             capsule_type::WT_STREAM_DATA_BLOCKED => {
+                let payload = &payload[..];
                 let mut offset = 0;
                 let (stream_id, len) = varint::decode(&payload[offset..])?;
                 offset += len;
@@ -512,7 +535,7 @@ impl CapsuleDecoder {
             }
 
             capsule_type::WT_STREAMS_BLOCKED_BIDI => {
-                let (maximum, len) = varint::decode(payload)?;
+                let (maximum, len) = varint::decode(&payload)?;
                 // RFC 9297 Section 3.3: 余剰バイトは不正
                 if len != payload.len() {
                     return Err(WtError::capsule_decode(
@@ -526,7 +549,7 @@ impl CapsuleDecoder {
             }
 
             capsule_type::WT_STREAMS_BLOCKED_UNI => {
-                let (maximum, len) = varint::decode(payload)?;
+                let (maximum, len) = varint::decode(&payload)?;
                 // RFC 9297 Section 3.3: 余剰バイトは不正
                 if len != payload.len() {
                     return Err(WtError::capsule_decode(
@@ -574,10 +597,10 @@ impl CapsuleDecoder {
             }
 
             _ => {
-                // 未知の Capsule タイプは Unknown として返す
+                // 未知の Capsule タイプは Unknown として返す (zero-copy)
                 Ok(Capsule::Unknown {
                     capsule_type,
-                    data: payload.to_vec(),
+                    data: payload,
                 })
             }
         }
@@ -605,7 +628,7 @@ mod tests {
         let mut decoder = CapsuleDecoder::new();
 
         let capsule = Capsule::Datagram {
-            data: b"hello".to_vec(),
+            data: bytes::Bytes::from_static(b"hello"),
         };
         encoder.encode(&capsule);
 
@@ -621,7 +644,7 @@ mod tests {
 
         let capsule = Capsule::WtStream {
             stream_id: 4,
-            data: b"test data".to_vec(),
+            data: bytes::Bytes::from_static(b"test data"),
             fin: false,
         };
         encoder.encode(&capsule);
@@ -638,7 +661,7 @@ mod tests {
 
         let capsule = Capsule::WtStream {
             stream_id: 8,
-            data: b"final data".to_vec(),
+            data: bytes::Bytes::from_static(b"final data"),
             fin: true,
         };
         encoder.encode(&capsule);
@@ -804,10 +827,10 @@ mod tests {
         let mut decoder = CapsuleDecoder::new();
 
         let capsule1 = Capsule::Datagram {
-            data: b"first".to_vec(),
+            data: bytes::Bytes::from_static(b"first"),
         };
         let capsule2 = Capsule::Datagram {
-            data: b"second".to_vec(),
+            data: bytes::Bytes::from_static(b"second"),
         };
 
         encoder.encode(&capsule1);
@@ -832,7 +855,7 @@ mod tests {
         // 未知の Capsule タイプ
         let capsule = Capsule::Unknown {
             capsule_type: 0xFFFF,
-            data: b"unknown data".to_vec(),
+            data: bytes::Bytes::from_static(b"unknown data"),
         };
         encoder.encode(&capsule);
 

@@ -10,6 +10,8 @@ pub use decoder::FrameDecoder;
 pub use encoder::FrameEncoder;
 pub use flags::FrameFlags;
 
+use bytes::Bytes;
+
 use crate::settings::Setting;
 
 /// フレームヘッダーサイズ（9 バイト）
@@ -138,7 +140,7 @@ pub struct DataFrame {
     /// END_STREAM フラグ
     pub end_stream: bool,
     /// データ
-    pub data: Vec<u8>,
+    pub data: Bytes,
     /// パディング長 (RFC 9113 Section 6.1)
     ///
     /// Some の場合、PADDED フラグが設定され、指定されたバイト数のパディングが追加される。
@@ -149,11 +151,11 @@ pub struct DataFrame {
 impl DataFrame {
     /// 新しい `DataFrame` を生成する
     #[must_use]
-    pub fn new(stream_id: StreamId, data: Vec<u8>) -> Self {
+    pub fn new(stream_id: StreamId, data: impl Into<Bytes>) -> Self {
         Self {
             stream_id,
             end_stream: false,
-            data,
+            data: data.into(),
             pad_length: None,
         }
     }
@@ -193,7 +195,7 @@ pub struct HeadersFrame {
     /// RFC 9113 で非推奨となった。相互運用性のため受信は処理する。
     pub priority_fields: Option<PriorityFields>,
     /// ヘッダーブロックフラグメント（HPACK エンコード済み）
-    pub header_block_fragment: Vec<u8>,
+    pub header_block_fragment: Bytes,
     /// パディング長 (RFC 9113 Section 6.2)
     ///
     /// Some の場合、PADDED フラグが設定され、指定されたバイト数のパディングが追加される。
@@ -203,13 +205,13 @@ pub struct HeadersFrame {
 impl HeadersFrame {
     /// 新しい `HeadersFrame` を生成する
     #[must_use]
-    pub fn new(stream_id: StreamId, header_block_fragment: Vec<u8>) -> Self {
+    pub fn new(stream_id: StreamId, header_block_fragment: impl Into<Bytes>) -> Self {
         Self {
             stream_id,
             end_stream: false,
             end_headers: true,
             priority_fields: None,
-            header_block_fragment,
+            header_block_fragment: header_block_fragment.into(),
             pad_length: None,
         }
     }
@@ -366,7 +368,7 @@ pub struct GoawayFrame {
     /// エラーコード
     pub error_code: u32,
     /// 追加のデバッグデータ
-    pub debug_data: Vec<u8>,
+    pub debug_data: Bytes,
 }
 
 impl GoawayFrame {
@@ -376,14 +378,14 @@ impl GoawayFrame {
         Self {
             last_stream_id,
             error_code,
-            debug_data: Vec::new(),
+            debug_data: Bytes::new(),
         }
     }
 
     /// デバッグデータを追加する
     #[must_use]
-    pub fn with_debug_data(mut self, debug_data: Vec<u8>) -> Self {
-        self.debug_data = debug_data;
+    pub fn with_debug_data(mut self, debug_data: impl Into<Bytes>) -> Self {
+        self.debug_data = debug_data.into();
         self
     }
 }
@@ -416,17 +418,17 @@ pub struct ContinuationFrame {
     /// END_HEADERS フラグ
     pub end_headers: bool,
     /// ヘッダーブロックフラグメント
-    pub header_block_fragment: Vec<u8>,
+    pub header_block_fragment: Bytes,
 }
 
 impl ContinuationFrame {
     /// 新しい `ContinuationFrame` を生成する
     #[must_use]
-    pub fn new(stream_id: StreamId, header_block_fragment: Vec<u8>) -> Self {
+    pub fn new(stream_id: StreamId, header_block_fragment: impl Into<Bytes>) -> Self {
         Self {
             stream_id,
             end_headers: false,
-            header_block_fragment,
+            header_block_fragment: header_block_fragment.into(),
         }
     }
 
@@ -453,16 +455,16 @@ pub struct PriorityUpdateFrame {
     ///
     /// RFC 9218 Section 4: Structured Fields (RFC 8941) の Dictionary 形式。
     /// 空の場合はデフォルト優先度を使用。
-    pub priority_field_value: Vec<u8>,
+    pub priority_field_value: Bytes,
 }
 
 impl PriorityUpdateFrame {
     /// 新しい `PriorityUpdateFrame` を生成する
     #[must_use]
-    pub fn new(prioritized_element_id: StreamId, priority_field_value: Vec<u8>) -> Self {
+    pub fn new(prioritized_element_id: StreamId, priority_field_value: impl Into<Bytes>) -> Self {
         Self {
             prioritized_element_id,
-            priority_field_value,
+            priority_field_value: priority_field_value.into(),
         }
     }
 
@@ -471,7 +473,7 @@ impl PriorityUpdateFrame {
     pub fn default_priority(prioritized_element_id: StreamId) -> Self {
         Self {
             prioritized_element_id,
-            priority_field_value: Vec::new(),
+            priority_field_value: Bytes::new(),
         }
     }
 }
@@ -521,7 +523,7 @@ pub enum Frame {
         /// フレームヘッダー
         header: FrameHeader,
         /// ペイロード
-        payload: Vec<u8>,
+        payload: Bytes,
     },
 }
 

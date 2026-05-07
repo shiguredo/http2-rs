@@ -181,8 +181,12 @@ async fn send_response(
     ];
 
     conn.send_response(stream_id, headers, false).await?;
-    conn.send_data(stream_id, body.as_bytes().to_vec(), true)
-        .await?;
+    conn.send_data(
+        stream_id,
+        bytes::Bytes::copy_from_slice(body.as_bytes()),
+        true,
+    )
+    .await?;
 
     Ok(())
 }

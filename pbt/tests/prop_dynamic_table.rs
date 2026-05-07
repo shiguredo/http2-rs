@@ -313,12 +313,12 @@ proptest! {
         table.insert(b"new".to_vec(), vec![b'v']);
 
         // 最新のエントリが index 0 にある
-        prop_assert_eq!(&table.get(0).unwrap().name, b"new");
+        prop_assert_eq!(&table.get(0).unwrap().name[..], b"new");
 
         // 最も古いエントリ (n00) は削除されている
         let mut found_n00 = false;
         for i in 0..table.len() {
-            if table.get(i).unwrap().name == b"n00" {
+            if &table.get(i).unwrap().name[..] == b"n00" {
                 found_n00 = true;
                 break;
             }
