@@ -3,8 +3,17 @@
 - Created: 2026-05-07
 - Reopened: 2026-05-07 (送信側 encoder/output_buffer/stream buffer の抜け漏れ)
 - Reopened: 2026-05-07 (HPACK ヘッダーブロック分割経路の抜け漏れ + varint デッドコード)
-- Completed: 2026-05-07
+- Reopened: 2026-05-07 (README サンプルとテスト 1 箇所が新 API に追従していない)
 - Model: Opus 4.7
+
+## 再 Reopen 理由 (3 回目)
+
+reopen 2 回目で本番コードの送信経路はすべて Bytes 化したが、ドキュメント / テストに 2 箇所追従漏れがあった:
+
+- `crates/tokio-http2/README.md` L72 のサンプルコードが `b"...".to_vec()` のままで、新 API の推奨スタイル (`bytes::Bytes::from_static(b"...")`) になっていない。サンプルは「お手本」として最新の API を示すべき
+- `crates/tokio-http2/tests/client_server.rs` L1615-1626 が `Vec<(StreamId, Vec<u8>)>` で受け、`status.value.to_vec()` で再アロケーションしている。`HeaderField.value` は既に `Bytes` なので `Bytes::clone()` (Arc inc) で済ませるべき
+
+他のテストは送信側 Bytes 化のときに追従させたが、この 1 箇所だけ漏れていた。整合性のため対応する。
 
 ## 再 Reopen 理由 (2 回目)
 
