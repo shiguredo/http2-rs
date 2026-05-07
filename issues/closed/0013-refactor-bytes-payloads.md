@@ -1,6 +1,7 @@
 # HTTP/2 ペイロードを Bytes 化する (お試し)
 
 - Created: 2026-05-07
+- Completed: 2026-05-07
 - Model: Opus 4.7
 
 ## 概要
@@ -178,3 +179,51 @@ HPACK 静的テーブル (61 エントリ) は `'static [u8]` の文字列リテ
 - `examples/wt_server` が手動動作確認で bidi/uni/datagram のエコーを行える
 - `CHANGES.md` の `## develop` に該当エントリ追加
 - `Cargo.lock` の更新をコミット
+
+## 解決方法
+
+ルートクレート `shiguredo_http2` に `bytes = { version = "1.11", default-features = false }` を追加し、`shiguredo_http2` / `tokio-http2` / `examples/*` にまたがって以下の置換を実施した。
+
+### `shiguredo_http2` (ルートクレート)
+
+- `frame::DataFrame` / `HeadersFrame` / `ContinuationFrame` / `GoawayFrame` / `PriorityUpdateFrame` / `Frame::Unknown` のペイロードを `Vec<u8>` から `bytes::Bytes` に変更
+- `FrameDecoder` の内部バッファを `BytesMut` 化し、`split_to(payload_len).freeze()` でペイロードを zero-copy に切り出す
+- `FrameEncoder` の内部バッファを `BytesMut` 化し、`take()` の戻り値を `Bytes` に変更
+- `hpack::HeaderField.name` / `value` を `Bytes` に変更し、`new(impl Into<Bytes>, impl Into<Bytes>)` を提供
+- `hpack::StaticEntry::to_header_field` で `Bytes::from_static` を使い、HPACK 静的テーブル (61 エントリ) を zero-allocation 化
+- `hpack::Decoder::decode_string` の戻り値を `Bytes` に変更
+- `Event::HeadersReceived.protocol` / `DataReceived.data` / `GoawayReceived.debug_data` / `PriorityUpdateReceived.priority_field_value` を `Bytes` 化
+- `webtransport::Capsule` の `Datagram` / `WtStream` / `Unknown` のペイロードを `Bytes` 化
+- `webtransport::CapsuleEncoder` / `CapsuleDecoder` の内部バッファを `BytesMut` 化し、デコード時はペイロードを `split_to + freeze` で zero-copy に切り出す
+- `webtransport::WtSession::output_buffer` を `BytesMut` 化、`poll_output() -> Option<Bytes>` に変更
+- `webtransport::WtSession::send_stream_data` / `send_datagram` を `Bytes` 受け取りに変更
+- `Connection::send_data` / `send_goaway` を `Bytes` 受け取りに変更
+- `validation::ValidationError` の variant が保持するヘッダー名 / 値も `Bytes` 化
+- `Stream::request_method` / `protocol` を `Option<Bytes>` 化
+- `Connection` の cookie 連結ロジックを `BytesMut::with_capacity` で事前確保して 1 回のアロケーションに収めた
+- 入力 API (`feed(&mut self, data: &[u8])`) は sans-io の柔軟性のため据え置き
+
+### `tokio-http2`
+
+- `Connection::send_data` / `send_goaway`、`ServerConnection::send_data`、`ClientConnection::send_data` を `Bytes` 受け取りに変更
+- `WtBidiStream::send` / `recv`、`WtUniSendStream::send`、`WtUniRecvStream::recv` を `Bytes` ベースに変更
+- `WtServerSession::send_datagram` / `WtSessionHandle::send_datagram` を `Bytes` 受け取りに変更
+- driver 内部の `mpsc::UnboundedSender<Vec<u8>>` を `mpsc::UnboundedSender<Bytes>` に変更
+- `StreamPacket::Data { data: Vec<u8> }` を `Bytes` 化
+- `DriverCmd::SendStreamData` / `SendDatagram` の payload を `Bytes` 化
+
+### `examples/`
+
+- `examples/wt_server` / `examples/http2_server` の `Cargo.toml` に `bytes` 依存を追加し、`send_*` 呼び出しを `Bytes::from_static` / `Bytes::copy_from_slice` 経由に変更
+
+### テスト
+
+- 単体テスト / PBT / interop テストを `Bytes` 化に追従
+- HPACK 比較テストは `Bytes == &[u8; N]` の impl がないため `&header.name[..] == b"..."` 形式に変更
+- tokio_nghttp2 (`&[u8]` 受け) と tokio_http2 (`Bytes` 受け) を区別して扱う
+
+### 確認
+
+- `cargo test --workspace` 全 pass
+- `cargo clippy --workspace` pass
+- `cargo fmt --check` pass
