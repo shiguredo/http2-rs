@@ -42,6 +42,10 @@ fn main() {
     }
 
     // nghttp2 ビルド (静的ライブラリのみ)
+    //
+    // ENABLE_LIB_ONLY=ON / ENABLE_HTTP3=OFF でもオプショナル依存の find_package が
+    // 走り、Homebrew 等のシステム側ライブラリを暗黙に拾ってしまうため、
+    // CMAKE_DISABLE_FIND_PACKAGE_* で全て抑止する。
     let nghttp2_dst = cmake::Config::new(&nghttp2_dir)
         .define("BUILD_STATIC_LIBS", "ON")
         .define("BUILD_SHARED_LIBS", "OFF")
@@ -54,6 +58,19 @@ fn main() {
         .define("WITH_MRUBY", "OFF")
         .define("WITH_NEVERBLEED", "OFF")
         .define("WITH_LIBBPF", "OFF")
+        .define("CMAKE_DISABLE_FIND_PACKAGE_Libngtcp2", "ON")
+        .define("CMAKE_DISABLE_FIND_PACKAGE_Libngtcp2_crypto_quictls", "ON")
+        .define("CMAKE_DISABLE_FIND_PACKAGE_Libngtcp2_crypto_libressl", "ON")
+        .define("CMAKE_DISABLE_FIND_PACKAGE_Libngtcp2_crypto_wolfssl", "ON")
+        .define("CMAKE_DISABLE_FIND_PACKAGE_Libnghttp3", "ON")
+        .define("CMAKE_DISABLE_FIND_PACKAGE_Libev", "ON")
+        .define("CMAKE_DISABLE_FIND_PACKAGE_Libevent", "ON")
+        .define("CMAKE_DISABLE_FIND_PACKAGE_Libcares", "ON")
+        .define("CMAKE_DISABLE_FIND_PACKAGE_Jansson", "ON")
+        .define("CMAKE_DISABLE_FIND_PACKAGE_Jemalloc", "ON")
+        .define("CMAKE_DISABLE_FIND_PACKAGE_Systemd", "ON")
+        .define("CMAKE_DISABLE_FIND_PACKAGE_Libbrotlienc", "ON")
+        .define("CMAKE_DISABLE_FIND_PACKAGE_Libbrotlidec", "ON")
         .build();
 
     // ライブラリパス
