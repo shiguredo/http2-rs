@@ -1612,7 +1612,7 @@ async fn test_status_codes() {
         stream_ids.push(stream_id);
     }
 
-    let mut received_statuses: Vec<(StreamId, Vec<u8>)> = Vec::new();
+    let mut received_statuses: Vec<(StreamId, bytes::Bytes)> = Vec::new();
     loop {
         let event = client.next_event().await.expect("failed to get event");
         if let Event::HeadersReceived {
@@ -1623,7 +1623,7 @@ async fn test_status_codes() {
                 .iter()
                 .find(|h| &h.name[..] == b":status")
                 .expect("missing :status");
-            received_statuses.push((stream_id, status.value.to_vec()));
+            received_statuses.push((stream_id, status.value.clone()));
             if received_statuses.len() >= 3 {
                 break;
             }
@@ -1635,7 +1635,7 @@ async fn test_status_codes() {
         let status = received_statuses
             .iter()
             .find(|(id, _)| id == sid)
-            .map(|(_, s): &(StreamId, Vec<u8>)| s.as_slice())
+            .map(|(_, s): &(StreamId, bytes::Bytes)| &s[..])
             .expect("missing status for stream");
         assert_eq!(
             status, expected_statuses[i],

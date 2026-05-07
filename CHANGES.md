@@ -55,3 +55,7 @@
   - @voluntas
 - [ADD] `issues/` ディレクトリと issue 運用を導入する
   - @voluntas
+- [UPDATE] `crates/tokio-http2/README.md` のサンプルコードを `bytes::Bytes::from_static` 経由に更新し、新 API のお手本にする
+  - @voluntas
+- [UPDATE] `crates/tokio-http2/tests/client_server.rs` の `received_statuses` を `Vec<(StreamId, bytes::Bytes)>` に変更し、`HeaderField.value` の `to_vec()` 再アロケーションを `clone()` (Arc inc) に置き換える
+  - @voluntas

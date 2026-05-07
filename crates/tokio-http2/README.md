@@ -69,7 +69,11 @@ loop {
             conn.send_response(stream_id, response_headers, false).await?;
 
             // レスポンスボディ送信
-            conn.send_data(stream_id, b"Hello, HTTP/2!".to_vec(), true).await?;
+            conn.send_data(
+                stream_id,
+                bytes::Bytes::from_static(b"Hello, HTTP/2!"),
+                true,
+            ).await?;
         }
         _ => {}
     }
