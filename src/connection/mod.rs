@@ -82,7 +82,10 @@ pub struct Connection {
     /// フレームエンコーダー
     frame_encoder: FrameEncoder,
     /// 出力バッファ
-    output_buffer: VecDeque<u8>,
+    ///
+    /// `BytesMut` を使い、`poll_output` で `split().freeze()` により
+    /// 所有権移譲のみで `Bytes` を取り出して呼び出し側に渡す (zero-copy)。
+    output_buffer: BytesMut,
     /// イベントキュー
     events: VecDeque<Event>,
     /// 未 ACK の SETTINGS フレーム数
@@ -158,7 +161,7 @@ impl Connection {
             hpack_decoder: HpackDecoder::new(limits.header_table_size as usize),
             frame_decoder: FrameDecoder::new(limits.max_frame_size),
             frame_encoder: FrameEncoder::new(),
-            output_buffer: VecDeque::new(),
+            output_buffer: BytesMut::new(),
             events: VecDeque::new(),
             pending_settings_count: 0,
             preface_received: false,
@@ -240,7 +243,8 @@ impl Connection {
 
         if self.role == Role::Client {
             // クライアントはプリフェイス文字列を送信する
-            self.output_buffer.extend(crate::CONNECTION_PREFACE);
+            self.output_buffer
+                .extend_from_slice(crate::CONNECTION_PREFACE);
         }
 
         // SETTINGS フレームを送信する
@@ -375,11 +379,11 @@ impl Connection {
 
     /// 出力データを取得する
     #[must_use]
-    pub fn poll_output(&mut self) -> Option<Vec<u8>> {
+    pub fn poll_output(&mut self) -> Option<Bytes> {
         if self.output_buffer.is_empty() {
             None
         } else {
-            Some(self.output_buffer.drain(..).collect())
+            Some(self.output_buffer.split().freeze())
         }
     }
 
@@ -1928,7 +1932,8 @@ impl Connection {
     /// フレームを出力バッファに書き込む
     fn send_frame(&mut self, frame: &Frame) -> Result<()> {
         self.frame_encoder.encode(frame)?;
-        self.output_buffer.extend(self.frame_encoder.buffer());
+        self.output_buffer
+            .extend_from_slice(self.frame_encoder.buffer());
         self.frame_encoder.clear();
         Ok(())
     }

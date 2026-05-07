@@ -16,6 +16,14 @@
   - @voluntas
 - [CHANGE] `shiguredo_http2::Connection::send_data` / `send_goaway`、`webtransport::WtSession::send_stream_data` / `send_datagram` / `poll_output` を `bytes::Bytes` ベースに変更する
   - @voluntas
+- [CHANGE] `shiguredo_http2::FrameEncoder` の内部バッファを `BytesMut` 化し、`take()` の戻り値を `bytes::Bytes` に変更する
+  - @voluntas
+- [CHANGE] `shiguredo_http2::frame::encode_frame_to_vec` を `encode_frame_to_bytes` にリネームし、戻り値を `bytes::Bytes` に変更する
+  - @voluntas
+- [CHANGE] `shiguredo_http2::Connection` の `output_buffer` を `BytesMut` 化し、`poll_output()` の戻り値を `Option<bytes::Bytes>` に変更する (`split().freeze()` で zero-copy)
+  - @voluntas
+- [CHANGE] `shiguredo_http2::stream::SendBuffer` / `RecvBuffer` の内部を `BytesMut` 化し、`pop()` / `take()` の戻り値を `bytes::Bytes` に変更する (relay 配信のホットパスで `split_to(n).freeze()` による zero-copy)
+  - @voluntas
 - [CHANGE] `tokio-http2` の DATA フレーム送出 API (`Connection::send_data`, `Connection::send_goaway`, `ServerConnection::send_data`, `ClientConnection::send_data`) と WebTransport ストリーム / DATAGRAM API (`WtBidiStream::send` / `recv`, `WtUniSendStream::send`, `WtUniRecvStream::recv`, `WtServerSession::send_datagram` / `recv_datagram`) を `bytes::Bytes` ベースに変更する
   - @voluntas
 - [ADD] `shiguredo_http2` の `Settings` に WebTransport 関連 SETTINGS (`0x2b61`〜`0x2b66`) を統合する

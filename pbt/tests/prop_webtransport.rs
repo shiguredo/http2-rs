@@ -430,7 +430,7 @@ enum SessionOp {
     /// 単方向ストリームを開く
     OpenUniStream,
     /// データグラム送信
-    SendDatagram(Vec<u8>),
+    SendDatagram(bytes::Bytes),
     /// WT_CLOSE_SESSION Capsule 受信
     RecvCloseSession,
     /// WT_DRAIN_SESSION Capsule 受信
@@ -445,7 +445,8 @@ fn session_op() -> impl Strategy<Value = SessionOp> {
         Just(SessionOp::Close),
         Just(SessionOp::OpenBidiStream),
         Just(SessionOp::OpenUniStream),
-        prop::collection::vec(any::<u8>(), 0..50).prop_map(SessionOp::SendDatagram),
+        prop::collection::vec(any::<u8>(), 0..50)
+            .prop_map(|v| SessionOp::SendDatagram(bytes::Bytes::from(v))),
         Just(SessionOp::RecvCloseSession),
         Just(SessionOp::RecvDrainSession),
     ]
@@ -459,9 +460,7 @@ fn apply_session_op(session: &mut WtSession, op: &SessionOp) -> Result<(), ()> {
         SessionOp::Close => session.close(0, "close").map_err(|_| ()),
         SessionOp::OpenBidiStream => session.open_bidi_stream().map(|_| ()).map_err(|_| ()),
         SessionOp::OpenUniStream => session.open_uni_stream().map(|_| ()).map_err(|_| ()),
-        SessionOp::SendDatagram(data) => session
-            .send_datagram(bytes::Bytes::from(data.clone()))
-            .map_err(|_| ()),
+        SessionOp::SendDatagram(data) => session.send_datagram(data.clone()).map_err(|_| ()),
         SessionOp::RecvCloseSession => {
             let mut encoder = CapsuleEncoder::new();
             encoder.encode(&Capsule::WtCloseSession {

@@ -1,5 +1,7 @@
 //! HTTP/2 フレームエンコーダー
 
+use bytes::{BufMut, Bytes, BytesMut};
+
 use crate::error::{Error, Result};
 use crate::frame::{
     ContinuationFrame, DataFrame, FRAME_HEADER_SIZE, Frame, FrameFlags, FrameHeader, FrameType,
@@ -11,14 +13,16 @@ use crate::frame::{
 #[derive(Debug)]
 pub struct FrameEncoder {
     /// 出力バッファ
-    buf: Vec<u8>,
+    buf: BytesMut,
 }
 
 impl FrameEncoder {
     /// 新しい `FrameEncoder` を生成する
     #[must_use]
     pub fn new() -> Self {
-        Self { buf: Vec::new() }
+        Self {
+            buf: BytesMut::new(),
+        }
     }
 
     /// 内部バッファへの参照を取得する
@@ -33,8 +37,11 @@ impl FrameEncoder {
     }
 
     /// 内部バッファの内容を取得してクリアする
-    pub fn take(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.buf)
+    ///
+    /// 既に書き込まれている領域を `Bytes` として切り出す。
+    /// 残りのキャパシティは内部バッファに保持されるため、後続の `encode` で再利用される。
+    pub fn take(&mut self) -> Bytes {
+        self.buf.split().freeze()
     }
 
     /// フレームをエンコードする
@@ -63,18 +70,18 @@ impl FrameEncoder {
     /// フレームヘッダーをエンコードする
     fn encode_header(&mut self, header: &FrameHeader) {
         // Length (24 bits)
-        self.buf.push(((header.length >> 16) & 0xff) as u8);
-        self.buf.push(((header.length >> 8) & 0xff) as u8);
-        self.buf.push((header.length & 0xff) as u8);
+        self.buf.put_u8(((header.length >> 16) & 0xff) as u8);
+        self.buf.put_u8(((header.length >> 8) & 0xff) as u8);
+        self.buf.put_u8((header.length & 0xff) as u8);
         // Type (8 bits)
-        self.buf.push(header.frame_type);
+        self.buf.put_u8(header.frame_type);
         // Flags (8 bits)
-        self.buf.push(header.flags.bits());
+        self.buf.put_u8(header.flags.bits());
         // Stream ID (31 bits, R bit is reserved)
-        self.buf.push(((header.stream_id >> 24) & 0x7f) as u8);
-        self.buf.push(((header.stream_id >> 16) & 0xff) as u8);
-        self.buf.push(((header.stream_id >> 8) & 0xff) as u8);
-        self.buf.push((header.stream_id & 0xff) as u8);
+        self.buf.put_u8(((header.stream_id >> 24) & 0x7f) as u8);
+        self.buf.put_u8(((header.stream_id >> 16) & 0xff) as u8);
+        self.buf.put_u8(((header.stream_id >> 8) & 0xff) as u8);
+        self.buf.put_u8((header.stream_id & 0xff) as u8);
     }
 
     /// DATA フレームをエンコードする
@@ -100,7 +107,7 @@ impl FrameEncoder {
 
         // パディング長フィールド
         if let Some(pad_len) = pad_length {
-            self.buf.push(pad_len);
+            self.buf.put_u8(pad_len);
         }
 
         // データ
@@ -108,7 +115,7 @@ impl FrameEncoder {
 
         // パディングバイト
         if let Some(pad_len) = pad_length {
-            self.buf.extend(std::iter::repeat_n(0u8, pad_len as usize));
+            self.buf.put_bytes(0, pad_len as usize);
         }
 
         Ok(())
@@ -146,7 +153,7 @@ impl FrameEncoder {
 
         // パディング長フィールド
         if let Some(pad_len) = pad_length {
-            self.buf.push(pad_len);
+            self.buf.put_u8(pad_len);
         }
 
         // ヘッダーブロックフラグメント
@@ -154,7 +161,7 @@ impl FrameEncoder {
 
         // パディングバイト
         if let Some(pad_len) = pad_length {
-            self.buf.extend(std::iter::repeat_n(0u8, pad_len as usize));
+            self.buf.put_bytes(0, pad_len as usize);
         }
 
         Ok(())
@@ -230,10 +237,10 @@ impl FrameEncoder {
 
         self.encode_header(&header);
         // Last-Stream-ID (31 bits, R bit is reserved)
-        self.buf.push(((frame.last_stream_id >> 24) & 0x7f) as u8);
-        self.buf.push(((frame.last_stream_id >> 16) & 0xff) as u8);
-        self.buf.push(((frame.last_stream_id >> 8) & 0xff) as u8);
-        self.buf.push((frame.last_stream_id & 0xff) as u8);
+        self.buf.put_u8(((frame.last_stream_id >> 24) & 0x7f) as u8);
+        self.buf.put_u8(((frame.last_stream_id >> 16) & 0xff) as u8);
+        self.buf.put_u8(((frame.last_stream_id >> 8) & 0xff) as u8);
+        self.buf.put_u8((frame.last_stream_id & 0xff) as u8);
         // Error Code
         self.buf.extend_from_slice(&frame.error_code.to_be_bytes());
         // Debug Data
@@ -253,12 +260,12 @@ impl FrameEncoder {
         self.encode_header(&header);
         // Window Size Increment (31 bits, R bit is reserved)
         self.buf
-            .push(((frame.window_size_increment >> 24) & 0x7f) as u8);
+            .put_u8(((frame.window_size_increment >> 24) & 0x7f) as u8);
         self.buf
-            .push(((frame.window_size_increment >> 16) & 0xff) as u8);
+            .put_u8(((frame.window_size_increment >> 16) & 0xff) as u8);
         self.buf
-            .push(((frame.window_size_increment >> 8) & 0xff) as u8);
-        self.buf.push((frame.window_size_increment & 0xff) as u8);
+            .put_u8(((frame.window_size_increment >> 8) & 0xff) as u8);
+        self.buf.put_u8((frame.window_size_increment & 0xff) as u8);
         Ok(())
     }
 
@@ -288,12 +295,12 @@ impl FrameEncoder {
         self.encode_header(&header);
         // Prioritized Element ID (31 bits, R bit is reserved)
         self.buf
-            .push(((frame.prioritized_element_id >> 24) & 0x7f) as u8);
+            .put_u8(((frame.prioritized_element_id >> 24) & 0x7f) as u8);
         self.buf
-            .push(((frame.prioritized_element_id >> 16) & 0xff) as u8);
+            .put_u8(((frame.prioritized_element_id >> 16) & 0xff) as u8);
         self.buf
-            .push(((frame.prioritized_element_id >> 8) & 0xff) as u8);
-        self.buf.push((frame.prioritized_element_id & 0xff) as u8);
+            .put_u8(((frame.prioritized_element_id >> 8) & 0xff) as u8);
+        self.buf.put_u8((frame.prioritized_element_id & 0xff) as u8);
         // Priority Field Value
         self.buf.extend_from_slice(&frame.priority_field_value);
         Ok(())
@@ -355,8 +362,8 @@ pub fn encode_frame(buf: &mut [u8], frame: &Frame) -> Result<usize> {
     Ok(encoded.len())
 }
 
-/// フレームをエンコードして Vec<u8> として返す
-pub fn encode_frame_to_vec(frame: &Frame) -> Result<Vec<u8>> {
+/// フレームをエンコードして `Bytes` として返す
+pub fn encode_frame_to_bytes(frame: &Frame) -> Result<Bytes> {
     let mut encoder = FrameEncoder::new();
     encoder.encode(frame)?;
     Ok(encoder.take())

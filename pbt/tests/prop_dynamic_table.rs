@@ -2,20 +2,21 @@
 //!
 //! HPACK 動的テーブルの不変条件を検証する。
 
+use bytes::Bytes;
 use proptest::prelude::*;
 use shiguredo_http2::hpack::DynamicTable;
 
 /// テーブル操作
 #[derive(Debug, Clone)]
 enum TableOp {
-    Insert { name: Vec<u8>, value: Vec<u8> },
+    Insert { name: Bytes, value: Bytes },
     SetMaxSize(usize),
     Clear,
 }
 
 /// バイト列を生成する (ASCII のみ、適度な長さ)
-fn byte_string() -> impl Strategy<Value = Vec<u8>> {
-    prop::collection::vec(0x20u8..=0x7e, 0..100)
+fn byte_string() -> impl Strategy<Value = Bytes> {
+    prop::collection::vec(0x20u8..=0x7e, 0..100).prop_map(Bytes::from)
 }
 
 /// テーブル操作の Strategy
@@ -358,7 +359,7 @@ proptest! {
         entries in prop::collection::vec((byte_string(), byte_string()), 1..5),
     ) {
         let mut table = DynamicTable::new(max_size);
-        let mut inserted: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        let mut inserted: Vec<(Bytes, Bytes)> = Vec::new();
 
         for (name, value) in entries {
             if entry_size(&name, &value) <= max_size {

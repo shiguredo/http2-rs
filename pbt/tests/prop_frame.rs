@@ -1336,7 +1336,7 @@ proptest! {
         }).collect();
 
         // 個別にエンコード
-        let individual_encodings: Vec<Vec<u8>> = frames.iter().map(|f| {
+        let individual_encodings: Vec<bytes::Bytes> = frames.iter().map(|f| {
             let mut enc = FrameEncoder::new();
             enc.encode(f).unwrap();
             enc.take()
@@ -1350,8 +1350,8 @@ proptest! {
         let combined = combined_encoder.take();
 
         // 連結結果は個別エンコードの連結と一致
-        let concatenated: Vec<u8> = individual_encodings.iter().flatten().copied().collect();
-        prop_assert_eq!(&combined, &concatenated, "combined encoding must equal concatenated individual encodings");
+        let concatenated: Vec<u8> = individual_encodings.iter().flat_map(|b| b.iter().copied()).collect();
+        prop_assert_eq!(&combined[..], &concatenated[..], "combined encoding must equal concatenated individual encodings");
 
         // 連結からデコードした結果は元のフレームと一致
         let mut decoder = FrameDecoder::new(16384);

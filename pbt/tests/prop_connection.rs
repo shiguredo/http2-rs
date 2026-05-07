@@ -2,6 +2,7 @@
 //!
 //! RFC 9113 準拠の接続レベル検証をテストする。
 
+use bytes::Bytes;
 use proptest::prelude::*;
 use shiguredo_http2::{
     Connection, ErrorCode, HeaderField, HpackEncoder, Limits,
@@ -18,14 +19,17 @@ fn client_stream_id() -> impl Strategy<Value = StreamId> {
 }
 
 /// フレームをバイト列にエンコードする
-fn encode_frame(frame: &Frame) -> Vec<u8> {
+fn encode_frame(frame: &Frame) -> Bytes {
     let mut encoder = FrameEncoder::new();
     encoder.encode(frame).unwrap();
-    encoder.buffer().to_vec()
+    encoder.take()
 }
 
 /// HEADERS フレームを作成する（END_HEADERS なし）
-fn create_headers_without_end_headers(stream_id: StreamId, fragment: Vec<u8>) -> HeadersFrame {
+fn create_headers_without_end_headers(
+    stream_id: StreamId,
+    fragment: impl Into<Bytes>,
+) -> HeadersFrame {
     HeadersFrame::new(stream_id, fragment)
         .with_end_stream(false)
         .with_end_headers(false)
@@ -33,7 +37,7 @@ fn create_headers_without_end_headers(stream_id: StreamId, fragment: Vec<u8>) ->
 
 /// 有効なリクエストヘッダーを HPACK エンコードする
 /// (:method GET, :scheme https, :path /, :authority example.com)
-fn encode_valid_request_headers() -> Vec<u8> {
+fn encode_valid_request_headers() -> Bytes {
     let mut encoder = HpackEncoder::new(4096);
     let headers = vec![
         HeaderField::from_str(":method", "GET"),
@@ -43,13 +47,13 @@ fn encode_valid_request_headers() -> Vec<u8> {
     ];
     let mut buf = Vec::new();
     encoder.encode(&mut buf, &headers);
-    buf
+    Bytes::from(buf)
 }
 
 /// CONTINUATION フレームを作成する
 fn create_continuation(
     stream_id: StreamId,
-    fragment: Vec<u8>,
+    fragment: impl Into<Bytes>,
     end_headers: bool,
 ) -> ContinuationFrame {
     ContinuationFrame::new(stream_id, fragment).with_end_headers(end_headers)
