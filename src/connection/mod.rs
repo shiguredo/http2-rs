@@ -633,7 +633,7 @@ impl Connection {
             && stream.send_buffer().is_empty()
         {
             stream.set_pending_end_stream(false);
-            let data_frame = DataFrame::new(stream_id, vec![]).with_end_stream(true);
+            let data_frame = DataFrame::new(stream_id, Bytes::new()).with_end_stream(true);
             self.send_frame(&Frame::Data(data_frame))?;
         }
 
