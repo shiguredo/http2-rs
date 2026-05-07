@@ -2,6 +2,7 @@
 
 - Created: 2026-05-07
 - Reopened: 2026-05-07
+- Completed: 2026-05-07
 - Model: Opus 4.7
 
 ## Reopen 理由
@@ -235,5 +236,29 @@ HPACK 静的テーブル (61 エントリ) は `'static [u8]` の文字列リテ
 ### 確認
 
 - `cargo test --workspace` 全 pass
+- `cargo clippy --workspace` pass
+- `cargo fmt --check` pass
+
+## 解決方法 (reopen 後の追加分)
+
+レビューで指摘された送信側の抜け漏れを以下の通り対応した:
+
+### `shiguredo_http2` (送信側 Bytes 化)
+
+- `frame::FrameEncoder::buf` を `Vec<u8>` から `BytesMut` に変更し、`take()` の戻り値を `bytes::Bytes` に変更 (`split().freeze()`)。`bytes::BufMut` の `put_u8` / `put_bytes` を使ったフレームヘッダー / パディング書き込みに統一
+- `frame::encode_frame_to_vec` を `encode_frame_to_bytes` にリネームし、戻り値を `bytes::Bytes` に変更
+- `Connection::output_buffer` を `VecDeque<u8>` から `BytesMut` に変更し、`poll_output() -> Option<Bytes>` に変更 (`split().freeze()` で zero-copy)。`webtransport::WtSession::poll_output()` と整合
+- `stream::SendBuffer` / `RecvBuffer` の内部を `VecDeque<u8>` から `BytesMut` に変更し、`pop()` / `take()` の戻り値を `bytes::Bytes` に変更 (`split_to(n).freeze()` で zero-copy)。relay (1:N 配信) のホットパスで Bytes → Vec への展開と `drain().collect()` による再コピーを排除
+
+### PBT 統一
+
+- `prop_dynamic_table.rs` の `TableOp::Insert { name: Bytes, value: Bytes }` に変更、`byte_string()` Strategy が `Bytes` を生成
+- `prop_webtransport.rs` の `SessionOp::SendDatagram(bytes::Bytes)` に変更
+- `prop_connection.rs` の `encode_frame()` / `encode_valid_request_headers()` の戻り値を `Bytes` 化、`create_headers_without_end_headers` / `create_continuation` の `fragment` 引数を `impl Into<Bytes>` に変更
+- `prop_frame.rs` の `Vec<Vec<u8>>` を `Vec<bytes::Bytes>` に変更
+
+### 追加確認
+
+- 送信側 Bytes 化により `cargo test --workspace` (全クレート) 全 pass
 - `cargo clippy --workspace` pass
 - `cargo fmt --check` pass
