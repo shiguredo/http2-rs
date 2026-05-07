@@ -1,11 +1,23 @@
 # HTTP/2 ペイロードを Bytes 化する (お試し)
 
 - Created: 2026-05-07
-- Reopened: 2026-05-07
-- Completed: 2026-05-07
+- Reopened: 2026-05-07 (送信側 encoder/output_buffer/stream buffer の抜け漏れ)
+- Reopened: 2026-05-07 (HPACK ヘッダーブロック分割経路の抜け漏れ + varint デッドコード)
 - Model: Opus 4.7
 
-## Reopen 理由
+## 再 Reopen 理由 (2 回目)
+
+reopen 1 回目で送信側 (encoder, output_buffer, stream buffer) を Bytes 化したが、HPACK ヘッダーブロック送信経路に以下の抜け漏れが残っていた:
+
+- `Connection::send_header_block` (L1862) が `encoded_headers: Vec<u8>` を受け取り、CONTINUATION 分割時に `first_chunk.to_vec()` (L1903) と `chunk.to_vec()` (L1915) で alloc + memcpy が発生する。`Bytes::slice(range)` (Arc inc + offset/len の付け替えのみ、O(1)) で zero-copy 化可能
+- 呼び出し側 3 箇所 (L489 / L826 / L892) の `Vec::new()` + HPACK encode 結果も `Bytes::from(vec)` で move して送信経路に流せる
+- L1873 のテーブルサイズ更新時の merge も最終的に `Bytes::from()` で freeze する形に整える
+
+加えて `webtransport::varint::encode_to_vec` (L120) が pub だがテスト内でしか呼ばれていない真のデッドコード。Capsule encoder/decoder API で完結しており外部利用想定もないため削除する。
+
+reopen 1 回目では sans-io 入力 API (`feed(&[u8])`) は据え置きとしたが、送信経路は中間表現の zero-copy を貫徹する方針に従って今回も対応する。
+
+## Reopen 理由 (1 回目)
 
 初回クローズ時点では受信側 (`FrameDecoder`, `CapsuleDecoder`) と Frame / HeaderField / Event / Capsule のペイロードを Bytes 化したが、送信側に以下の重大な抜け漏れがあった:
 
