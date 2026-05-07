@@ -1,8 +1,18 @@
 # HTTP/2 ペイロードを Bytes 化する (お試し)
 
 - Created: 2026-05-07
-- Completed: 2026-05-07
+- Reopened: 2026-05-07
 - Model: Opus 4.7
+
+## Reopen 理由
+
+初回クローズ時点では受信側 (`FrameDecoder`, `CapsuleDecoder`) と Frame / HeaderField / Event / Capsule のペイロードを Bytes 化したが、送信側に以下の重大な抜け漏れがあった:
+
+- `src/frame/encoder.rs::FrameEncoder` の内部バッファが `Vec<u8>` のまま、`take()` の戻り値も `Vec<u8>` のまま (受信側 `FrameDecoder` の `BytesMut` 化と非対称)
+- `src/connection/mod.rs::Connection` の `output_buffer` が `VecDeque<u8>` のまま、`poll_output()` の戻り値が `Option<Vec<u8>>` のまま (`webtransport::WtSession::poll_output()` は既に `Option<Bytes>` 化済みで非対称)
+- `src/stream/buffer.rs::SendBuffer` / `RecvBuffer` の内部が `VecDeque<u8>` のまま、`pop()` / `take()` の戻り値が `Vec<u8>` のまま。relay 配信のホットパスで Bytes → Vec への展開と `drain().collect()` による再コピーが連続して発生する
+
+relay (1:N 配信) の zero-copy という当初の動機からも、送信側 (encoder + output_buffer + stream buffer) を Vec のまま残したのは設計矛盾。reopen して送信側まで Bytes 化を貫徹する。
 
 ## 概要
 
