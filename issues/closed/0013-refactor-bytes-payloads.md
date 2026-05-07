@@ -4,6 +4,7 @@
 - Reopened: 2026-05-07 (送信側 encoder/output_buffer/stream buffer の抜け漏れ)
 - Reopened: 2026-05-07 (HPACK ヘッダーブロック分割経路の抜け漏れ + varint デッドコード)
 - Reopened: 2026-05-07 (README サンプルとテスト 1 箇所が新 API に追従していない)
+- Completed: 2026-05-07
 - Model: Opus 4.7
 
 ## 再 Reopen 理由 (3 回目)
@@ -305,3 +306,19 @@ HPACK 静的テーブル (61 エントリ) は `'static [u8]` の文字列リテ
 ### 補足: 変更しなかった箇所
 
 - `hpack::huffman::encode_to_vec` / `decode`: ユーザー指摘通りエンコーダ側の API は据え置き、デコーダ側は新規生成データのため `alloc` 不可避。`Bytes::from(huffman::decode(...))` の Vec → Bytes 変換は move で zero-copy なので現状で最適
+
+## 解決方法 (reopen 3 回目の追加分)
+
+レビューで指摘された README とテストの追従漏れを以下の通り対応した:
+
+### `crates/tokio-http2/README.md`
+
+- L72 のサンプルコード `b"Hello, HTTP/2!".to_vec()` を `bytes::Bytes::from_static(b"Hello, HTTP/2!")` に変更。サンプルは「お手本」として新 API の推奨スタイル (`Bytes::from_static`) を示す
+
+### `crates/tokio-http2/tests/client_server.rs`
+
+- L1615 の `Vec<(StreamId, Vec<u8>)>` を `Vec<(StreamId, bytes::Bytes)>` に変更
+- L1626 の `status.value.to_vec()` を `status.value.clone()` (Arc inc、zero-copy) に変更
+- L1638 の型注釈を `&(StreamId, bytes::Bytes)` に追従、`s.as_slice()` を `&s[..]` に変更
+
+`HeaderField.value` は既に `Bytes` なので、テスト内でも `Bytes::clone()` で済ませることで再アロケーションを排除した
