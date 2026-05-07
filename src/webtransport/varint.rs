@@ -103,26 +103,6 @@ pub fn encode(value: u64, buf: &mut [u8]) -> WtResult<usize> {
     Ok(len)
 }
 
-/// 可変長整数を `Vec<u8>` にエンコードする
-///
-/// # 引数
-///
-/// - `value`: エンコードする値
-///
-/// # 戻り値
-///
-/// エンコードされたバイト列を返す。
-///
-/// # エラー
-///
-/// - `value` が `MAX_VALUE` を超える場合
-#[track_caller]
-pub fn encode_to_vec(value: u64) -> WtResult<Vec<u8>> {
-    let mut buf = vec![0u8; encoded_len(value)];
-    encode(value, &mut buf)?;
-    Ok(buf)
-}
-
 /// 可変長整数をデコードする
 ///
 /// # 引数
@@ -352,14 +332,5 @@ mod tests {
             &buf[..len],
             &[0xc2, 0x19, 0x7c, 0x5e, 0xff, 0x14, 0xe8, 0x8c]
         );
-    }
-
-    #[test]
-    fn test_encode_to_vec() {
-        let buf = encode_to_vec(37).unwrap();
-        assert_eq!(buf, vec![0x25]);
-
-        let buf = encode_to_vec(15293).unwrap();
-        assert_eq!(buf, vec![0x7b, 0xbd]);
     }
 }

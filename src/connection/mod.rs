@@ -489,7 +489,7 @@ impl Connection {
         let mut encoded_headers = Vec::new();
         self.hpack_encoder.encode(&mut encoded_headers, &headers);
 
-        self.send_header_block(stream_id, encoded_headers, end_stream)?;
+        self.send_header_block(stream_id, Bytes::from(encoded_headers), end_stream)?;
 
         Ok(stream_id)
     }
@@ -826,7 +826,7 @@ impl Connection {
         let mut encoded_headers = Vec::new();
         self.hpack_encoder.encode(&mut encoded_headers, &headers);
 
-        self.send_header_block(stream_id, encoded_headers, end_stream)?;
+        self.send_header_block(stream_id, Bytes::from(encoded_headers), end_stream)?;
 
         // 送信側で end_stream によりストリームが closed になった場合
         if is_closed {
@@ -892,7 +892,7 @@ impl Connection {
         let mut encoded_headers = Vec::new();
         self.hpack_encoder.encode(&mut encoded_headers, &headers);
 
-        self.send_header_block(stream_id, encoded_headers, end_stream)?;
+        self.send_header_block(stream_id, Bytes::from(encoded_headers), end_stream)?;
 
         // 送信側で end_stream によりストリームが closed になった場合
         if is_closed {
@@ -1859,10 +1859,11 @@ impl Connection {
     ///
     /// エンコード済みヘッダーを MAX_FRAME_SIZE に従って分割し、
     /// 必要に応じて CONTINUATION フレームを使用する。
+    /// CONTINUATION 分割時は `Bytes::slice(range)` で zero-copy にチャンクを切り出す。
     fn send_header_block(
         &mut self,
         stream_id: StreamId,
-        encoded_headers: Vec<u8>,
+        encoded_headers: Bytes,
         end_stream: bool,
     ) -> Result<()> {
         // RFC 7541 Section 4.2: SETTINGS_HEADER_TABLE_SIZE 変更を受信した場合、
@@ -1870,6 +1871,9 @@ impl Connection {
         // ヘッダーブロック間に複数回変化した場合、最小値と最終値の両方を送出する。
         let encoded_headers =
             if let Some((min_size, final_size)) = self.pending_table_size_update.take() {
+                // HPACK エンコーダの API は `&mut Vec<u8>` を取るため、
+                // size update 部分は一旦 `Vec` に書き出して既存の encoded_headers を
+                // 連結した後に `Bytes` へ freeze する。
                 let mut header_block = Vec::new();
                 // 最小値と最終値が異なる場合、最小値を先に送出する
                 if min_size != final_size {
@@ -1880,14 +1884,15 @@ impl Connection {
                 self.hpack_encoder
                     .encode_size_update(&mut header_block, final_size as usize);
                 header_block.extend_from_slice(&encoded_headers);
-                header_block
+                Bytes::from(header_block)
             } else {
                 encoded_headers
             };
 
         let max_frame_size = self.remote_settings.max_frame_size as usize;
+        let total_len = encoded_headers.len();
 
-        if encoded_headers.len() <= max_frame_size {
+        if total_len <= max_frame_size {
             // 単一の HEADERS フレームで送信可能
             let headers_frame = HeadersFrame::new(stream_id, encoded_headers)
                 .with_end_stream(end_stream)
@@ -1895,25 +1900,23 @@ impl Connection {
             self.send_frame(&Frame::Headers(headers_frame))?;
         } else {
             // HEADERS + CONTINUATION に分割
-            let mut remaining = &encoded_headers[..];
-
             // 最初の HEADERS フレーム
-            let first_chunk = &remaining[..max_frame_size];
-            remaining = &remaining[max_frame_size..];
-            let headers_frame = HeadersFrame::new(stream_id, first_chunk.to_vec())
+            let first_chunk = encoded_headers.slice(..max_frame_size);
+            let headers_frame = HeadersFrame::new(stream_id, first_chunk)
                 .with_end_stream(end_stream)
                 .with_end_headers(false);
             self.send_frame(&Frame::Headers(headers_frame))?;
 
             // CONTINUATION フレーム
-            while !remaining.is_empty() {
-                let chunk_size = remaining.len().min(max_frame_size);
-                let chunk = &remaining[..chunk_size];
-                remaining = &remaining[chunk_size..];
-                let is_last = remaining.is_empty();
+            let mut offset = max_frame_size;
+            while offset < total_len {
+                let chunk_end = (offset + max_frame_size).min(total_len);
+                let chunk = encoded_headers.slice(offset..chunk_end);
+                let is_last = chunk_end == total_len;
                 let continuation_frame =
-                    ContinuationFrame::new(stream_id, chunk.to_vec()).with_end_headers(is_last);
+                    ContinuationFrame::new(stream_id, chunk).with_end_headers(is_last);
                 self.send_frame(&Frame::Continuation(continuation_frame))?;
+                offset = chunk_end;
             }
         }
         Ok(())

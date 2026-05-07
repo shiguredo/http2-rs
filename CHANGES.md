@@ -24,7 +24,11 @@
   - @voluntas
 - [CHANGE] `shiguredo_http2::stream::SendBuffer` / `RecvBuffer` の内部を `BytesMut` 化し、`pop()` / `take()` の戻り値を `bytes::Bytes` に変更する (relay 配信のホットパスで `split_to(n).freeze()` による zero-copy)
   - @voluntas
+- [CHANGE] `shiguredo_http2::Connection::send_header_block` の引数を `Vec<u8>` から `bytes::Bytes` に変更し、CONTINUATION 分割時のチャンク切り出しを `Bytes::slice(range)` (zero-copy) に変更する
+  - @voluntas
 - [CHANGE] `tokio-http2` の DATA フレーム送出 API (`Connection::send_data`, `Connection::send_goaway`, `ServerConnection::send_data`, `ClientConnection::send_data`) と WebTransport ストリーム / DATAGRAM API (`WtBidiStream::send` / `recv`, `WtUniSendStream::send`, `WtUniRecvStream::recv`, `WtServerSession::send_datagram` / `recv_datagram`) を `bytes::Bytes` ベースに変更する
+  - @voluntas
+- [CHANGE] `shiguredo_http2::webtransport::varint::encode_to_vec` を削除する (テスト内のみで使われていたデッドコード)
   - @voluntas
 - [ADD] `shiguredo_http2` の `Settings` に WebTransport 関連 SETTINGS (`0x2b61`〜`0x2b66`) を統合する
   - @voluntas
