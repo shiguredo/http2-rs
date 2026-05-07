@@ -5,6 +5,7 @@
 - Reopened: 2026-05-07 (HPACK ヘッダーブロック分割経路の抜け漏れ + varint デッドコード)
 - Reopened: 2026-05-07 (README サンプルとテスト 1 箇所が新 API に追従していない)
 - Reopened: 2026-05-07 (空 DATA フレーム生成で `vec![]` が残っていた)
+- Completed: 2026-05-07
 - Model: Opus 4.7
 
 ## 再 Reopen 理由 (4 回目)
@@ -326,3 +327,7 @@ HPACK 静的テーブル (61 エントリ) は `'static [u8]` の文字列リテ
 - L1638 の型注釈を `&(StreamId, bytes::Bytes)` に追従、`s.as_slice()` を `&s[..]` に変更
 
 `HeaderField.value` は既に `Bytes` なので、テスト内でも `Bytes::clone()` で済ませることで再アロケーションを排除した
+
+## 解決方法 (reopen 4 回目の追加分)
+
+`Connection::send_data` ループ末尾の RFC 9113 Section 6.9 に従う空 DATA + END_STREAM 送出 (src/connection/mod.rs:636) で残っていた `DataFrame::new(stream_id, vec![])` を `DataFrame::new(stream_id, Bytes::new())` に置き換えた。`Vec::new()` から `Bytes::from(Vec)` への中間変換を排除し、空 `Bytes` を直接生成する。本番コード (src/) で `Bytes` 受け API に `vec![]` を渡している箇所はこの 1 箇所のみで、grep で再確認済み。
