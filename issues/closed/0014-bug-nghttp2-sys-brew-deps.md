@@ -1,6 +1,7 @@
 # nghttp2-sys のビルドが brew の libngtcp2 等を参照してしまう
 
 - Created: 2026-05-07
+- Completed: 2026-05-07
 - Model: Opus 4.7
 
 ## 概要
@@ -53,3 +54,15 @@ CMake Error at cmake/FindLibngtcp2.cmake:21 (file):
 - Homebrew に `libngtcp2` が入った macOS 環境でも `cargo clippy --workspace` が通る
 - `cargo build --workspace` が通る
 - `cargo test --workspace` が通る
+
+## 解決方法
+
+`crates/nghttp2-sys/build.rs` の `cmake::Config` に以下の `CMAKE_DISABLE_FIND_PACKAGE_*` フラグを追加し、Homebrew 等のシステム側ライブラリを暗黙に拾わないようにした:
+
+- `Libngtcp2`, `Libngtcp2_crypto_quictls`, `Libngtcp2_crypto_libressl`, `Libngtcp2_crypto_wolfssl`
+- `Libnghttp3`
+- `Libev`, `Libevent`, `Libcares`
+- `Jansson`, `Jemalloc`, `Systemd`
+- `Libbrotlienc`, `Libbrotlidec`
+
+`ENABLE_LIB_ONLY=ON` のもとではいずれも不要であり、find_package を抑止しても本体ライブラリのビルドには影響しない。Homebrew に `libngtcp2 1.20.0` が入った環境で `cargo clippy --workspace` が通ることを確認した。
