@@ -3,6 +3,7 @@
 - Created: 2026-05-07
 - Reopened: 2026-05-07 (送信側 encoder/output_buffer/stream buffer の抜け漏れ)
 - Reopened: 2026-05-07 (HPACK ヘッダーブロック分割経路の抜け漏れ + varint デッドコード)
+- Completed: 2026-05-07
 - Model: Opus 4.7
 
 ## 再 Reopen 理由 (2 回目)
@@ -274,3 +275,24 @@ HPACK 静的テーブル (61 エントリ) は `'static [u8]` の文字列リテ
 - 送信側 Bytes 化により `cargo test --workspace` (全クレート) 全 pass
 - `cargo clippy --workspace` pass
 - `cargo fmt --check` pass
+
+## 解決方法 (reopen 2 回目の追加分)
+
+レビューで指摘された HPACK ヘッダーブロック送信経路の抜け漏れと、varint のデッドコードを以下の通り対応した:
+
+### `Connection::send_header_block` の Bytes 化
+
+- `send_header_block` の引数を `encoded_headers: Vec<u8>` から `Bytes` に変更
+- 呼び出し側 3 箇所 (`request_with_options` / `respond_with_options` / `send_trailers`) で HPACK エンコーダ出力 `Vec<u8>` を `Bytes::from(...)` で move して送信経路に流す (Vec → Bytes は内部的に zero-copy)
+- CONTINUATION 分割時のチャンク切り出しを `slice(..)` / `slice(start..end)` に変更し、`first_chunk.to_vec()` / `chunk.to_vec()` の alloc + memcpy を排除 (`Bytes::slice` は Arc inc + offset/len の付け替えのみで O(1))
+- テーブルサイズ更新時の merge は HPACK エンコーダ API が `&mut Vec<u8>` を取るため、一旦 `Vec` に書き出してから `Bytes::from()` で freeze する形に整える
+
+### `webtransport::varint::encode_to_vec` の削除
+
+- pub だがテスト内 (`test_encode_to_vec`) でしか呼ばれていない真のデッドコード
+- Capsule encoder/decoder API で完結しており外部利用想定もないため、関数本体とテストの両方を削除
+- `encode(value, &mut buf)` (バッファを呼び出し側が用意するスタイル) は維持
+
+### 補足: 変更しなかった箇所
+
+- `hpack::huffman::encode_to_vec` / `decode`: ユーザー指摘通りエンコーダ側の API は据え置き、デコーダ側は新規生成データのため `alloc` 不可避。`Bytes::from(huffman::decode(...))` の Vec → Bytes 変換は move で zero-copy なので現状で最適
