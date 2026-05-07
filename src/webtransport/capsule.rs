@@ -130,38 +130,23 @@ pub enum Capsule {
     Unknown { capsule_type: u64, data: Bytes },
 }
 
-/// Capsule エンコーダー
-///
-/// 内部バッファに `BytesMut` を使用する。`take()` の戻り値を
-/// `freeze()` で `Bytes` に変換することで、relay 配信時の clone を
-/// Arc inc に置き換えられる。
-#[derive(Debug, Default)]
-pub struct CapsuleEncoder {
-    buffer: BytesMut,
-}
-
-impl CapsuleEncoder {
-    /// 新しいエンコーダーを生成する
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            buffer: BytesMut::new(),
-        }
-    }
-
-    /// Capsule をエンコードする
-    pub fn encode(&mut self, capsule: &Capsule) {
-        match capsule {
-            Capsule::Datagram { data } => {
-                self.encode_header(capsule_type::DATAGRAM, data.len());
-                self.buffer.extend_from_slice(data);
+impl Capsule {
+    /// Capsule を呼び出し側の `BytesMut` に直接エンコードする
+    ///
+    /// 中間バッファを介さないため、`WtSession` の `output_buffer` への
+    /// memcpy は発生しない。
+    pub fn encode(&self, buf: &mut BytesMut) {
+        match self {
+            Self::Datagram { data } => {
+                encode_header(buf, capsule_type::DATAGRAM, data.len());
+                buf.extend_from_slice(data);
             }
-            Capsule::Padding { length } => {
-                self.encode_header(capsule_type::PADDING, *length);
-                let new_len = self.buffer.len() + length;
-                self.buffer.resize(new_len, 0);
+            Self::Padding { length } => {
+                encode_header(buf, capsule_type::PADDING, *length);
+                let new_len = buf.len() + length;
+                buf.resize(new_len, 0);
             }
-            Capsule::WtResetStream {
+            Self::WtResetStream {
                 stream_id,
                 error_code,
                 reliable_size,
@@ -169,137 +154,116 @@ impl CapsuleEncoder {
                 let payload_len = varint::encoded_len(*stream_id)
                     + varint::encoded_len(*error_code)
                     + varint::encoded_len(*reliable_size);
-                self.encode_header(capsule_type::WT_RESET_STREAM, payload_len);
-                self.encode_varint(*stream_id);
-                self.encode_varint(*error_code);
-                self.encode_varint(*reliable_size);
+                encode_header(buf, capsule_type::WT_RESET_STREAM, payload_len);
+                encode_varint(buf, *stream_id);
+                encode_varint(buf, *error_code);
+                encode_varint(buf, *reliable_size);
             }
-            Capsule::WtStopSending {
+            Self::WtStopSending {
                 stream_id,
                 error_code,
             } => {
                 let payload_len =
                     varint::encoded_len(*stream_id) + varint::encoded_len(*error_code);
-                self.encode_header(capsule_type::WT_STOP_SENDING, payload_len);
-                self.encode_varint(*stream_id);
-                self.encode_varint(*error_code);
+                encode_header(buf, capsule_type::WT_STOP_SENDING, payload_len);
+                encode_varint(buf, *stream_id);
+                encode_varint(buf, *error_code);
             }
-            Capsule::WtStream {
+            Self::WtStream {
                 stream_id,
                 data,
                 fin,
             } => {
-                let capsule_type = if *fin {
+                let ty = if *fin {
                     capsule_type::WT_STREAM_FIN
                 } else {
                     capsule_type::WT_STREAM
                 };
                 let payload_len = varint::encoded_len(*stream_id) + data.len();
-                self.encode_header(capsule_type, payload_len);
-                self.encode_varint(*stream_id);
-                self.buffer.extend_from_slice(data);
+                encode_header(buf, ty, payload_len);
+                encode_varint(buf, *stream_id);
+                buf.extend_from_slice(data);
             }
-            Capsule::WtMaxData { maximum } => {
+            Self::WtMaxData { maximum } => {
                 let payload_len = varint::encoded_len(*maximum);
-                self.encode_header(capsule_type::WT_MAX_DATA, payload_len);
-                self.encode_varint(*maximum);
+                encode_header(buf, capsule_type::WT_MAX_DATA, payload_len);
+                encode_varint(buf, *maximum);
             }
-            Capsule::WtMaxStreamData { stream_id, maximum } => {
+            Self::WtMaxStreamData { stream_id, maximum } => {
                 let payload_len = varint::encoded_len(*stream_id) + varint::encoded_len(*maximum);
-                self.encode_header(capsule_type::WT_MAX_STREAM_DATA, payload_len);
-                self.encode_varint(*stream_id);
-                self.encode_varint(*maximum);
+                encode_header(buf, capsule_type::WT_MAX_STREAM_DATA, payload_len);
+                encode_varint(buf, *stream_id);
+                encode_varint(buf, *maximum);
             }
-            Capsule::WtMaxStreams {
+            Self::WtMaxStreams {
                 maximum,
                 bidirectional,
             } => {
-                let capsule_type = if *bidirectional {
+                let ty = if *bidirectional {
                     capsule_type::WT_MAX_STREAMS_BIDI
                 } else {
                     capsule_type::WT_MAX_STREAMS_UNI
                 };
                 let payload_len = varint::encoded_len(*maximum);
-                self.encode_header(capsule_type, payload_len);
-                self.encode_varint(*maximum);
+                encode_header(buf, ty, payload_len);
+                encode_varint(buf, *maximum);
             }
-            Capsule::WtDataBlocked { maximum } => {
+            Self::WtDataBlocked { maximum } => {
                 let payload_len = varint::encoded_len(*maximum);
-                self.encode_header(capsule_type::WT_DATA_BLOCKED, payload_len);
-                self.encode_varint(*maximum);
+                encode_header(buf, capsule_type::WT_DATA_BLOCKED, payload_len);
+                encode_varint(buf, *maximum);
             }
-            Capsule::WtStreamDataBlocked { stream_id, maximum } => {
+            Self::WtStreamDataBlocked { stream_id, maximum } => {
                 let payload_len = varint::encoded_len(*stream_id) + varint::encoded_len(*maximum);
-                self.encode_header(capsule_type::WT_STREAM_DATA_BLOCKED, payload_len);
-                self.encode_varint(*stream_id);
-                self.encode_varint(*maximum);
+                encode_header(buf, capsule_type::WT_STREAM_DATA_BLOCKED, payload_len);
+                encode_varint(buf, *stream_id);
+                encode_varint(buf, *maximum);
             }
-            Capsule::WtStreamsBlocked {
+            Self::WtStreamsBlocked {
                 maximum,
                 bidirectional,
             } => {
-                let capsule_type = if *bidirectional {
+                let ty = if *bidirectional {
                     capsule_type::WT_STREAMS_BLOCKED_BIDI
                 } else {
                     capsule_type::WT_STREAMS_BLOCKED_UNI
                 };
                 let payload_len = varint::encoded_len(*maximum);
-                self.encode_header(capsule_type, payload_len);
-                self.encode_varint(*maximum);
+                encode_header(buf, ty, payload_len);
+                encode_varint(buf, *maximum);
             }
-            Capsule::WtCloseSession { error_code, reason } => {
+            Self::WtCloseSession { error_code, reason } => {
                 // reason は最大 1024 バイト
                 let reason_bytes = reason.as_bytes();
                 let reason_len = reason_bytes.len().min(MAX_CLOSE_REASON_LEN);
                 let payload_len = 4 + reason_len; // 32-bit error code + reason
-                self.encode_header(capsule_type::WT_CLOSE_SESSION, payload_len);
-                self.buffer.extend_from_slice(&error_code.to_be_bytes());
-                self.buffer.extend_from_slice(&reason_bytes[..reason_len]);
+                encode_header(buf, capsule_type::WT_CLOSE_SESSION, payload_len);
+                buf.extend_from_slice(&error_code.to_be_bytes());
+                buf.extend_from_slice(&reason_bytes[..reason_len]);
             }
-            Capsule::WtDrainSession => {
-                self.encode_header(capsule_type::WT_DRAIN_SESSION, 0);
+            Self::WtDrainSession => {
+                encode_header(buf, capsule_type::WT_DRAIN_SESSION, 0);
             }
-            Capsule::Unknown { capsule_type, data } => {
-                self.encode_header(*capsule_type, data.len());
-                self.buffer.extend_from_slice(data);
+            Self::Unknown { capsule_type, data } => {
+                encode_header(buf, *capsule_type, data.len());
+                buf.extend_from_slice(data);
             }
         }
     }
+}
 
-    /// ヘッダー (Type + Length) をエンコードする
-    fn encode_header(&mut self, capsule_type: u64, length: usize) {
-        self.encode_varint(capsule_type);
-        self.encode_varint(length as u64);
-    }
+/// ヘッダー (Type + Length) を `BytesMut` に書き込む
+fn encode_header(buf: &mut BytesMut, capsule_type: u64, length: usize) {
+    encode_varint(buf, capsule_type);
+    encode_varint(buf, length as u64);
+}
 
-    /// 可変長整数をエンコードする
-    fn encode_varint(&mut self, value: u64) {
-        let len = varint::encoded_len(value);
-        let start = self.buffer.len();
-        self.buffer.resize(start + len, 0);
-        varint::encode(value, &mut self.buffer[start..])
-            .expect("buffer is pre-sized to encoded_len");
-    }
-
-    /// バッファを取得してクリアする
-    ///
-    /// 戻り値の `Bytes` は内部 `BytesMut` を `freeze` したもので、
-    /// 後続の `clone()` は Arc inc になる。
-    pub fn take(&mut self) -> Bytes {
-        let taken = core::mem::take(&mut self.buffer);
-        taken.freeze()
-    }
-
-    /// バッファの参照を取得する
-    #[must_use]
-    pub fn buffer(&self) -> &[u8] {
-        &self.buffer
-    }
-
-    /// バッファをクリアする
-    pub fn clear(&mut self) {
-        self.buffer.clear();
-    }
+/// 可変長整数を `BytesMut` に書き込む
+fn encode_varint(buf: &mut BytesMut, value: u64) {
+    let len = varint::encoded_len(value);
+    let start = buf.len();
+    buf.resize(start + len, 0);
+    varint::encode(value, &mut buf[start..]).expect("buffer is pre-sized to encoded_len");
 }
 
 /// Capsule デコーダー (ストリーミング対応)
@@ -622,120 +586,98 @@ impl CapsuleDecoder {
 mod tests {
     use super::*;
 
+    /// Capsule をエンコードして `Bytes` に固める test helper
+    fn encode_to_bytes(capsule: &Capsule) -> Bytes {
+        let mut buf = BytesMut::new();
+        capsule.encode(&mut buf);
+        buf.freeze()
+    }
+
     #[test]
     fn test_encode_decode_datagram() {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::Datagram {
-            data: bytes::Bytes::from_static(b"hello"),
+            data: Bytes::from_static(b"hello"),
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
     }
 
     #[test]
     fn test_encode_decode_wt_stream() {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtStream {
             stream_id: 4,
-            data: bytes::Bytes::from_static(b"test data"),
+            data: Bytes::from_static(b"test data"),
             fin: false,
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
     }
 
     #[test]
     fn test_encode_decode_wt_stream_fin() {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtStream {
             stream_id: 8,
-            data: bytes::Bytes::from_static(b"final data"),
+            data: Bytes::from_static(b"final data"),
             fin: true,
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
     }
 
     #[test]
     fn test_encode_decode_wt_reset_stream() {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtResetStream {
             stream_id: 4,
             error_code: 42,
             reliable_size: 1000,
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
     }
 
     #[test]
     fn test_encode_decode_wt_stop_sending() {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtStopSending {
             stream_id: 8,
             error_code: 99,
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
     }
 
     #[test]
     fn test_encode_decode_wt_max_data() {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtMaxData { maximum: 1_000_000 };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
     }
 
     #[test]
     fn test_encode_decode_wt_max_stream_data() {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtMaxStreamData {
             stream_id: 12,
             maximum: 500_000,
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
     }
 
     #[test]
     fn test_encode_decode_wt_max_streams() {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
 
         // Bidirectional
@@ -743,65 +685,47 @@ mod tests {
             maximum: 100,
             bidirectional: true,
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
 
         // Unidirectional
-        encoder.clear();
         decoder.clear();
-
         let capsule = Capsule::WtMaxStreams {
             maximum: 50,
             bidirectional: false,
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
     }
 
     #[test]
     fn test_encode_decode_wt_close_session() {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtCloseSession {
             error_code: 0,
             reason: "normal close".to_string(),
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
     }
 
     #[test]
     fn test_encode_decode_wt_drain_session() {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtDrainSession;
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
     }
 
     #[test]
     fn test_encode_decode_padding() {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::Padding { length: 100 };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
     }
@@ -823,20 +747,19 @@ mod tests {
 
     #[test]
     fn test_decode_multiple_capsules() {
-        let mut encoder = CapsuleEncoder::new();
+        let mut buf = BytesMut::new();
         let mut decoder = CapsuleDecoder::new();
 
         let capsule1 = Capsule::Datagram {
-            data: bytes::Bytes::from_static(b"first"),
+            data: Bytes::from_static(b"first"),
         };
         let capsule2 = Capsule::Datagram {
-            data: bytes::Bytes::from_static(b"second"),
+            data: Bytes::from_static(b"second"),
         };
 
-        encoder.encode(&capsule1);
-        encoder.encode(&capsule2);
-
-        decoder.feed(encoder.buffer());
+        capsule1.encode(&mut buf);
+        capsule2.encode(&mut buf);
+        decoder.feed(&buf);
 
         let decoded1 = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule1, decoded1);
@@ -849,53 +772,39 @@ mod tests {
 
     #[test]
     fn test_decode_unknown_capsule_type() {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
-        // 未知の Capsule タイプ
         let capsule = Capsule::Unknown {
             capsule_type: 0xFFFF,
-            data: bytes::Bytes::from_static(b"unknown data"),
+            data: Bytes::from_static(b"unknown data"),
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
     }
 
     #[test]
     fn test_decode_wt_data_blocked() {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtDataBlocked { maximum: 65536 };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
     }
 
     #[test]
     fn test_decode_wt_stream_data_blocked() {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtStreamDataBlocked {
             stream_id: 4,
             maximum: 32768,
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
     }
 
     #[test]
     fn test_decode_wt_streams_blocked() {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
 
         // Bidirectional
@@ -903,23 +812,17 @@ mod tests {
             maximum: 10,
             bidirectional: true,
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
 
         // Unidirectional
-        encoder.clear();
         decoder.clear();
-
         let capsule = Capsule::WtStreamsBlocked {
             maximum: 5,
             bidirectional: false,
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_to_bytes(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         assert_eq!(capsule, decoded);
     }

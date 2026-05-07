@@ -26,7 +26,7 @@ use bytes::{Bytes, BytesMut};
 
 use crate::connection::Role;
 
-pub use capsule::{Capsule, CapsuleDecoder, CapsuleEncoder, capsule_type};
+pub use capsule::{Capsule, CapsuleDecoder, capsule_type};
 pub use error::{WtError, WtErrorKind, WtResult};
 pub use flow_control::WtFlowControl;
 pub use stream::{RecvState, SendState, WtStream, WtStreamId};
@@ -131,8 +131,6 @@ pub struct WtSession {
     flow_control: WtFlowControl,
     /// Capsule デコーダー
     capsule_decoder: CapsuleDecoder,
-    /// Capsule エンコーダー
-    capsule_encoder: CapsuleEncoder,
     /// 出力バッファ
     ///
     /// `BytesMut` を使い、`poll_output` で `split().freeze()` により
@@ -175,7 +173,6 @@ impl WtSession {
             streams: HashMap::new(),
             flow_control,
             capsule_decoder: CapsuleDecoder::new(),
-            capsule_encoder: CapsuleEncoder::new(),
             output_buffer: BytesMut::new(),
             events: VecDeque::new(),
             next_bidi_stream_id: stream::stream_id::first(is_client, true),
@@ -356,9 +353,7 @@ impl WtSession {
             data,
             fin,
         };
-        self.capsule_encoder.encode(&capsule);
-        self.output_buffer
-            .extend_from_slice(&self.capsule_encoder.take());
+        capsule.encode(&mut self.output_buffer);
 
         // 送信状態を更新
         stream.send_data(data_len, fin)?;
@@ -392,9 +387,7 @@ impl WtSession {
             error_code,
             reliable_size,
         };
-        self.capsule_encoder.encode(&capsule);
-        self.output_buffer
-            .extend_from_slice(&self.capsule_encoder.take());
+        capsule.encode(&mut self.output_buffer);
 
         // 送信状態を更新
         stream.send_reset();
@@ -422,9 +415,7 @@ impl WtSession {
             stream_id,
             error_code,
         };
-        self.capsule_encoder.encode(&capsule);
-        self.output_buffer
-            .extend_from_slice(&self.capsule_encoder.take());
+        capsule.encode(&mut self.output_buffer);
 
         // 送信済みフラグを設定
         stream.set_stop_sending_sent();
@@ -448,9 +439,7 @@ impl WtSession {
 
         // DATAGRAM Capsule をエンコード
         let capsule = Capsule::Datagram { data };
-        self.capsule_encoder.encode(&capsule);
-        self.output_buffer
-            .extend_from_slice(&self.capsule_encoder.take());
+        capsule.encode(&mut self.output_buffer);
 
         Ok(())
     }
@@ -466,9 +455,7 @@ impl WtSession {
             error_code,
             reason: reason.to_string(),
         };
-        self.capsule_encoder.encode(&capsule);
-        self.output_buffer
-            .extend_from_slice(&self.capsule_encoder.take());
+        capsule.encode(&mut self.output_buffer);
 
         self.state = WtSessionState::Closed;
 
@@ -481,9 +468,7 @@ impl WtSession {
     /// 単調増加でなければならない (現在値より小さい値を指定すると `flow_control_error`)。
     pub fn send_max_data(&mut self, maximum: u64) -> WtResult<()> {
         let capsule = Capsule::WtMaxData { maximum };
-        self.capsule_encoder.encode(&capsule);
-        self.output_buffer
-            .extend_from_slice(&self.capsule_encoder.take());
+        capsule.encode(&mut self.output_buffer);
         Ok(())
     }
 
@@ -492,9 +477,7 @@ impl WtSession {
     /// draft-ietf-webtrans-http2-14 Section 6.6: 指定ストリームの受信可能バイト数を通知する。
     pub fn send_max_stream_data(&mut self, stream_id: WtStreamId, maximum: u64) -> WtResult<()> {
         let capsule = Capsule::WtMaxStreamData { stream_id, maximum };
-        self.capsule_encoder.encode(&capsule);
-        self.output_buffer
-            .extend_from_slice(&self.capsule_encoder.take());
+        capsule.encode(&mut self.output_buffer);
         Ok(())
     }
 
@@ -506,9 +489,7 @@ impl WtSession {
             maximum,
             bidirectional,
         };
-        self.capsule_encoder.encode(&capsule);
-        self.output_buffer
-            .extend_from_slice(&self.capsule_encoder.take());
+        capsule.encode(&mut self.output_buffer);
         Ok(())
     }
 
@@ -579,9 +560,7 @@ impl WtSession {
 
         // WT_DRAIN_SESSION Capsule をエンコード
         let capsule = Capsule::WtDrainSession;
-        self.capsule_encoder.encode(&capsule);
-        self.output_buffer
-            .extend_from_slice(&self.capsule_encoder.take());
+        capsule.encode(&mut self.output_buffer);
 
         self.state = WtSessionState::Draining;
 

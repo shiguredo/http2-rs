@@ -2,10 +2,11 @@
 //!
 //! Capsule Protocol と WtSession の状態遷移をテストする。
 
+use bytes::{Bytes, BytesMut};
 use proptest::prelude::*;
 use shiguredo_http2::webtransport::{
-    Capsule, CapsuleDecoder, CapsuleEncoder, MAX_VALUE, WtConfig, WtSession, WtSessionState,
-    WtStream, encoded_len, varint_decode, varint_encode,
+    Capsule, CapsuleDecoder, MAX_VALUE, WtConfig, WtSession, WtSessionState, WtStream, encoded_len,
+    varint_decode, varint_encode,
 };
 
 /// varint の有効な値を生成する
@@ -16,6 +17,13 @@ fn valid_varint_value() -> impl Strategy<Value = u64> {
 /// 小さい varint 値 (1-2 バイト)
 fn small_varint_value() -> impl Strategy<Value = u64> {
     0..=16383u64
+}
+
+/// Capsule をエンコードして `Bytes` に固める test helper
+fn encode_capsule(capsule: &Capsule) -> Bytes {
+    let mut buf = BytesMut::new();
+    capsule.encode(&mut buf);
+    buf.freeze()
 }
 
 proptest! {
@@ -51,15 +59,11 @@ proptest! {
     /// DATAGRAM Capsule 往復テスト
     #[test]
     fn prop_capsule_datagram_roundtrip(data in prop::collection::vec(any::<u8>(), 0..1000)) {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::Datagram {
-            data: bytes::Bytes::from(data.clone()),
+            data: Bytes::from(data),
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_capsule(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         prop_assert_eq!(capsule, decoded);
     }
@@ -71,17 +75,13 @@ proptest! {
         data in prop::collection::vec(any::<u8>(), 0..500),
         fin in any::<bool>(),
     ) {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtStream {
             stream_id,
-            data: data.clone().into(),
+            data: data.into(),
             fin,
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_capsule(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         prop_assert_eq!(capsule, decoded);
     }
@@ -93,17 +93,13 @@ proptest! {
         error_code in small_varint_value(),
         reliable_size in small_varint_value(),
     ) {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtResetStream {
             stream_id,
             error_code,
             reliable_size,
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_capsule(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         prop_assert_eq!(capsule, decoded);
     }
@@ -114,16 +110,12 @@ proptest! {
         stream_id in small_varint_value(),
         error_code in small_varint_value(),
     ) {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtStopSending {
             stream_id,
             error_code,
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_capsule(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         prop_assert_eq!(capsule, decoded);
     }
@@ -131,13 +123,9 @@ proptest! {
     /// WT_MAX_DATA Capsule 往復テスト
     #[test]
     fn prop_capsule_wt_max_data_roundtrip(maximum in small_varint_value()) {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtMaxData { maximum };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_capsule(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         prop_assert_eq!(capsule, decoded);
     }
@@ -148,13 +136,9 @@ proptest! {
         stream_id in small_varint_value(),
         maximum in small_varint_value(),
     ) {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtMaxStreamData { stream_id, maximum };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_capsule(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         prop_assert_eq!(capsule, decoded);
     }
@@ -165,13 +149,9 @@ proptest! {
         maximum in small_varint_value(),
         bidirectional in any::<bool>(),
     ) {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtMaxStreams { maximum, bidirectional };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_capsule(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         prop_assert_eq!(capsule, decoded);
     }
@@ -182,16 +162,12 @@ proptest! {
         error_code in any::<u32>(),
         reason in "[a-zA-Z0-9 ]{0,100}",
     ) {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtCloseSession {
             error_code,
             reason: reason.clone(),
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_capsule(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         prop_assert_eq!(capsule, decoded);
     }
@@ -202,18 +178,18 @@ proptest! {
         count in 1..10usize,
         data_sizes in prop::collection::vec(0..100usize, 1..10),
     ) {
-        let mut encoder = CapsuleEncoder::new();
+        let mut buf = BytesMut::new();
         let mut decoder = CapsuleDecoder::new();
 
         let mut capsules: Vec<Capsule> = Vec::new();
         for (i, &size) in data_sizes.iter().enumerate().take(count) {
-            let data = bytes::Bytes::from(vec![i as u8; size]);
+            let data = Bytes::from(vec![i as u8; size]);
             let capsule = Capsule::Datagram { data };
-            encoder.encode(&capsule);
+            capsule.encode(&mut buf);
             capsules.push(capsule);
         }
 
-        decoder.feed(encoder.buffer());
+        decoder.feed(&buf);
 
         for expected in &capsules {
             let decoded = decoder.decode().unwrap().unwrap();
@@ -243,16 +219,12 @@ proptest! {
         capsule_type_value in 0x1000000u64..0x2000000u64, // 未知のタイプ
         data in prop::collection::vec(any::<u8>(), 0..100),
     ) {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::Unknown {
             capsule_type: capsule_type_value,
-            data: data.clone().into(),
+            data: data.into(),
         };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_capsule(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         prop_assert_eq!(capsule, decoded);
     }
@@ -260,13 +232,9 @@ proptest! {
     /// PADDING Capsule 往復テスト
     #[test]
     fn prop_capsule_padding_roundtrip(length in 0..1000usize) {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::Padding { length };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_capsule(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         prop_assert_eq!(capsule, decoded);
     }
@@ -274,13 +242,9 @@ proptest! {
     /// WT_DATA_BLOCKED Capsule 往復テスト
     #[test]
     fn prop_capsule_wt_data_blocked_roundtrip(maximum in small_varint_value()) {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtDataBlocked { maximum };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_capsule(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         prop_assert_eq!(capsule, decoded);
     }
@@ -291,13 +255,9 @@ proptest! {
         stream_id in small_varint_value(),
         maximum in small_varint_value(),
     ) {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtStreamDataBlocked { stream_id, maximum };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_capsule(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         prop_assert_eq!(capsule, decoded);
     }
@@ -308,13 +268,9 @@ proptest! {
         maximum in small_varint_value(),
         bidirectional in any::<bool>(),
     ) {
-        let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
-
         let capsule = Capsule::WtStreamsBlocked { maximum, bidirectional };
-        encoder.encode(&capsule);
-
-        decoder.feed(encoder.buffer());
+        decoder.feed(&encode_capsule(&capsule));
         let decoded = decoder.decode().unwrap().unwrap();
         prop_assert_eq!(capsule, decoded);
     }
@@ -430,7 +386,7 @@ enum SessionOp {
     /// 単方向ストリームを開く
     OpenUniStream,
     /// データグラム送信
-    SendDatagram(bytes::Bytes),
+    SendDatagram(Bytes),
     /// WT_CLOSE_SESSION Capsule 受信
     RecvCloseSession,
     /// WT_DRAIN_SESSION Capsule 受信
@@ -446,7 +402,7 @@ fn session_op() -> impl Strategy<Value = SessionOp> {
         Just(SessionOp::OpenBidiStream),
         Just(SessionOp::OpenUniStream),
         prop::collection::vec(any::<u8>(), 0..50)
-            .prop_map(|v| SessionOp::SendDatagram(bytes::Bytes::from(v))),
+            .prop_map(|v| SessionOp::SendDatagram(Bytes::from(v))),
         Just(SessionOp::RecvCloseSession),
         Just(SessionOp::RecvDrainSession),
     ]
@@ -462,18 +418,16 @@ fn apply_session_op(session: &mut WtSession, op: &SessionOp) -> Result<(), ()> {
         SessionOp::OpenUniStream => session.open_uni_stream().map(|_| ()).map_err(|_| ()),
         SessionOp::SendDatagram(data) => session.send_datagram(data.clone()).map_err(|_| ()),
         SessionOp::RecvCloseSession => {
-            let mut encoder = CapsuleEncoder::new();
-            encoder.encode(&Capsule::WtCloseSession {
+            let bytes = encode_capsule(&Capsule::WtCloseSession {
                 error_code: 0,
                 reason: "test".to_string(),
             });
-            session.feed(encoder.buffer()).map_err(|_| ())?;
+            session.feed(&bytes).map_err(|_| ())?;
             session.process().map_err(|_| ())
         }
         SessionOp::RecvDrainSession => {
-            let mut encoder = CapsuleEncoder::new();
-            encoder.encode(&Capsule::WtDrainSession);
-            session.feed(encoder.buffer()).map_err(|_| ())?;
+            let bytes = encode_capsule(&Capsule::WtDrainSession);
+            session.feed(&bytes).map_err(|_| ())?;
             session.process().map_err(|_| ())
         }
     }
@@ -694,14 +648,12 @@ proptest! {
     ) {
         let original = Capsule::WtStream {
             stream_id,
-            data: data.clone().into(),
+            data: data.into(),
             fin,
         };
 
         // エンコード
-        let mut encoder = CapsuleEncoder::new();
-        encoder.encode(&original);
-        let encoded1 = encoder.buffer().to_vec();
+        let encoded1 = encode_capsule(&original);
 
         // デコード
         let mut decoder = CapsuleDecoder::new();
@@ -709,12 +661,10 @@ proptest! {
         let decoded = decoder.decode().unwrap().unwrap();
 
         // 再エンコード
-        let mut encoder2 = CapsuleEncoder::new();
-        encoder2.encode(&decoded);
-        let encoded2 = encoder2.buffer().to_vec();
+        let encoded2 = encode_capsule(&decoded);
 
         // 不変条件: encode(decode(encode(x))) == encode(x)
-        prop_assert_eq!(encoded1, encoded2);
+        prop_assert_eq!(&encoded1, &encoded2);
         prop_assert_eq!(original, decoded);
     }
 }

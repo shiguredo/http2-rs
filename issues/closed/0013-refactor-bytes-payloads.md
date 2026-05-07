@@ -5,8 +5,24 @@
 - Reopened: 2026-05-07 (HPACK ヘッダーブロック分割経路の抜け漏れ + varint デッドコード)
 - Reopened: 2026-05-07 (README サンプルとテスト 1 箇所が新 API に追従していない)
 - Reopened: 2026-05-07 (空 DATA フレーム生成で `vec![]` が残っていた)
+- Reopened: 2026-05-07 (encoder 型に出力先バッファ重複と memcpy 経路あり)
 - Completed: 2026-05-07
 - Model: Opus 4.7
+
+## 再 Reopen 理由 (5 回目)
+
+`FrameEncoder` / `CapsuleEncoder` が独立した内部 `BytesMut` を持ち、`encode()` 後に `output_buffer.extend_from_slice(encoder.buffer())` (または `&encoder.take()`) で memcpy する経路が残っていた。relay 1:N のホットパスで送信ごとに必ず memcpy が発生し、設計矛盾。
+
+検討の結果、両 encoder は本質的に state を持たない (encoder 内 `BytesMut` は単なる出力先キャッシュ) ため、型として残す合理性がない。データ型 (`Frame` / `Capsule`) に `encode(&self, buf: &mut BytesMut)` メソッドを生やし、呼び出し側の `output_buffer` に直接書く形に変更する。
+
+- `pub struct FrameEncoder` と `pub struct CapsuleEncoder` を削除
+- `Frame::encode(&self, buf: &mut BytesMut) -> Result<()>` を追加
+- `Capsule::encode(&self, buf: &mut BytesMut)` を追加
+- `Connection::frame_encoder` フィールド削除、`send_frame` を `frame.encode(&mut self.output_buffer)` に置換
+- `WtSession::capsule_encoder` フィールド削除、9 箇所の送信パスを `capsule.encode(&mut self.output_buffer)` に置換
+- `encode_frame_to_bytes(&Frame) -> Result<Bytes>` は内部で `Frame::encode` を呼ぶ helper として維持
+
+これにより encoder 経由の memcpy が設計上排除される (中間バッファ自体が存在しない)。`FrameDecoder` / `CapsuleDecoder` がステートフルなのは入力 byte 列がフレーム境界で来る保証がなく内部バッファリングが必須だからで、encoder 側にその制約はない。型のシンメトリーより性質のシンメトリーを優先する。
 
 ## 再 Reopen 理由 (4 回目)
 
@@ -331,3 +347,45 @@ HPACK 静的テーブル (61 エントリ) は `'static [u8]` の文字列リテ
 ## 解決方法 (reopen 4 回目の追加分)
 
 `Connection::send_data` ループ末尾の RFC 9113 Section 6.9 に従う空 DATA + END_STREAM 送出 (src/connection/mod.rs:636) で残っていた `DataFrame::new(stream_id, vec![])` を `DataFrame::new(stream_id, Bytes::new())` に置き換えた。`Vec::new()` から `Bytes::from(Vec)` への中間変換を排除し、空 `Bytes` を直接生成する。本番コード (src/) で `Bytes` 受け API に `vec![]` を渡している箇所はこの 1 箇所のみで、grep で再確認済み。
+
+## 解決方法 (reopen 5 回目の追加分)
+
+`FrameEncoder` / `CapsuleEncoder` 型を削除し、`Frame::encode(&self, buf: &mut BytesMut) -> Result<()>` / `Capsule::encode(&self, buf: &mut BytesMut)` メソッドに置き換えた。encoder の中間バッファを介さず、呼び出し側 (`Connection::output_buffer` / `WtSession::output_buffer`) に直接書き込む。
+
+### `shiguredo_http2` (encoder 型の削除と data 型メソッド化)
+
+- `frame::encoder` モジュールを書き換え
+  - `pub struct FrameEncoder` と `impl FrameEncoder` 一式を削除
+  - `impl Frame { pub fn encode(&self, buf: &mut BytesMut) -> Result<()> }` を追加し、各 variant の encode 実装を private 自由関数 (`encode_data`, `encode_headers` 等) に分離
+  - `put_header(buf: &mut BytesMut, header: &FrameHeader)` を private helper として再構成
+  - 既存の slice 版 `encode_header(&mut [u8], ...)` / `encode_frame(&mut [u8], ...)` は据え置き (低レベル sans-io 用途)
+  - `encode_frame_to_bytes(&Frame) -> Result<Bytes>` は内部で `Frame::encode(&mut BytesMut)` を呼ぶ thin helper に変更
+- `webtransport::capsule` モジュールを書き換え
+  - `pub struct CapsuleEncoder` と `impl CapsuleEncoder` 一式を削除
+  - `impl Capsule { pub fn encode(&self, buf: &mut BytesMut) }` を追加
+  - `encode_header` / `encode_varint` を private 自由関数として再構成
+- `lib.rs` / `frame/mod.rs` から `pub use FrameEncoder` を削除
+- `webtransport/mod.rs` から `pub use capsule::CapsuleEncoder` を削除
+- `Connection::frame_encoder: FrameEncoder` フィールドを削除し、`send_frame` を `frame.encode(&mut self.output_buffer)` の 1 行に置換
+- `WtSession::capsule_encoder: CapsuleEncoder` フィールドを削除し、9 箇所の送信パス (`send_stream_data` / `reset_stream` / `stop_sending` / `send_datagram` / `close` / `send_max_data` / `send_max_stream_data` / `send_max_streams` / `drain`) を `capsule.encode(&mut self.output_buffer)` に置換
+
+### テスト
+
+- `src/webtransport/capsule.rs` 内の `#[cfg(test)] mod tests` を新 API に書き換え (test helper `encode_to_bytes` を導入し、`Capsule::encode` 経由でエンコード)
+- `tests/test_webtransport.rs` を新 API に書き換え (test helper `encode_capsule` を追加)
+- `pbt/tests/prop_webtransport.rs` を全面書き換え (encoder インスタンスを使う 16 箇所すべて新 API ベースに)
+- `pbt/tests/prop_connection.rs` の `encode_frame` helper を `Frame::encode(&mut BytesMut)` ベースに変更
+- `pbt/tests/prop_frame.rs` の 30 箇所超の `FrameEncoder::new()` を `bytes::BytesMut::new()` に置換し、`encoder.encode(&frame)` を `frame.encode(&mut encoder)` に、`encoder.take()` を `encoder.split().freeze()` に機械的変換
+
+### 設計上の効果
+
+- encoder → output_buffer 間の memcpy 経路が設計上消滅 (中間バッファ自体が存在しない)
+- 公開 API surface が `FrameEncoder` / `CapsuleEncoder` の 2 型分減る
+- encoder を stateless 化することで Rust の標準シリアライズ慣用句 (`Display::fmt(&mut Formatter)`, `serde::Serialize::serialize(S)`) と整合
+- `FrameDecoder` / `CapsuleDecoder` がステートフルなのは入力境界に対する内部バッファリングが必須だからで、encoder 側にその制約はない。型のシンメトリーより性質のシンメトリーを優先
+
+### 確認
+
+- `cargo test --workspace` 全 pass
+- `cargo clippy --workspace --all-targets -- -D warnings` pass
+- `cargo fmt --check` pass

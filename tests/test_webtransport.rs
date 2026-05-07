@@ -3,10 +3,18 @@
 //! `#[cfg(test)] mod tests` と PBT でカバーできないエラーパス / 境界値を対象にする。
 //! draft-ietf-webtrans-http2-14 の MUST 要件を固定するのが主目的。
 
+use bytes::BytesMut;
 use shiguredo_http2::webtransport::{
-    Capsule, CapsuleDecoder, CapsuleEncoder, WtConfig, WtEvent, WtSession, WtStreamId,
+    Capsule, CapsuleDecoder, WtConfig, WtEvent, WtSession, WtStreamId,
     stream::stream_id as wt_stream_id,
 };
+
+/// Capsule をエンコードして `bytes::Bytes` に固める test helper
+fn encode_capsule(capsule: &Capsule) -> bytes::Bytes {
+    let mut buf = BytesMut::new();
+    capsule.encode(&mut buf);
+    buf.freeze()
+}
 
 /// 1 つの Capsule をデコードするヘルパー
 fn decode_single_capsule(bytes: &[u8]) -> Capsule {
@@ -85,10 +93,7 @@ fn received_wt_max_data_decrease_errors() {
     let mut session = WtSession::server(config);
     session.initiate().unwrap();
 
-    let mut encoder = CapsuleEncoder::new();
-    encoder.encode(&Capsule::WtMaxData { maximum: 500 });
-    let bytes = encoder.take();
-
+    let bytes = encode_capsule(&Capsule::WtMaxData { maximum: 500 });
     session.feed(&bytes).unwrap();
     let err = session.process().unwrap_err();
     assert_eq!(
@@ -165,13 +170,12 @@ fn getters_return_expected_state() {
 
     // クライアント (peer) 起点の bidi ストリーム (id=0) から `hi` を受信した扱いにする
     let peer_id: WtStreamId = wt_stream_id::first(true, true);
-    let mut encoder = CapsuleEncoder::new();
-    encoder.encode(&Capsule::WtStream {
+    let bytes = encode_capsule(&Capsule::WtStream {
         stream_id: peer_id,
         data: bytes::Bytes::from_static(b"hi"),
         fin: false,
     });
-    session.feed(&encoder.take()).unwrap();
+    session.feed(&bytes).unwrap();
     session.process().unwrap();
 
     // StreamOpened と StreamData の 2 イベントが発火している想定

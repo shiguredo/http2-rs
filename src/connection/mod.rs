@@ -10,9 +10,9 @@ use crate::error::{Error, ErrorCode, Result};
 use crate::event::Event;
 use crate::flow_control::{FlowControl, MAX_WINDOW_SIZE};
 use crate::frame::{
-    CONNECTION_STREAM_ID, ContinuationFrame, DataFrame, Frame, FrameDecoder, FrameEncoder,
-    GoawayFrame, HeadersFrame, PingFrame, PriorityUpdateFrame, RstStreamFrame, SettingsFrame,
-    StreamId, WindowUpdateFrame,
+    CONNECTION_STREAM_ID, ContinuationFrame, DataFrame, Frame, FrameDecoder, GoawayFrame,
+    HeadersFrame, PingFrame, PriorityUpdateFrame, RstStreamFrame, SettingsFrame, StreamId,
+    WindowUpdateFrame,
 };
 use crate::hpack::{Decoder as HpackDecoder, Encoder as HpackEncoder, HeaderField};
 use crate::limits::Limits;
@@ -79,8 +79,6 @@ pub struct Connection {
     hpack_decoder: HpackDecoder,
     /// フレームデコーダー
     frame_decoder: FrameDecoder,
-    /// フレームエンコーダー
-    frame_encoder: FrameEncoder,
     /// 出力バッファ
     ///
     /// `BytesMut` を使い、`poll_output` で `split().freeze()` により
@@ -160,7 +158,6 @@ impl Connection {
             hpack_encoder: HpackEncoder::new(limits.header_table_size as usize),
             hpack_decoder: HpackDecoder::new(limits.header_table_size as usize),
             frame_decoder: FrameDecoder::new(limits.max_frame_size),
-            frame_encoder: FrameEncoder::new(),
             output_buffer: BytesMut::new(),
             events: VecDeque::new(),
             pending_settings_count: 0,
@@ -1933,12 +1930,11 @@ impl Connection {
     }
 
     /// フレームを出力バッファに書き込む
+    ///
+    /// `Frame::encode` で `output_buffer` に直接書き込むため中間バッファ経由の
+    /// memcpy は発生しない。
     fn send_frame(&mut self, frame: &Frame) -> Result<()> {
-        self.frame_encoder.encode(frame)?;
-        self.output_buffer
-            .extend_from_slice(self.frame_encoder.buffer());
-        self.frame_encoder.clear();
-        Ok(())
+        frame.encode(&mut self.output_buffer)
     }
 }
 

@@ -5,8 +5,8 @@
 use proptest::prelude::*;
 use shiguredo_http2::frame::{ContinuationFrame, FrameFlags, FrameHeader, PriorityUpdateFrame};
 use shiguredo_http2::{
-    DataFrame, Frame, FrameDecoder, FrameEncoder, GoawayFrame, HeadersFrame, PingFrame,
-    RstStreamFrame, Setting, SettingsFrame, WindowUpdateFrame,
+    DataFrame, Frame, FrameDecoder, GoawayFrame, HeadersFrame, PingFrame, RstStreamFrame, Setting,
+    SettingsFrame, WindowUpdateFrame,
 };
 
 /// 有効なストリーム ID を生成する（0 以外）
@@ -34,9 +34,9 @@ proptest! {
             pad_length: None,
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
@@ -68,9 +68,9 @@ proptest! {
             pad_length: None,
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
@@ -97,9 +97,9 @@ proptest! {
             error_code,
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
@@ -126,9 +126,9 @@ proptest! {
             },
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
@@ -149,9 +149,9 @@ proptest! {
     ) {
         let frame = Frame::Ping(PingFrame { ack, opaque_data });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
@@ -178,9 +178,9 @@ proptest! {
             debug_data: debug_data.clone().into(),
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
@@ -207,9 +207,9 @@ proptest! {
             window_size_increment,
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
@@ -250,9 +250,9 @@ proptest! {
             header_block_fragment: header_block.clone().into(),
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
@@ -282,9 +282,9 @@ proptest! {
             priority_field_value: priority_field_value.clone().into(),
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
@@ -328,9 +328,9 @@ proptest! {
             payload: payload.clone().into(),
         };
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
@@ -364,9 +364,9 @@ proptest! {
             pad_length: Some(pad_length),
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
@@ -400,9 +400,9 @@ proptest! {
             pad_length: Some(pad_length),
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
@@ -431,7 +431,7 @@ proptest! {
         frame_count in 2..10usize,
         stream_ids in prop::collection::vec(valid_stream_id(), 2..10),
     ) {
-        let mut encoder = FrameEncoder::new();
+        let mut encoder = bytes::BytesMut::new();
 
         // 複数フレームをエンコード
         let frames: Vec<Frame> = stream_ids.iter().take(frame_count).map(|&sid| {
@@ -442,9 +442,9 @@ proptest! {
         }).collect();
 
         for frame in &frames {
-            encoder.encode(frame).unwrap();
+            frame.encode(&mut encoder).unwrap();
         }
-        let encoded = encoder.take();
+        let encoded = encoder.split().freeze();
 
         // 連続デコード
         let mut decoder = FrameDecoder::new(16384);
@@ -488,9 +488,9 @@ proptest! {
             pad_length: None,
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder = FrameDecoder::new(16384);
 
@@ -536,9 +536,9 @@ proptest! {
             settings: settings.clone(),
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
@@ -577,9 +577,9 @@ proptest! {
             pad_length: None,
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder = FrameDecoder::new(max_frame_size);
         decoder.feed(&encoded);
@@ -608,9 +608,9 @@ proptest! {
             pad_length: None,
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         // フレームヘッダー (9 バイト) + ペイロード
         prop_assert_eq!(encoded.len(), 9 + data.len());
@@ -628,9 +628,9 @@ proptest! {
             window_size_increment: 1000,
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         // フレームヘッダーの 5 バイト目 (オフセット 5) の上位ビットは 0
         prop_assert_eq!(encoded[5] & 0x80, 0, "Reserved bit must be 0");
@@ -1150,9 +1150,9 @@ proptest! {
             pad_length,
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         // length フィールドを抽出 (bytes 0-2, big-endian)
         let length_field = (u32::from(encoded[0]) << 16)
@@ -1199,9 +1199,9 @@ proptest! {
         ];
 
         for (frame, expected_type) in test_cases {
-            let mut encoder = FrameEncoder::new();
-            encoder.encode(&frame).unwrap();
-            let encoded = encoder.take();
+            let mut encoder = bytes::BytesMut::new();
+            frame.encode(&mut encoder).unwrap();
+            let encoded = encoder.split().freeze();
 
             // frame_type フィールド (byte 3)
             let frame_type_field = encoded[3];
@@ -1230,13 +1230,13 @@ proptest! {
             pad_length: None,
         });
 
-        let mut encoder1 = FrameEncoder::new();
-        encoder1.encode(&frame).unwrap();
-        let encoded1 = encoder1.take();
+        let mut encoder1 = bytes::BytesMut::new();
+        frame.encode(&mut encoder1).unwrap();
+        let encoded1 = encoder1.split().freeze();
 
-        let mut encoder2 = FrameEncoder::new();
-        encoder2.encode(&frame).unwrap();
-        let encoded2 = encoder2.take();
+        let mut encoder2 = bytes::BytesMut::new();
+        frame.encode(&mut encoder2).unwrap();
+        let encoded2 = encoder2.split().freeze();
 
         prop_assert_eq!(encoded1, encoded2, "encoding same frame twice must produce identical bytes");
     }
@@ -1256,9 +1256,9 @@ proptest! {
             pad_length: None,
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         let mut decoder1 = FrameDecoder::new(16384);
         decoder1.feed(&encoded);
@@ -1281,7 +1281,7 @@ proptest! {
             1..5
         ),
     ) {
-        let mut encoder = FrameEncoder::new();
+        let mut encoder = bytes::BytesMut::new();
 
         for (stream_id, data) in &frames {
             let frame = Frame::Data(DataFrame {
@@ -1290,9 +1290,9 @@ proptest! {
                 data: data.clone().into(),
                 pad_length: None,
             });
-            encoder.encode(&frame).unwrap();
+            frame.encode(&mut encoder).unwrap();
         }
-        let encoded = encoder.take();
+        let encoded = encoder.split().freeze();
         let total_encoded_len = encoded.len();
 
         let mut decoder = FrameDecoder::new(16384);
@@ -1337,17 +1337,17 @@ proptest! {
 
         // 個別にエンコード
         let individual_encodings: Vec<bytes::Bytes> = frames.iter().map(|f| {
-            let mut enc = FrameEncoder::new();
-            enc.encode(f).unwrap();
-            enc.take()
+            let mut enc = bytes::BytesMut::new();
+            f.encode(&mut enc).unwrap();
+            enc.split().freeze()
         }).collect();
 
         // 連結してエンコード
-        let mut combined_encoder = FrameEncoder::new();
+        let mut combined_encoder = bytes::BytesMut::new();
         for frame in &frames {
-            combined_encoder.encode(frame).unwrap();
+            frame.encode(&mut combined_encoder).unwrap();
         }
-        let combined = combined_encoder.take();
+        let combined = combined_encoder.split().freeze();
 
         // 連結結果は個別エンコードの連結と一致
         let concatenated: Vec<u8> = individual_encodings.iter().flat_map(|b| b.iter().copied()).collect();
@@ -1387,9 +1387,9 @@ proptest! {
             pad_length: None,
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         // フラグフィールドを直接検証 (byte 4)
         let flags_byte = encoded[4];
@@ -1428,9 +1428,9 @@ proptest! {
             pad_length: Some(pad_length),
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         // length フィールド
         let length_field = (u32::from(encoded[0]) << 16)
@@ -1475,9 +1475,9 @@ proptest! {
             window_size_increment: 1000,
         });
 
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         // stream_id フィールドを抽出 (bytes 5-8)
         // R ビット (最上位ビット) をマスクして取得
@@ -1513,9 +1513,9 @@ proptest! {
 
         // 正常にデコードできる
         let frame = Frame::Ping(PingFrame { ack: false, opaque_data: [1, 2, 3, 4, 5, 6, 7, 8] });
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
+        let mut encoder = bytes::BytesMut::new();
+        frame.encode(&mut encoder).unwrap();
+        let encoded = encoder.split().freeze();
 
         decoder.feed(&encoded);
         let decoded = decoder.decode().unwrap();

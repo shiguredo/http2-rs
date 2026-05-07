@@ -39,8 +39,8 @@ pub use event::Event;
 pub use flow_control::{FlowControl, MAX_WINDOW_SIZE};
 pub use frame::{
     CONNECTION_STREAM_ID, ContinuationFrame, DataFrame, FRAME_HEADER_SIZE, Frame, FrameDecoder,
-    FrameEncoder, FrameFlags, FrameHeader, FrameType, GoawayFrame, HeadersFrame, PingFrame,
-    PriorityUpdateFrame, RstStreamFrame, SettingsFrame, StreamId, WindowUpdateFrame,
+    FrameFlags, FrameHeader, FrameType, GoawayFrame, HeadersFrame, PingFrame, PriorityUpdateFrame,
+    RstStreamFrame, SettingsFrame, StreamId, WindowUpdateFrame,
 };
 pub use hpack::{Decoder as HpackDecoder, Encoder as HpackEncoder, HeaderField};
 pub use limits::Limits;

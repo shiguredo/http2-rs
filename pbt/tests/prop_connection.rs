@@ -2,13 +2,13 @@
 //!
 //! RFC 9113 準拠の接続レベル検証をテストする。
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use proptest::prelude::*;
 use shiguredo_http2::{
     Connection, ErrorCode, HeaderField, HpackEncoder, Limits,
     frame::{
-        ContinuationFrame, DataFrame, Frame, FrameEncoder, GoawayFrame, HeadersFrame, PingFrame,
-        RstStreamFrame, SettingsFrame, StreamId, WindowUpdateFrame,
+        ContinuationFrame, DataFrame, Frame, GoawayFrame, HeadersFrame, PingFrame, RstStreamFrame,
+        SettingsFrame, StreamId, WindowUpdateFrame,
     },
     settings::{MAX_INITIAL_WINDOW_SIZE, Setting, SettingId},
 };
@@ -20,9 +20,9 @@ fn client_stream_id() -> impl Strategy<Value = StreamId> {
 
 /// フレームをバイト列にエンコードする
 fn encode_frame(frame: &Frame) -> Bytes {
-    let mut encoder = FrameEncoder::new();
-    encoder.encode(frame).unwrap();
-    encoder.take()
+    let mut buf = BytesMut::new();
+    frame.encode(&mut buf).unwrap();
+    buf.freeze()
 }
 
 /// HEADERS フレームを作成する（END_HEADERS なし）

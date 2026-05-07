@@ -30,6 +30,8 @@
   - @voluntas
 - [CHANGE] `shiguredo_http2::webtransport::varint::encode_to_vec` を削除する (テスト内のみで使われていたデッドコード)
   - @voluntas
+- [CHANGE] `shiguredo_http2::FrameEncoder` / `webtransport::CapsuleEncoder` 型を削除し、`Frame::encode(&self, buf: &mut bytes::BytesMut)` / `Capsule::encode(&self, buf: &mut bytes::BytesMut)` メソッドに置き換える (encoder の中間バッファ経由の memcpy を設計上排除)
+  - @voluntas
 - [ADD] `shiguredo_http2` の `Settings` に WebTransport 関連 SETTINGS (`0x2b61`〜`0x2b66`) を統合する
   - @voluntas
 - [ADD] `shiguredo_http2::Limits` に `with_webtransport` ビルダーを追加する

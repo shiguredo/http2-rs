@@ -7,7 +7,6 @@ pub mod encoder;
 pub mod flags;
 
 pub use decoder::FrameDecoder;
-pub use encoder::FrameEncoder;
 pub use flags::FrameFlags;
 
 use bytes::Bytes;
