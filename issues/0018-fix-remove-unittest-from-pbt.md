@@ -39,4 +39,16 @@ PBT の `prop_known_error_code_from_u32` および `prop_unknown_error_code_pres
 
 ## 修正方針
 
-該当する `#[cfg(test)] mod tests` ブロックとその中の単体テストを削除する。必要に応じて対応する `tests/test_<module>.rs` に移動する。
+該当する `#[cfg(test)] mod tests` ブロックとその中の単体テストを削除する。
+
+## CHANGES.md (実装時に追記)
+
+- `## develop` の `### misc` に以下を追加する:
+  - `[UPDATE]` PBT ファイル内の単体テストを除去する
+    - @voluntas
+
+## 受け入れ基準
+
+- `cargo test --workspace` が通る
+- `cargo clippy --all-targets -- -D warnings` が通る
+- 削除したテストがカバーしていたケースが PBT で引き続き検証されていること

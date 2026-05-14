@@ -39,6 +39,25 @@ DATA フレームと content-length の不一致に関する malformed 規則は
 
 コードの挙動自体は防御的で妥当だが、コメントを修正する。
 
+## 対象ファイル一覧
+
+- `src/connection/mod.rs` (#1, #3, #5)
+- `src/webtransport/capsule.rs` (#2)
+- `src/validation.rs` (#4, #6)
+- `src/settings.rs` (#7)
+- `src/limits.rs` (#7)
+
+## CHANGES.md (実装時に追記)
+
+- `## develop` の `### misc` に以下を追加する:
+  - `[FIX]` ソースコード内の RFC/仕様参照の節番号誤りを修正する
+    - @voluntas
+
+## 受け入れ基準
+
+- `cargo test --workspace` が通る
+- `cargo clippy --all-targets -- -D warnings` が通る
+
 ## 改善
 
 ### 7. `src/settings.rs:92, 183, 185, 322`, `src/limits.rs:27, 128` — 廃止 RFC 7540 への言及

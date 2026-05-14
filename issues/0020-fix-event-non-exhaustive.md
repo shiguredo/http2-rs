@@ -30,3 +30,15 @@ CHANGES.md の `## develop` セクションには:
 
 1. `Event` enum に `#[non_exhaustive]` を付与する
 2. 今回の `protocol` フィールド追加が実質後方互換を保つことになるため、CHANGES.md の種別は `[ADD]` のままとする
+
+## CHANGES.md (実装時に追記)
+
+- `## develop` の `### misc` に以下を追加する:
+  - `[UPDATE]` `Event` enum に `#[non_exhaustive]` を付与する
+    - @voluntas
+
+## 受け入れ基準
+
+- `cargo test --workspace` が通る
+- `cargo clippy --all-targets -- -D warnings` が通る
+- `Event` enum に `#[non_exhaustive]` が付与されていること

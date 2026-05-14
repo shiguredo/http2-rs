@@ -35,3 +35,15 @@ CLAUDE.md: 「draft 由来の機能を実装する場合は、根拠資料名、
 1. `src/settings.rs` の各 WT SETTINGS 定数に `draft-ietf-webtrans-http2-14 Section 11.2` の参照と「注: この値は暫定値。IANA 登録後に更新される可能性がある。」の注記を追加する
 2. `src/webtransport/mod.rs` のモジュールヘッダーに draft 由来であることと将来変更される可能性があることを明記する
 3. 各サブモジュールの該当メソッドに節番号と注記を追加する
+
+## CHANGES.md (実装時に追記)
+
+- `## develop` の `### misc` に以下を追加する:
+  - `[UPDATE]` WebTransport draft 注記を充実させる
+    - @voluntas
+
+## 受け入れ基準
+
+- `cargo test --workspace` が通る
+- `cargo clippy --all-targets -- -D warnings` が通る
+- 全 WebTransport SETTINGS 定数に draft 注記が追加されていること

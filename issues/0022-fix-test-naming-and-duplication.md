@@ -63,6 +63,24 @@ CLAUDE.md: 「単体テストのファイル名は `tests/test_<module>.rs` と�
 
 ## 修正方針
 
-1. `tests/rfc7541.rs` を `tests/test_hpack.rs` にリネームするか、命名の意図をコメントで明記する
-2. PBT と重複する単体テストを削除する
-3. ディレクトリモジュールの PBT を `pbt/tests/prop_<module>/main.rs` 形式に移行する
+1. `tests/rfc7541.rs` を `tests/test_hpack.rs` にリネームする
+2. PBT と重複する単体テストを削除する（エラーパスは残す）
+3. ディレクトリモジュールの PBT を `pbt/tests/prop_<module>/main.rs` 形式に移行する:
+   - `prop_connection.rs` → `prop_connection/main.rs`
+   - `prop_frame.rs` → `prop_frame/main.rs`
+   - `prop_hpack.rs` → `prop_hpack/main.rs`
+   - `prop_stream_state.rs` → `prop_stream_state/main.rs`
+   - `prop_webtransport.rs` → `prop_webtransport/main.rs`
+
+## CHANGES.md (実装時に追記)
+
+- `## develop` の `### misc` に以下を追加する:
+  - `[UPDATE]` テストの命名規則違反と PBT 重複を整理する
+    - @voluntas
+
+## 受け入れ基準
+
+- `cargo test --workspace` が通る
+- `cargo clippy --all-targets -- -D warnings` が通る
+- PBT ファイル内に `#[cfg(test)] mod tests` が存在しないこと
+- ディレクトリモジュールの PBT が `main.rs` 形式になっていること

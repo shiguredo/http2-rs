@@ -136,4 +136,21 @@ FlowControl モジュールに対するファジングターゲットが存在�
 
 ## 13. `StreamState::is_idle`、`StateMachine::sent_end_stream`/`received_end_stream`、`Event::stream_id`/`is_connection_level` の必要性検討
 
-これらの関数はプロダクションコードから一切呼ばれておらず、テストのみが使用している。プロダクションコードで使用しないのであれば削除し、テストコードは `pub` メソッドを使わずに必要な情報を別の方法で取得するように修正する。
+これらはプロダクションコードから一切呼ばれておらず、テストのみが使用している。削除し、テストコードを修正する。
+
+## CHANGES.md (実装時に追記)
+
+- `## develop` の `### misc` に以下を追加する:
+  - `[UPDATE]` フロー制御エラー型安全性を改善する
+    - @voluntas
+  - `[FIX]` ポート番号の範囲検証を追加する
+    - @voluntas
+  - `[UPDATE]` 未使用コード・重複コード・到達不能分岐を整理する
+    - @voluntas
+
+## 受け入れ基準
+
+- `cargo test --workspace` が通る
+- `cargo clippy --all-targets -- -D warnings` が通る
+- `cargo fmt --check` が通る
+- `cargo +nightly fuzz` ターゲットがビルドできる
