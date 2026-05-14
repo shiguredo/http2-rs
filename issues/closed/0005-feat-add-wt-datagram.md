@@ -16,7 +16,7 @@ tokio-http2 の高レベル API として expose するだけで良い。
 
 ## 根拠
 
-- draft-ietf-webtrans-http2-14 Section 6 / RFC 9297 Section 3.5: WebTransport over HTTP/2 の DATAGRAM は capsule として運ばれる
+- draft-ietf-webtrans-http2-14 Section 6.11 / RFC 9297 Section 3.5: WebTransport over HTTP/2 の DATAGRAM は capsule として運ばれる
 - HTTP/2 は TCP 上のため DATAGRAM も信頼・順序保証付きで届くが、意味論としては可変長メッセージとしてそのまま扱う
 
 ## 対応内容

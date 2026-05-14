@@ -86,7 +86,7 @@ pub enum SettingId {
     /// Extended CONNECT Protocol を有効にする。
     /// 値が 1 の場合、CONNECT メソッドで :protocol 疑似ヘッダーを使用可能。
     EnableConnectProtocol = 0x08,
-    /// SETTINGS_NO_RFC7540_PRIORITIES (0x09) (RFC 9218 Section 5.1)
+    /// SETTINGS_NO_RFC7540_PRIORITIES (0x09) (RFC 9218 Section 2.1)
     ///
     /// RFC 9218 で定義される設定パラメータ。
     /// 値が 1 の場合、RFC 7540 の優先度シグナリングを使用しないことを示す。
@@ -252,7 +252,7 @@ impl Settings {
                 self.enable_connect_protocol = setting.value == 1;
             }
             Some(SettingId::NoRfc7540Priorities) => {
-                // RFC 9218 Section 5.1: 0 または 1 のみ有効
+                // RFC 9218 Section 2.1: 0 または 1 のみ有効
                 if setting.value > 1 {
                     return Err(SettingsError::InvalidNoRfc7540Priorities(setting.value));
                 }
@@ -312,7 +312,7 @@ impl Settings {
         if let Some(max) = self.max_header_list_size {
             list.push(Setting::from_setting_id(SettingId::MaxHeaderListSize, max));
         }
-        // RFC 8441: Extended CONNECT Protocol を有効にする場合のみ送信
+        // RFC 8441: 初期値は 0。有効にする場合のみ送信
         if self.enable_connect_protocol {
             list.push(Setting::from_setting_id(
                 SettingId::EnableConnectProtocol,

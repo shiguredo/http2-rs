@@ -292,7 +292,7 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
             // 通常ヘッダー
             past_pseudo = true;
 
-            // ヘッダー名の文字検証 (RFC 9110 token ルール + 小文字強制)
+            // ヘッダー名の文字検証 (RFC 9110 Section 5.6.2 token ルール + 小文字強制)
             validate_header_name_chars(name)?;
 
             // ヘッダー値の文字検証 (NUL/CR/LF 禁止)
@@ -478,7 +478,7 @@ pub fn validate_response_headers(headers: &[HeaderField]) -> Result<(), Error> {
             // 通常ヘッダー
             past_pseudo = true;
 
-            // ヘッダー名の文字検証 (RFC 9110 token ルール + 小文字強制)
+            // ヘッダー名の文字検証 (RFC 9110 Section 5.6.2 token ルール + 小文字強制)
             validate_header_name_chars(name)?;
 
             // ヘッダー値の文字検証 (NUL/CR/LF 禁止)
@@ -517,7 +517,7 @@ pub fn validate_trailers(headers: &[HeaderField]) -> Result<(), Error> {
             )));
         }
 
-        // ヘッダー名の文字検証 (RFC 9110 token ルール + 小文字強制)
+        // ヘッダー名の文字検証 (RFC 9110 Section 5.6.2 token ルール + 小文字強制)
         validate_header_name_chars(name)?;
 
         // ヘッダー値の文字検証 (NUL/CR/LF 禁止)
@@ -530,13 +530,13 @@ pub fn validate_trailers(headers: &[HeaderField]) -> Result<(), Error> {
     Ok(())
 }
 
-/// ヘッダー名が RFC 9110 Section 5.1 の token ルールに従うか検証する
+/// ヘッダー名が RFC 9110 Section 5.6.2 の token ルールに従うか検証する
 ///
 /// token = 1*tchar
 /// tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." /
 ///         "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
 ///
-/// RFC 9113 Section 8.2.1: HTTP/2 ではフィールド名は小文字でなければならない。
+/// RFC 9113 Section 8.2: HTTP/2 ではフィールド名は小文字でなければならない。
 fn validate_header_name_chars(name: &[u8]) -> Result<(), Error> {
     if name.is_empty() {
         return Err(malformed_error(ValidationError::InvalidHeaderName(

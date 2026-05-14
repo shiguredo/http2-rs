@@ -504,16 +504,16 @@ fn decode_push_promise(header: FrameHeader, _payload: &[u8]) -> Result<Frame> {
     })
 }
 
-/// PRIORITY_UPDATE フレームをデコードする (RFC 9218 Section 4)
+/// PRIORITY_UPDATE フレームをデコードする (RFC 9218 Section 7.1)
 fn decode_priority_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
-    // RFC 9218 Section 4: PRIORITY_UPDATE フレームはストリーム ID が 0 でなければならない
+    // RFC 9218 Section 7.1: PRIORITY_UPDATE フレームはストリーム ID が 0 でなければならない
     if header.stream_id != CONNECTION_STREAM_ID {
         return Err(Error::protocol_error(
             "PRIORITY_UPDATE frame with non-zero stream ID",
         ));
     }
 
-    // RFC 9218 Section 4: ペイロードは最低 4 バイト (Prioritized Element ID)
+    // RFC 9218 Section 7.1: ペイロードは最低 4 バイト (Prioritized Stream ID)
     if payload.len() < 4 {
         return Err(Error::frame_size_error(
             "PRIORITY_UPDATE frame must be at least 4 bytes",

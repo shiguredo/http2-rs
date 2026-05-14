@@ -40,7 +40,7 @@ pub enum ErrorCode {
     /// HTTP/1.1 使用要求
     Http11Required,
 
-    // === WebTransport エラーコード (draft-ietf-webtrans-http2-14 Section 3.4, 11.3) ===
+    // === WebTransport エラーコード (draft-ietf-webtrans-http2-14) ===
     /// WEBTRANSPORT_ERROR
     ///
     /// draft-ietf-webtrans-http2-14 Section 3.4: 汎用 WebTransport エラー。

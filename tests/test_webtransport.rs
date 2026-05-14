@@ -106,7 +106,7 @@ fn send_after_close_errors() {
     let bidi_id = session.open_bidi_stream().unwrap();
     session.close(0, "bye").unwrap();
 
-    // draft-ietf-webtrans-http2-14 Section 6.12: close 後は新規 capsule を送れない
+    // draft-ietf-webtrans-http2-14 Section 6.12: WT_CLOSE_SESSION 送信後は END_STREAM で half-close するため送信不可
     let err = session.send_stream_data(bidi_id, b"x", false).unwrap_err();
     assert_eq!(
         err.kind,

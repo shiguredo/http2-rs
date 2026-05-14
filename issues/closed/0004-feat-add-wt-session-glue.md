@@ -15,7 +15,7 @@
 
 ## 根拠
 
-- draft-ietf-webtrans-http2-14 Section 4: WebTransport セッションは CONNECT ストリーム内で Capsule Protocol によって多重化される
+- draft-ietf-webtrans-http2-14 Section 2: WebTransport セッションは CONNECT ストリーム内で Capsule Protocol によって多重化される
 - `WtSession` は Capsule 単位で入出力するが、HTTP/2 は DATA frame 単位で届く。両者のバウンダリを吸収する必要がある
 
 ## 対応内容

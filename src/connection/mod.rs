@@ -103,7 +103,7 @@ pub struct Connection {
     header_end_stream: bool,
     /// 最初に受信した NO_RFC7540_PRIORITIES の値
     ///
-    /// RFC 9218 Section 5.1: この設定は接続中に変更できない。
+    /// RFC 9218 Section 2.1: この設定は接続中に変更できない。
     /// 最初の値を記録し、以後の変更を拒否する。
     initial_no_rfc7540_priorities: Option<bool>,
     /// 保留中の動的テーブルサイズ更新

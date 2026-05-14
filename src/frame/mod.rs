@@ -21,7 +21,7 @@ pub type StreamId = u32;
 /// 接続レベルのストリーム ID
 pub const CONNECTION_STREAM_ID: StreamId = 0;
 
-/// フレームタイプ (RFC 9113 Section 6, RFC 9218 Section 4)
+/// フレームタイプ (RFC 9113 Section 6, RFC 9218 Section 7.1)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum FrameType {
@@ -57,7 +57,7 @@ pub enum FrameType {
     WindowUpdate = 0x08,
     /// CONTINUATION フレーム
     Continuation = 0x09,
-    /// PRIORITY_UPDATE フレーム (RFC 9218 Section 4)
+    /// PRIORITY_UPDATE フレーム (RFC 9218 Section 7.1)
     ///
     /// Extensible Priorities (RFC 9218) で定義される優先度更新フレーム。
     /// 非推奨の PRIORITY フレームの代替として使用される。
@@ -438,7 +438,7 @@ impl ContinuationFrame {
     }
 }
 
-/// PRIORITY_UPDATE フレーム (RFC 9218 Section 4)
+/// PRIORITY_UPDATE フレーム (RFC 9218 Section 7.1)
 ///
 /// Extensible Priorities で定義される優先度更新フレーム。
 /// クライアントがサーバーに対してストリームの優先度を通知するために使用する。
@@ -446,12 +446,12 @@ impl ContinuationFrame {
 pub struct PriorityUpdateFrame {
     /// 優先度を更新するストリーム ID
     ///
-    /// RFC 9218 Section 4: Prioritized Element ID
+    /// RFC 9218 Section 7.1: Prioritized Stream ID
     /// クライアント開始ストリーム (奇数) の ID を指定する。
     pub prioritized_element_id: StreamId,
     /// Priority Field Value
     ///
-    /// RFC 9218 Section 4: Structured Fields (RFC 8941) の Dictionary 形式。
+    /// RFC 9218 Section 7.1: Structured Fields (RFC 8941) の Dictionary 形式。
     /// 空の場合はデフォルト優先度を使用。
     pub priority_field_value: Vec<u8>,
 }
@@ -540,7 +540,7 @@ impl Frame {
             Self::Goaway(_) => CONNECTION_STREAM_ID,
             Self::WindowUpdate(f) => f.stream_id,
             Self::Continuation(f) => f.stream_id,
-            // RFC 9218 Section 4: PRIORITY_UPDATE は stream identifier 0 で送信される
+            // RFC 9218 Section 7.1: PRIORITY_UPDATE は stream identifier 0 で送信される
             Self::PriorityUpdate(_) => CONNECTION_STREAM_ID,
             Self::Unknown { header, .. } => header.stream_id,
         }
