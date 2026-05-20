@@ -259,7 +259,7 @@ proptest! {
 
     /// idle ストリームへの DATA は PROTOCOL_ERROR
     ///
-    /// RFC 9113 Section 6.1: idle ストリームへの DATA は PROTOCOL_ERROR
+    /// RFC 9113 Section 5.1: idle ストリームへの DATA は PROTOCOL_ERROR
     #[test]
     fn prop_data_on_idle_stream_is_error(stream_id in client_stream_id()) {
         let mut server = Connection::server(Limits::default());
@@ -287,7 +287,7 @@ proptest! {
 
     /// idle ストリームへの WINDOW_UPDATE は PROTOCOL_ERROR
     ///
-    /// RFC 9113 Section 6.9: idle ストリームへの WINDOW_UPDATE は PROTOCOL_ERROR
+    /// RFC 9113 Section 5.1: idle ストリームへの WINDOW_UPDATE は PROTOCOL_ERROR
     #[test]
     fn prop_window_update_on_idle_stream_is_error(stream_id in client_stream_id()) {
         let mut server = Connection::server(Limits::default());
@@ -315,7 +315,7 @@ proptest! {
 
     /// GOAWAY 受信後の新規ストリーム開始は PROTOCOL_ERROR
     ///
-    /// RFC 9113 Section 5.1.1: GOAWAY 受信後は新規ストリームを開始できない
+    /// RFC 9113 Section 6.8: GOAWAY 受信後は新規ストリームを開始できない
     #[test]
     fn prop_start_stream_after_goaway_is_error(_dummy in Just(())) {
         let mut client = Connection::client(Limits::default());
@@ -456,7 +456,7 @@ proptest! {
 
     /// NO_RFC7540_PRIORITIES の変更は PROTOCOL_ERROR
     ///
-    /// RFC 9218 Section 5.1: この設定は接続中に変更できない
+    /// RFC 9218 Section 2.1: この設定は接続中に変更できない
     #[test]
     fn prop_no_rfc7540_priorities_change_is_error(
         initial_value in prop::bool::ANY,

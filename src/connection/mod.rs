@@ -403,7 +403,7 @@ impl Connection {
             ));
         }
 
-        // RFC 9113 Section 5.1.1: GOAWAY 受信後は新規ストリームを開始できない
+        // RFC 9113 Section 6.8: GOAWAY 受信後は新規ストリームを開始できない
         if matches!(self.state, ConnectionState::GoawayReceived) {
             return Err(Error::connection_error(
                 ErrorCode::ProtocolError,
@@ -560,7 +560,7 @@ impl Connection {
 
                 let buffer_len = stream.send_buffer().len();
                 let pending_es = stream.pending_end_stream();
-                // RFC 9113 Section 6.9: フロー制御ウィンドウが 0 でも
+                // RFC 9113 Section 6.9.1: フロー制御ウィンドウが 0 でも
                 // END_STREAM 付きの長さ 0 DATA フレームは送信してよい
                 if buffer_len == 0 && !pending_es {
                     return Ok(());
@@ -625,7 +625,7 @@ impl Connection {
             }
         }
 
-        // RFC 9113 Section 6.9: 空 DATA + END_STREAM を送信する
+        // RFC 9113 Section 6.9.1: 空 DATA + END_STREAM を送信する
         // ループから break で抜けた場合（buffer_len == 0 && pending_end_stream）
         if let Some(stream) = self.streams.get_mut(&stream_id)
             && stream.pending_end_stream()
@@ -994,7 +994,7 @@ impl Connection {
             frame.data.len()
         };
 
-        // RFC 9113 Section 6.9.1: フロー制御フレームの受信者は、接続エラーとして扱わない限り、
+        // RFC 9113 Section 6.9: フロー制御フレームの受信者は、接続エラーとして扱わない限り、
         // 常に接続フロー制御ウィンドウに計上しなければならない (MUST)。
         // ストリームエラーで落とす場合でも接続ウィンドウは減算する必要がある。
         self.flow_control.consume_recv(flow_control_size)?;
@@ -1015,8 +1015,9 @@ impl Connection {
             stream.state_machine_mut().recv_data(frame.end_stream)?;
             stream.flow_control_mut().consume_recv(flow_control_size)?;
 
-            // RFC 9110 Section 6.4.1: コンテンツを持たないレスポンス (204/304/HEAD) に
-            // DATA フレームが含まれている場合は malformed として扱う
+            // RFC 9113 Section 8.1.1: コンテンツを持たないレスポンス (204/304/HEAD) に
+            // 内容を持つ DATA フレームが含まれている場合は malformed として扱う
+            // (no-content の定義は RFC 9110 Section 6.4.1)
             if stream.no_content() {
                 return Err(Error::stream_error(
                     ErrorCode::ProtocolError,
@@ -1077,7 +1078,7 @@ impl Connection {
         // RFC 9113 Section 5.1.1: ストリーム ID の偶奇チェック
         self.validate_stream_id_parity(frame.stream_id)?;
 
-        // RFC 9113 Section 5.1.1: GOAWAY 送信後の新規ストリームチェック
+        // RFC 9113 Section 6.8: GOAWAY 送信後の新規ストリームチェック
         if matches!(self.state, ConnectionState::GoawaySent)
             && frame.stream_id > self.last_recv_stream_id
             && !self.streams.contains_key(&frame.stream_id)
@@ -1289,7 +1290,8 @@ impl Connection {
                     }
 
                     // RFC 9110 Section 6.4.1: 204/304 レスポンスおよび HEAD リクエストへの
-                    // レスポンスはコンテンツを持たない。DATA フレームを受信してはならない。
+                    // レスポンスはコンテンツを持たない (RFC 9113 Section 8.1.1)。
+                    // 空 DATA は許容されるが、内容を持つ DATA は malformed として扱う。
                     let is_no_content = status == Some(b"204") || status == Some(b"304");
                     if let Some(stream) = self.streams.get_mut(&stream_id) {
                         let is_head = stream.request_method().is_some_and(|m| m == b"HEAD");
@@ -1500,7 +1502,7 @@ impl Connection {
                     ));
                 }
 
-                // RFC 9218 Section 5.1: NO_RFC7540_PRIORITIES は接続中に変更できない
+                // RFC 9218 Section 2.1: NO_RFC7540_PRIORITIES は接続中に変更できない
                 if setting.id == crate::settings::SettingId::NoRfc7540Priorities.as_u16() {
                     let new_value = setting.value == 1;
                     if let Some(initial_value) = self.initial_no_rfc7540_priorities {
@@ -1528,7 +1530,7 @@ impl Connection {
                 })?;
             }
 
-            // RFC 9218 Section 5.1: NO_RFC7540_PRIORITIES は最初の SETTINGS フレームで
+            // RFC 9218 Section 2.1: NO_RFC7540_PRIORITIES は最初の SETTINGS フレームで
             // 送らなければならない (MUST)。最初の SETTINGS に含まれなかった場合、
             // デフォルト値 (0 = false) で確定し、以後の変更を拒否する。
             if self.state == ConnectionState::WaitingPreface
@@ -1722,13 +1724,13 @@ impl Connection {
         Ok(())
     }
 
-    /// PRIORITY_UPDATE フレームを処理する (RFC 9218 Section 4)
+    /// PRIORITY_UPDATE フレームを処理する (RFC 9218 Section 7.1)
     ///
-    /// RFC 9218 Section 4 では idle ストリームの PRIORITY_UPDATE 数 + active ストリーム数が
+    /// RFC 9218 Section 7.1 では idle ストリームの PRIORITY_UPDATE 数 + active ストリーム数が
     /// SETTINGS_MAX_CONCURRENT_STREAMS を超えてはならない (MUST) と規定されているが、
     /// 主要ブラウザが PRIORITY_UPDATE をほぼ使用しないため実装しない。
     fn handle_priority_update(&mut self, frame: PriorityUpdateFrame) -> Result<()> {
-        // RFC 9218 Section 4: サーバーのみが PRIORITY_UPDATE を受信する
+        // RFC 9218 Section 7.1: サーバーは PRIORITY_UPDATE を送信してはならない (MUST NOT)。
         // クライアントが受信した場合はプロトコルエラー
         if self.role == Role::Client {
             return Err(Error::connection_error(
@@ -1737,7 +1739,7 @@ impl Connection {
             ));
         }
 
-        // RFC 9218 Section 4: Prioritized Element ID はクライアント開始ストリームでなければならない
+        // RFC 9218 Section 7.1: Prioritized Stream ID はクライアント開始ストリーム (奇数) でなければならない
         // クライアント開始ストリームは奇数
         if frame.prioritized_element_id.is_multiple_of(2) {
             return Err(Error::connection_error(

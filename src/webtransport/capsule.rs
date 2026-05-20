@@ -79,49 +79,49 @@ pub enum Capsule {
     /// DATAGRAM (RFC 9297 Section 3.5)
     Datagram { data: Vec<u8> },
 
-    /// PADDING (Section 6.1)
+    /// PADDING (draft-ietf-webtrans-http2-14 Section 6.1)
     Padding { length: usize },
 
-    /// WT_RESET_STREAM (Section 6.2)
+    /// WT_RESET_STREAM (draft-ietf-webtrans-http2-14 Section 6.2)
     WtResetStream {
         stream_id: u64,
         error_code: u64,
         reliable_size: u64,
     },
 
-    /// WT_STOP_SENDING (Section 6.3)
+    /// WT_STOP_SENDING (draft-ietf-webtrans-http2-14 Section 6.3)
     WtStopSending { stream_id: u64, error_code: u64 },
 
-    /// WT_STREAM (Section 6.4)
+    /// WT_STREAM (draft-ietf-webtrans-http2-14 Section 6.4)
     WtStream {
         stream_id: u64,
         data: Vec<u8>,
         fin: bool,
     },
 
-    /// WT_MAX_DATA (Section 6.5)
+    /// WT_MAX_DATA (draft-ietf-webtrans-http2-14 Section 6.5)
     WtMaxData { maximum: u64 },
 
-    /// WT_MAX_STREAM_DATA (Section 6.6)
+    /// WT_MAX_STREAM_DATA (draft-ietf-webtrans-http2-14 Section 6.6)
     WtMaxStreamData { stream_id: u64, maximum: u64 },
 
-    /// WT_MAX_STREAMS (Section 6.7)
+    /// WT_MAX_STREAMS (draft-ietf-webtrans-http2-14 Section 6.7)
     WtMaxStreams { maximum: u64, bidirectional: bool },
 
-    /// WT_DATA_BLOCKED (Section 6.8)
+    /// WT_DATA_BLOCKED (draft-ietf-webtrans-http2-14 Section 6.8)
     WtDataBlocked { maximum: u64 },
 
-    /// WT_STREAM_DATA_BLOCKED (Section 6.9)
+    /// WT_STREAM_DATA_BLOCKED (draft-ietf-webtrans-http2-14 Section 6.9)
     WtStreamDataBlocked { stream_id: u64, maximum: u64 },
 
-    /// WT_STREAMS_BLOCKED (Section 6.10)
+    /// WT_STREAMS_BLOCKED (draft-ietf-webtrans-http2-14 Section 6.10)
     WtStreamsBlocked { maximum: u64, bidirectional: bool },
 
-    /// WT_CLOSE_SESSION (Section 6.12)
+    /// WT_CLOSE_SESSION (draft-ietf-webtrans-http2-14 Section 6.12)
     /// Application Error Code: 32-bit, Message: UTF-8, max 1024 bytes
     WtCloseSession { error_code: u32, reason: String },
 
-    /// WT_DRAIN_SESSION (Section 6.13, Length=0)
+    /// WT_DRAIN_SESSION (draft-ietf-webtrans-http2-14 Section 6.13, Length=0)
     WtDrainSession,
 
     /// 未知の Capsule タイプ (RFC 9297: MUST silently drop)
@@ -545,7 +545,7 @@ impl CapsuleDecoder {
                         "WT_CLOSE_SESSION payload too short",
                     ));
                 }
-                // draft-ietf-webtrans-http2 Section 6.1:
+                // draft-ietf-webtrans-http2-14 Section 6.12:
                 // reason の長さは 1024 バイト以下でなければならない (MUST NOT)
                 let reason_len = payload.len() - 4;
                 if reason_len > MAX_CLOSE_REASON_LEN {

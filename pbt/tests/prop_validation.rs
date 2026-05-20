@@ -446,7 +446,7 @@ proptest! {
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
     }
 
-    /// 制御文字、スペース、デリミタを含むヘッダー名は拒否される (RFC 9110 Section 5.1)
+    /// 制御文字、スペース、デリミタを含むヘッダー名は拒否される (RFC 9110 Section 5.6.2)
     #[test]
     fn prop_header_name_with_invalid_chars_rejected(
         prefix in "[a-z]{1,4}",

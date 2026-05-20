@@ -278,10 +278,10 @@ impl FrameEncoder {
         Ok(())
     }
 
-    /// PRIORITY_UPDATE フレームをエンコードする (RFC 9218 Section 4)
+    /// PRIORITY_UPDATE フレームをエンコードする (RFC 9218 Section 7.1)
     fn encode_priority_update(&mut self, frame: &PriorityUpdateFrame) -> Result<()> {
         let length = (4 + frame.priority_field_value.len()) as u32;
-        // RFC 9218 Section 4: stream identifier 0 で送信
+        // RFC 9218 Section 7.1: stream identifier 0 で送信
         let header =
             FrameHeader::new(FrameType::PriorityUpdate, FrameFlags::empty(), 0).with_length(length);
 

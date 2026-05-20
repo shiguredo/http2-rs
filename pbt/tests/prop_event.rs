@@ -225,7 +225,8 @@ mod tests {
 
     /// PriorityUpdateReceived は stream_id を持ち is_connection_level は false
     ///
-    /// RFC 9218: PRIORITY_UPDATE はストリームに関連するフレームである
+    /// RFC 9218 Section 7.1: PRIORITY_UPDATE は stream identifier 0 の接続レベルフレームである
+    /// (ペイロード内 Prioritized Stream ID は別)
     #[test]
     fn test_priority_update_is_stream_level() {
         let event = Event::PriorityUpdateReceived {

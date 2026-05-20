@@ -89,7 +89,8 @@ pub enum SettingId {
     /// SETTINGS_NO_RFC7540_PRIORITIES (0x09) (RFC 9218 Section 2.1)
     ///
     /// RFC 9218 で定義される設定パラメータ。
-    /// 値が 1 の場合、RFC 7540 の優先度シグナリングを使用しないことを示す。
+    /// 値が 1 の場合、RFC 9113 Section 5.3.1/5.3.2 で非推奨となった RFC 7540 由来の
+    /// 優先度シグナリングを使用しないことを示す。
     NoRfc7540Priorities = 0x09,
     /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61) (draft-ietf-webtrans-http2-14 Section 11.2)
     WtInitialMaxData = 0x2b61,
@@ -180,9 +181,10 @@ pub struct Settings {
     /// true の場合、CONNECT メソッドで :protocol 疑似ヘッダーを使用可能。
     /// WebSocket over HTTP/2 や WebTransport で必要。
     pub enable_connect_protocol: bool,
-    /// RFC 7540 優先度シグナリングを使用しない (RFC 9218)
+    /// RFC 9113 Section 5.3.1/5.3.2 で非推奨となった RFC 7540 由来の優先度シグナリングを
+    /// 使用しない (RFC 9218)
     ///
-    /// true の場合、RFC 7540 の優先度シグナリング (PRIORITY フレーム、
+    /// true の場合、RFC 7540 由来の優先度シグナリング (PRIORITY フレーム、
     /// HEADERS フレームの優先度フィールド) を使用しないことを示す。
     pub no_rfc7540_priorities: bool,
     /// WebTransport 初期設定 (draft-ietf-webtrans-http2-14 Section 11.2)
@@ -319,7 +321,8 @@ impl Settings {
                 1,
             ));
         }
-        // RFC 9218: RFC 7540 優先度シグナリングを使用しない場合のみ送信
+        // RFC 9218 Section 2.1: RFC 9113 Section 5.3.1/5.3.2 で非推奨となった優先度シグナリングを
+        // 使用しない場合のみ送信
         // この設定は最初の SETTINGS フレームで送信し、以後変更できない
         if self.no_rfc7540_priorities {
             list.push(Setting::from_setting_id(SettingId::NoRfc7540Priorities, 1));

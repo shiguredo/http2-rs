@@ -1011,7 +1011,7 @@ proptest! {
 
     /// PRIORITY_UPDATE ペイロードが 4 バイト未満はエラー
     ///
-    /// RFC 9218 Section 4: PRIORITY_UPDATE must be at least 4 bytes
+    /// RFC 9218 Section 7.1: PRIORITY_UPDATE must be at least 4 bytes
     #[test]
     fn prop_priority_update_too_short_error(
         payload_len in 0..4usize,

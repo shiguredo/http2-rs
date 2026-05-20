@@ -24,7 +24,7 @@ pub struct Limits {
     pub connection_window_size: u32,
     /// Extended CONNECT プロトコルの有効化 (RFC 8441)
     pub enable_connect_protocol: bool,
-    /// RFC 7540 優先度の無効化 (RFC 9218)
+    /// RFC 9113 Section 5.3.1/5.3.2 で非推奨となった RFC 7540 由来の優先度の無効化 (RFC 9218)
     pub no_rfc7540_priorities: bool,
     /// WebTransport 初期設定 (draft-ietf-webtrans-http2-14 Section 11.2)
     ///
@@ -125,7 +125,7 @@ impl Limits {
         self
     }
 
-    /// RFC 7540 優先度の無効化を設定する (RFC 9218)
+    /// RFC 9113 Section 5.3.1/5.3.2 で非推奨となった RFC 7540 由来の優先度の無効化を設定する (RFC 9218)
     #[must_use]
     pub const fn with_no_rfc7540_priorities(mut self, enable: bool) -> Self {
         self.no_rfc7540_priorities = enable;

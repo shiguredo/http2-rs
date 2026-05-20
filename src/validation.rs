@@ -221,7 +221,7 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
                         ":method",
                     )));
                 }
-                // RFC 9110 Section 9: method = token
+                // RFC 9110 Section 9.1: method = token
                 if !is_valid_token(&header.value) {
                     return Err(malformed_error(ValidationError::InvalidMethodValue(
                         header.value.clone(),
@@ -328,7 +328,7 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
         )));
     }
 
-    // RFC 9113 Section 8.3.1: :authority の userinfo 禁止は http/https と CONNECT に限定
+    // RFC 9113 Section 8.3.1: :authority の userinfo 禁止は http または https スキームの URI に限定
     if let Some(authority) = authority_value
         && authority.contains(&b'@')
     {
