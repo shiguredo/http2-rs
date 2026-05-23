@@ -1,6 +1,7 @@
 //! HTTP セマンティクス検証の PBT
 
 use proptest::prelude::*;
+use shiguredo_http2::__test_helpers::header_field_from_validated_parts;
 use shiguredo_http2::{HeaderField, validation};
 
 /// PBT で生成した「ランダム通常ヘッダー」が以下の場合は除外する:
@@ -223,7 +224,7 @@ proptest! {
             HeaderField::new(":method", "GET").unwrap(),
             HeaderField::new(":scheme", "https").unwrap(),
             HeaderField::new(":path", "/").unwrap(),
-            HeaderField::from_validated_parts(name.into_bytes(), b"value".to_vec(), false),
+            header_field_from_validated_parts(name.into_bytes(), b"value".to_vec(), false),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -499,7 +500,7 @@ proptest! {
             HeaderField::new(":authority", "example.com").unwrap(),
             // HeaderField::new は構築時に弾くため、wire 由来データを模擬するために
             // from_validated_parts を使って validation 経路の検査を確認する。
-            HeaderField::from_validated_parts(name, b"value".to_vec(), false),
+            header_field_from_validated_parts(name, b"value".to_vec(), false),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -520,7 +521,7 @@ proptest! {
             HeaderField::new(":scheme", "https").unwrap(),
             HeaderField::new(":path", "/").unwrap(),
             HeaderField::new(":authority", "example.com").unwrap(),
-            HeaderField::from_validated_parts(b"x-test".to_vec(), value, false),
+            header_field_from_validated_parts(b"x-test".to_vec(), value, false),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -542,7 +543,7 @@ proptest! {
             HeaderField::new(":scheme", "https").unwrap(),
             HeaderField::new(":path", "/").unwrap(),
             HeaderField::new(":authority", "example.com").unwrap(),
-            HeaderField::from_validated_parts(b"x-test".to_vec(), value, false),
+            header_field_from_validated_parts(b"x-test".to_vec(), value, false),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -584,7 +585,7 @@ proptest! {
             HeaderField::new(":scheme", "https").unwrap(),
             HeaderField::new(":path", "/").unwrap(),
             HeaderField::new(":authority", "example.com").unwrap(),
-            HeaderField::from_validated_parts(b"x-test".to_vec(), value, false),
+            header_field_from_validated_parts(b"x-test".to_vec(), value, false),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -604,7 +605,7 @@ proptest! {
             HeaderField::new(":scheme", "https").unwrap(),
             HeaderField::new(":path", "/").unwrap(),
             HeaderField::new(":authority", "example.com").unwrap(),
-            HeaderField::from_validated_parts(b"x-test".to_vec(), value, false),
+            header_field_from_validated_parts(b"x-test".to_vec(), value, false),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -623,7 +624,7 @@ proptest! {
             HeaderField::new(":scheme", "https").unwrap(),
             HeaderField::new(":path", "/").unwrap(),
             HeaderField::new(":authority", "example.com").unwrap(),
-            HeaderField::from_validated_parts(b"x-test".to_vec(), value, false),
+            header_field_from_validated_parts(b"x-test".to_vec(), value, false),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());

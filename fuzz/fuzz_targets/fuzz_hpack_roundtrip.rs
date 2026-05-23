@@ -2,6 +2,7 @@
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
+use shiguredo_http2::__test_helpers::header_field_from_validated_parts;
 use shiguredo_http2::{HeaderField, HpackDecoder, HpackEncoder};
 
 #[derive(Debug, Arbitrary)]
@@ -26,7 +27,7 @@ fuzz_target!(|input: FuzzInput| {
     let headers: Vec<HeaderField> = input
         .headers
         .iter()
-        .map(|h| HeaderField::from_validated_parts(h.name.clone(), h.value.clone(), false))
+        .map(|h| header_field_from_validated_parts(h.name.clone(), h.value.clone(), false))
         .collect();
 
     if headers.is_empty() {

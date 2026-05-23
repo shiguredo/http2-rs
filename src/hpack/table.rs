@@ -84,24 +84,13 @@ impl HeaderField {
         }
     }
 
-    /// 検証済みバイト列から検査をスキップして構築する (crate 内部および test-helper feature 限定)
+    /// 検証済みバイト列から検査をスキップして構築する (crate 内部限定)
     ///
     /// HPACK decoder 経路 (`Decoder::decode_*`)、静的テーブル展開、
     /// `concatenate_cookies` のような信頼可能な内部構築箇所でのみ使用する。
-    /// `__test_helpers` feature を明示的に有効化した PBT / fuzz クレートのみ
-    /// 外部から呼び出せる。本番利用者は有効化してはならない (型不変条件を破壊する)。
-    #[cfg(feature = "__test_helpers")]
-    #[doc(hidden)]
-    pub fn from_validated_parts(name: Vec<u8>, value: Vec<u8>, sensitive: bool) -> Self {
-        Self {
-            name: HeaderBytes::Owned(name),
-            value: HeaderBytes::Owned(value),
-            sensitive,
-        }
-    }
-
-    /// 検証済みバイト列から検査をスキップして構築する (crate 内部限定)
-    #[cfg(not(feature = "__test_helpers"))]
+    /// crate 外 (PBT / fuzz) から呼び出すには
+    /// `__test_helpers::header_field_from_validated_parts` ラッパを使用する
+    /// (本番利用者はラッパも含めて呼び出してはならない。型不変条件を破壊する)。
     pub(crate) fn from_validated_parts(name: Vec<u8>, value: Vec<u8>, sensitive: bool) -> Self {
         Self {
             name: HeaderBytes::Owned(name),

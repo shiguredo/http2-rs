@@ -2,7 +2,8 @@
 //!
 //! `__test_helpers` cargo feature 有効時のみコンパイルされる。
 //! 構築時検査関数 (const fn 版 / runtime 版) の同値性を PBT で検証するための薄いラッパと、
-//! HPACK decoder 経路を再現するための `HeaderField::from_validated_parts` を提供する。
+//! HPACK decoder 経路を再現するための `HeaderField::from_validated_parts` への
+//! 再エクスポート系ラッパを提供する。
 //! 本番利用者は本 feature を有効化してはならない (型不変条件を破壊する)。
 //!
 //! panic catch ラッパは戻り値を `Result<(), String>` で返し、`Err` に panic メッセージを
@@ -71,4 +72,16 @@ pub fn check_pseudo_header_const_result(name: &[u8], value: &[u8]) -> Result<(),
 /// `validate_pseudo_header` の結果を文字列化された Err として返す
 pub fn validate_pseudo_header_result(name: &[u8], value: &[u8]) -> Result<(), String> {
     crate::hpack::table::validate_pseudo_header(name, value).map_err(|e| format!("{e}"))
+}
+
+/// HPACK decoder 経路の `HeaderField::from_validated_parts` を PBT / fuzz から呼べるよう公開する
+///
+/// 検査をバイパスして `HeaderField` を構築するため、型不変条件を破壊しうる。
+/// 本番利用禁止。
+pub fn header_field_from_validated_parts(
+    name: Vec<u8>,
+    value: Vec<u8>,
+    sensitive: bool,
+) -> crate::hpack::HeaderField {
+    crate::hpack::HeaderField::from_validated_parts(name, value, sensitive)
 }

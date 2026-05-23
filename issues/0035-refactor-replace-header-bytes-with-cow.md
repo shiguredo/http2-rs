@@ -99,6 +99,6 @@ issue 0024 で導入した自前 enum `HeaderBytes { Static(&'static [u8]), Owne
 ## 依存
 
 - **blocking 依存**: [[0034-refactor-consolidate-field-syntax-module]] (0034 完了で `bytes.rs` から検査関数群が `src/syntax.rs` に移動し、`HeaderBytes` のみが残った状態を本 issue が受け取る)
-- 関連: [[0033-refactor-test-helpers-module-and-bytes-mod-name]] (`mod bytes` 改名スコープを 0033 から本 issue に委ねた経緯。本 issue の `bytes.rs` 削除でその責務を完遂する)
+- 関連: [[0033-refactor-dedupe-from-validated-parts-cfg]] (`mod bytes` 改名スコープを 0033 から本 issue に委ねた経緯。本 issue の `bytes.rs` 削除でその責務を完遂する)
 - 関連: [[0036-refactor-move-mod-tests-to-tests-dir]] (本 issue で `header_bytes_*` テスト群と `bytes.rs` 自体が消えるため、0036 のスコープから当該テストは自動的に除外される)
 - pending 連携: [[0013-refactor-bytes-payloads]] (将来 `bytes` クレート導入時、本 issue の `Cow<'static, [u8]>` を `bytes::Bytes` に再置換する対象)

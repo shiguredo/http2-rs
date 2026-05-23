@@ -1,7 +1,9 @@
 # `HeaderField::from_validated_parts` の cfg 二定義を解消する
 
 Created: 2026-05-23
+Completed: 2026-05-24
 Model: Opus 4.7
+Branch: feature/refactor-dedupe-from-validated-parts-cfg
 
 ## 内容
 
@@ -122,3 +124,13 @@ crate 内 (decoder / dynamic_table / validation / connection / table.rs の `#[c
 - なし
 - 関連: [[0034-refactor-consolidate-field-syntax-module]], [[0035-refactor-replace-header-bytes-with-cow]]
 - pending 連携: [[0013-refactor-bytes-payloads]] (`bytes` クレート導入時、`from_validated_parts` の `Vec<u8>` 引数を `Bytes` 化する対象)
+
+## 解決方法
+
+- `src/hpack/table.rs` の `HeaderField::from_validated_parts` を `pub(crate)` 単一定義に統一する。`#[cfg(feature = "__test_helpers")] #[doc(hidden)] pub` 版と `#[cfg(not(...))] pub(crate)` 版の cfg 排他 2 定義を削除し、本体ロジックは保持
+- doc コメントを更新し、crate 外からは `__test_helpers::header_field_from_validated_parts` ラッパ経由で呼ぶ旨を明示
+- `src/__test_helpers.rs` に `pub fn header_field_from_validated_parts(name: Vec<u8>, value: Vec<u8>, sensitive: bool) -> HeaderField` を追加し、`HeaderField::from_validated_parts` を pub(crate) のまま PBT / fuzz から呼べるよう公開層を一本化
+- モジュール doc に再エクスポート系ラッパが含まれる旨を追記
+- `pbt/tests/prop_validation.rs` の 7 箇所、`fuzz/fuzz_targets/fuzz_validation.rs` の 1 箇所、`fuzz/fuzz_targets/fuzz_hpack_roundtrip.rs` の 1 箇所をラッパ呼び出しに書き換え
+- issue ファイル名を `0033-refactor-dedupe-from-validated-parts-cfg.md` にリネームし、`issues/0035-refactor-replace-header-bytes-with-cow.md` の依存参照を新 slug に更新
+- `cargo build`、`cargo build --features __test_helpers`、`cargo test --workspace --features __test_helpers`、`cargo build --manifest-path fuzz/Cargo.toml`、`cargo clippy --workspace --all-targets --features __test_helpers -- -D warnings`、`cargo fmt --check` の全てが通ることを確認
