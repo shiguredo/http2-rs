@@ -1,9 +1,16 @@
 //! HTTP セマンティクス検証 (RFC 9113 Section 8)
 //!
 //! HTTP/2 リクエストおよびレスポンスのヘッダー検証を提供する。
+//!
+//! 個別フィールドの値構文検査は [`crate::hpack::HeaderField::new`] に集約されている。
+//! 本モジュールは「ヘッダーリスト全体の整合性」検査と、HPACK decoder 経路で
+//! 検査をバイパスして構築された `HeaderField` の再検査を担う。
+//! 再検査は [`crate::hpack::table`] の `validate_field_name` /
+//! `validate_field_value` / `validate_pseudo_header` を直接呼ぶことで
+//! 余分な alloc を避けつつ `HeaderField::new` と同等の検査を実施する。
 
 use crate::error::{Error, ErrorCode};
-use crate::hpack::HeaderField;
+use crate::hpack::{HeaderField, HeaderFieldError};
 
 /// 疑似ヘッダーフィールド名
 pub mod pseudo_headers {
@@ -27,69 +34,73 @@ pub mod forbidden_headers {
 /// TE ヘッダーで許可される値
 pub const TE_ALLOWED_VALUE: &[u8] = b"trailers";
 
-/// 検証結果
+/// HTTP セマンティクス検証エラー
+///
+/// 個別フィールドの値構文違反は [`HeaderFieldError`] に集約されているため、
+/// 本 enum はヘッダーリスト全体の整合性違反のみを扱う。
+/// 受信経路で発生したフィールド単位のエラーは
+/// [`Self::InvalidHeaderField`] でラップして報告する。
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ValidationError {
+    /// 個別フィールドの構築時検査エラー (HPACK decoder 経路で wire データから検出)
+    InvalidHeaderField(HeaderFieldError),
     /// 必須の疑似ヘッダーが欠落
     MissingPseudoHeader(&'static str),
     /// 疑似ヘッダーが重複
     DuplicatePseudoHeader(&'static str),
     /// 疑似ヘッダーが通常ヘッダーの後に出現
     PseudoHeaderAfterRegular,
-    /// 不正な疑似ヘッダー
-    InvalidPseudoHeader(Vec<u8>),
-    /// 禁止されたヘッダー
+    /// 文脈で許可されない疑似ヘッダー (リクエストの `:status`、レスポンスの `:method` 等)
+    DisallowedPseudoHeader(Vec<u8>),
+    /// トレーラーに疑似ヘッダーが含まれている (RFC 9113 §8.1)
+    PseudoHeaderInTrailers(Vec<u8>),
+    /// 禁止されたヘッダー (RFC 9113 §8.2.2)
     ForbiddenHeader(Vec<u8>),
-    /// TE ヘッダーの不正な値
+    /// TE ヘッダーの不正な値 (リクエストの TE は "trailers" のみ許可)
     InvalidTeHeader,
-    /// :path が空
+    /// `:path` が空 (http/https リクエスト)
     EmptyPath,
-    /// OPTIONS 以外で :path が asterisk-form (*) になっている
+    /// OPTIONS 以外で `:path` が asterisk-form (`*`) になっている
     AsteriskPathOnNonOptions,
-    /// CONNECT リクエストに :path または :scheme が含まれている
+    /// CONNECT リクエストに `:path` または `:scheme` が含まれている
     ConnectWithPathOrScheme,
-    /// CONNECT の :authority が authority-form (host:port) でない
+    /// CONNECT の `:authority` が authority-form (host:port) でない
     ConnectInvalidAuthority,
-    /// CONNECT 以外のリクエストに :path または :scheme がない
+    /// CONNECT 以外のリクエストに `:path` または `:scheme` がない
     NonConnectMissingPathOrScheme,
-    /// Extended CONNECT (RFC 8441) に :scheme または :path がない
+    /// Extended CONNECT (RFC 8441) に `:scheme` または `:path` がない
     ExtendedConnectMissingSchemeOrPath,
-    /// CONNECT 以外のリクエストに :protocol が含まれている
+    /// CONNECT 以外のリクエストに `:protocol` が含まれている
     ProtocolOnNonConnect,
-    /// Host ヘッダーと :authority 疑似ヘッダーの値が不一致
+    /// Host ヘッダーと `:authority` 疑似ヘッダーの値が不一致
     HostAuthorityMismatch,
-    /// http/https スキームで :authority も Host もない
-    MissingAuthority,
-    /// 不正なヘッダー名（禁止文字を含む）
-    InvalidHeaderName(Vec<u8>),
-    /// 不正なヘッダー値（NUL/CR/LF を含む）
-    InvalidHeaderValue(Vec<u8>),
-    /// 不正なステータスコード
-    InvalidStatusCode(Vec<u8>),
-    /// :authority に userinfo が含まれている
+    /// `:authority` に userinfo が含まれている (http/https/CONNECT のみ)
     AuthorityWithUserinfo,
-    /// :protocol の値が不正 (空または非 token 文字を含む)
-    InvalidProtocolValue(Vec<u8>),
-    /// :method の値が不正 (空または非 token 文字を含む)
-    InvalidMethodValue(Vec<u8>),
-    /// :scheme の値が不正 (RFC 3986 Section 3.1 の scheme 構文に違反)
-    InvalidSchemeValue(Vec<u8>),
-    /// :path の値が不正 (http/https で絶対パスでない)
-    InvalidPathValue(Vec<u8>),
+    /// http/https スキームで `:authority` も Host もない
+    MissingAuthority,
+    /// `:status = 101` (Switching Protocols) は HTTP/2 では使えない (RFC 9113 §8.6)
+    Status101NotSupported,
 }
 
 impl std::fmt::Display for ValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidHeaderField(e) => write!(f, "invalid header field: {e}"),
             Self::MissingPseudoHeader(name) => write!(f, "missing required pseudo-header: {name}"),
             Self::DuplicatePseudoHeader(name) => write!(f, "duplicate pseudo-header: {name}"),
-            Self::PseudoHeaderAfterRegular => {
-                write!(f, "pseudo-header after regular header")
-            }
-            Self::InvalidPseudoHeader(name) => {
+            Self::PseudoHeaderAfterRegular => write!(f, "pseudo-header after regular header"),
+            Self::DisallowedPseudoHeader(name) => {
                 write!(
                     f,
-                    "invalid pseudo-header: {}",
+                    "pseudo-header not allowed in this context: {}",
+                    String::from_utf8_lossy(name)
+                )
+            }
+            Self::PseudoHeaderInTrailers(name) => {
+                write!(
+                    f,
+                    "pseudo-header not allowed in trailers: {}",
                     String::from_utf8_lossy(name)
                 )
             }
@@ -122,51 +133,15 @@ impl std::fmt::Display for ValidationError {
             Self::HostAuthorityMismatch => {
                 write!(f, "Host header differs from :authority pseudo-header")
             }
+            Self::AuthorityWithUserinfo => write!(f, ":authority must not include userinfo"),
             Self::MissingAuthority => {
                 write!(
                     f,
                     "http/https request must include :authority or Host header"
                 )
             }
-            Self::InvalidHeaderName(name) => {
-                write!(f, "invalid header name: {}", String::from_utf8_lossy(name))
-            }
-            Self::InvalidHeaderValue(value) => {
-                write!(
-                    f,
-                    "invalid header value: {}",
-                    String::from_utf8_lossy(value)
-                )
-            }
-            Self::InvalidStatusCode(value) => {
-                write!(f, "invalid status code: {}", String::from_utf8_lossy(value))
-            }
-            Self::AuthorityWithUserinfo => {
-                write!(f, ":authority must not include userinfo")
-            }
-            Self::InvalidProtocolValue(value) => {
-                write!(
-                    f,
-                    "invalid :protocol value: {}",
-                    String::from_utf8_lossy(value)
-                )
-            }
-            Self::InvalidMethodValue(value) => {
-                write!(
-                    f,
-                    "invalid :method value: {}",
-                    String::from_utf8_lossy(value)
-                )
-            }
-            Self::InvalidSchemeValue(value) => {
-                write!(
-                    f,
-                    "invalid :scheme value: {}",
-                    String::from_utf8_lossy(value)
-                )
-            }
-            Self::InvalidPathValue(value) => {
-                write!(f, "invalid :path value: {}", String::from_utf8_lossy(value))
+            Self::Status101NotSupported => {
+                write!(f, ":status 101 is not supported over HTTP/2")
             }
         }
     }
@@ -174,9 +149,13 @@ impl std::fmt::Display for ValidationError {
 
 impl std::error::Error for ValidationError {}
 
+impl From<HeaderFieldError> for ValidationError {
+    fn from(e: HeaderFieldError) -> Self {
+        Self::InvalidHeaderField(e)
+    }
+}
+
 /// RFC 3986 Section 6.2.3: scheme-based normalization でデフォルトポートを除去する
-///
-/// `host:80` (http) → `host`, `host:443` (https) → `host`
 fn strip_default_port<'a>(authority: &'a [u8], scheme: Option<&[u8]>) -> &'a [u8] {
     let default_port: &[u8] = match scheme {
         Some(s) if s.eq_ignore_ascii_case(b"http") => b":80",
@@ -184,6 +163,26 @@ fn strip_default_port<'a>(authority: &'a [u8], scheme: Option<&[u8]>) -> &'a [u8
         _ => return authority,
     };
     authority.strip_suffix(default_port).unwrap_or(authority)
+}
+
+/// 個別フィールドの構築時検査と等価のチェックを再実行する
+///
+/// HPACK decoder 経路で `from_validated_parts` 経由に構築された `HeaderField`
+/// は wire 上のバイト列を無検査で保持しているため、validation 層の入り口で
+/// `HeaderField::new` と同等の検査を直接行い、大文字 field-name や CRLF を
+/// 含む field-value 等を検出する。`HeaderField::new_with_sensitive` を呼ぶ
+/// 実装だと Vec を 2 個確保して即捨てるため、検査関数を直接呼んで alloc を回避する。
+fn check_field(header: &HeaderField) -> Result<(), Error> {
+    use crate::hpack::table::{validate_field_name, validate_field_value, validate_pseudo_header};
+    let name = header.name();
+    let value = header.value();
+    validate_field_name(name)
+        .map_err(|e| malformed_error(ValidationError::InvalidHeaderField(e)))?;
+    validate_field_value(name, value)
+        .map_err(|e| malformed_error(ValidationError::InvalidHeaderField(e)))?;
+    validate_pseudo_header(name, value)
+        .map_err(|e| malformed_error(ValidationError::InvalidHeaderField(e)))?;
+    Ok(())
 }
 
 /// リクエストヘッダーを検証する
@@ -207,7 +206,8 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
     let mut path_value: Option<&[u8]> = None;
 
     for header in headers {
-        let name = &header.name;
+        check_field(header)?;
+        let name = header.name();
 
         if name.starts_with(b":") {
             // 疑似ヘッダー
@@ -221,28 +221,16 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
                         ":method",
                     )));
                 }
-                // RFC 9110 Section 9.1: method = token
-                if !is_valid_token(&header.value) {
-                    return Err(malformed_error(ValidationError::InvalidMethodValue(
-                        header.value.clone(),
-                    )));
-                }
                 seen_method = true;
-                method = Some(&header.value);
+                method = Some(header.value());
             } else if name == pseudo_headers::SCHEME {
                 if seen_scheme {
                     return Err(malformed_error(ValidationError::DuplicatePseudoHeader(
                         ":scheme",
                     )));
                 }
-                // RFC 3986 Section 3.1: scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
-                if !is_valid_scheme(&header.value) {
-                    return Err(malformed_error(ValidationError::InvalidSchemeValue(
-                        header.value.clone(),
-                    )));
-                }
                 seen_scheme = true;
-                scheme_value = Some(&header.value);
+                scheme_value = Some(header.value());
             } else if name == pseudo_headers::AUTHORITY {
                 if seen_authority {
                     return Err(malformed_error(ValidationError::DuplicatePseudoHeader(
@@ -250,17 +238,17 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
                     )));
                 }
                 seen_authority = true;
-                authority_value = Some(&header.value);
+                authority_value = Some(header.value());
             } else if name == pseudo_headers::PATH {
                 if seen_path {
                     return Err(malformed_error(ValidationError::DuplicatePseudoHeader(
                         ":path",
                     )));
                 }
-                if header.value.is_empty() {
-                    return Err(malformed_error(ValidationError::EmptyPath));
-                }
-                path_value = Some(&header.value);
+                // 空 :path 自体は http/https スキーム依存の判定なので、
+                // ここでは値を保持するだけにし、後段の scheme 判定に委ねる
+                // (RFC 9113 §8.3.1: http/https URI では :path は MUST NOT empty)。
+                path_value = Some(header.value());
                 seen_path = true;
             } else if name == pseudo_headers::PROTOCOL {
                 if seen_protocol {
@@ -268,51 +256,36 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
                         ":protocol",
                     )));
                 }
-                // RFC 8441 Section 4: :protocol の値は HTTP Upgrade Token (token 形式)
-                if !is_valid_token(&header.value) {
-                    return Err(malformed_error(ValidationError::InvalidProtocolValue(
-                        header.value.clone(),
-                    )));
-                }
                 seen_protocol = true;
             } else if name == pseudo_headers::STATUS {
                 // :status はリクエストでは使用不可
-                return Err(malformed_error(ValidationError::InvalidPseudoHeader(
-                    name.clone(),
+                return Err(malformed_error(ValidationError::DisallowedPseudoHeader(
+                    name.to_vec(),
                 )));
             } else {
-                return Err(malformed_error(ValidationError::InvalidPseudoHeader(
-                    name.clone(),
+                // ここに到達するのは HeaderField::new で UnknownPseudoHeader として
+                // 弾かれるはずの疑似ヘッダー名 (check_field 経由で既に Err になる)。
+                // 防衛的に DisallowedPseudoHeader にフォールバックする。
+                return Err(malformed_error(ValidationError::DisallowedPseudoHeader(
+                    name.to_vec(),
                 )));
             }
-
-            // 疑似ヘッダーの値にも NUL/CR/LF チェック
-            validate_header_value_chars(&header.value)?;
         } else {
             // 通常ヘッダー
             past_pseudo = true;
 
-            // ヘッダー名の文字検証 (RFC 9110 Section 5.6.2 token ルール + 小文字強制)
-            validate_header_name_chars(name)?;
-
-            // ヘッダー値の文字検証 (NUL/CR/LF 禁止)
-            validate_header_value_chars(&header.value)?;
-
             // 禁止ヘッダーのチェック (リクエスト用: TE は "trailers" のみ許可)
-            validate_forbidden_header_for_request(name, &header.value)?;
+            validate_forbidden_header_for_request(name, header.value())?;
 
             // host ヘッダーの値を保持
             if name.eq_ignore_ascii_case(b"host") {
-                host_value = Some(&header.value);
+                host_value = Some(header.value());
             }
         }
     }
 
     // RFC 9113 Section 8.3.1: Host と :authority の不一致チェック
-    // RFC 9113 Section 8.3.1: 値の比較には正規化が必要 (RFC 3986 Section 6.2)。
-    // RFC 3986 Section 6.2.3 (scheme-based normalization):
-    // - ホスト名の大文字小文字正規化
-    // - デフォルトポートの正規化 (http:80, https:443 を除去)
+    // RFC 3986 Section 6.2.3 (scheme-based normalization) に従って正規化して比較する。
     if let (Some(authority), Some(host)) = (authority_value, host_value) {
         let norm_authority = strip_default_port(authority, scheme_value);
         let norm_host = strip_default_port(host, scheme_value);
@@ -328,7 +301,7 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
         )));
     }
 
-    // RFC 9113 Section 8.3.1: :authority の userinfo 禁止は http または https スキームの URI に限定
+    // RFC 9113 Section 8.3.1: :authority の userinfo 禁止は http/https/CONNECT に限定
     if let Some(authority) = authority_value
         && authority.contains(&b'@')
     {
@@ -344,7 +317,6 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
     if method == Some(b"CONNECT") {
         if seen_protocol {
             // Extended CONNECT (RFC 8441)
-            // :protocol が存在する場合、:scheme と :path が必須
             if !seen_scheme {
                 return Err(malformed_error(
                     ValidationError::ExtendedConnectMissingSchemeOrPath,
@@ -355,7 +327,6 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
                     ValidationError::ExtendedConnectMissingSchemeOrPath,
                 ));
             }
-            // :authority も必須
             if !seen_authority {
                 return Err(malformed_error(ValidationError::MissingPseudoHeader(
                     ":authority",
@@ -366,7 +337,6 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
             if seen_path || seen_scheme {
                 return Err(malformed_error(ValidationError::ConnectWithPathOrScheme));
             }
-            // CONNECT は :authority が必須（:path と :scheme は禁止）
             if !seen_authority {
                 return Err(malformed_error(ValidationError::MissingPseudoHeader(
                     ":authority",
@@ -402,16 +372,16 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
         }
 
         // RFC 9113 Section 8.3.1: http/https スキームでは :path は
-        // absolute-path ("/" で始まる) または asterisk-form ("*") でなければならない
+        // absolute-path ("/" で始まる) または asterisk-form ("*") でなければならない。
+        // この条件は HeaderField::new の :path 検査で既に弾かれるため、ここでは再検査しない。
+
+        // RFC 9113 Section 8.3.1: http/https スキームでは :path は空であってはならない
+        // ("This pseudo-header field MUST NOT be empty for 'http' or 'https' URIs")
         if let Some(scheme) = scheme_value
             && (scheme.eq_ignore_ascii_case(b"http") || scheme.eq_ignore_ascii_case(b"https"))
-            && let Some(path) = path_value
-            && path != b"*"
-            && !path.starts_with(b"/")
+            && path_value == Some(b"")
         {
-            return Err(malformed_error(ValidationError::InvalidPathValue(
-                path.to_vec(),
-            )));
+            return Err(malformed_error(ValidationError::EmptyPath));
         }
 
         // RFC 9113 Section 8.3.1: http/https スキームでは :authority または Host が必須
@@ -439,10 +409,10 @@ pub fn validate_response_headers(headers: &[HeaderField]) -> Result<(), Error> {
     let mut past_pseudo = false;
 
     for header in headers {
-        let name = &header.name;
+        check_field(header)?;
+        let name = header.name();
 
         if name.starts_with(b":") {
-            // 疑似ヘッダー
             if past_pseudo {
                 return Err(malformed_error(ValidationError::PseudoHeaderAfterRegular));
             }
@@ -453,43 +423,24 @@ pub fn validate_response_headers(headers: &[HeaderField]) -> Result<(), Error> {
                         ":status",
                     )));
                 }
-                // RFC 9113 Section 8.3.2: :status は HTTP status code field を運ぶ。
-                // HTTP status code は 3 桁の ASCII 数字でなければならない (RFC 9110 Section 15)。
-                // HTTP/2 は 101 (Switching Protocols) をサポートしない。
-                if header.value.len() != 3
-                    || !header.value.iter().all(|b| b.is_ascii_digit())
-                    || header.value == b"101"
-                {
-                    return Err(malformed_error(ValidationError::InvalidStatusCode(
-                        header.value.clone(),
-                    )));
+                // HeaderField::new で 3DIGIT 検査済み。
+                // RFC 9113 Section 8.6: HTTP/2 は 101 (Switching Protocols) をサポートしない
+                if header.value() == b"101" {
+                    return Err(malformed_error(ValidationError::Status101NotSupported));
                 }
                 seen_status = true;
             } else {
                 // レスポンスで許可されていない疑似ヘッダー
-                return Err(malformed_error(ValidationError::InvalidPseudoHeader(
-                    name.clone(),
+                return Err(malformed_error(ValidationError::DisallowedPseudoHeader(
+                    name.to_vec(),
                 )));
             }
-
-            // 疑似ヘッダーの値にも NUL/CR/LF チェック
-            validate_header_value_chars(&header.value)?;
         } else {
-            // 通常ヘッダー
             past_pseudo = true;
-
-            // ヘッダー名の文字検証 (RFC 9110 Section 5.6.2 token ルール + 小文字強制)
-            validate_header_name_chars(name)?;
-
-            // ヘッダー値の文字検証 (NUL/CR/LF 禁止)
-            validate_header_value_chars(&header.value)?;
-
-            // 禁止ヘッダーのチェック (レスポンス用: TE ヘッダー自体が禁止)
             validate_forbidden_header_for_response(name)?;
         }
     }
 
-    // 必須ヘッダーのチェック
     if !seen_status {
         return Err(malformed_error(ValidationError::MissingPseudoHeader(
             ":status",
@@ -508,123 +459,18 @@ pub fn validate_response_headers(headers: &[HeaderField]) -> Result<(), Error> {
 /// 不正なトレーラーの場合は `Error` を返す。
 pub fn validate_trailers(headers: &[HeaderField]) -> Result<(), Error> {
     for header in headers {
-        let name = &header.name;
+        check_field(header)?;
+        let name = header.name();
 
         // トレーラーに疑似ヘッダーは含められない
         if name.starts_with(b":") {
-            return Err(malformed_error(ValidationError::InvalidPseudoHeader(
-                name.clone(),
-            )));
-        }
-
-        // ヘッダー名の文字検証 (RFC 9110 Section 5.6.2 token ルール + 小文字強制)
-        validate_header_name_chars(name)?;
-
-        // ヘッダー値の文字検証 (NUL/CR/LF 禁止)
-        validate_header_value_chars(&header.value)?;
-
-        // 禁止ヘッダーのチェック (トレーラー用: TE ヘッダー自体が禁止)
-        validate_forbidden_header_for_response(name)?;
-    }
-
-    Ok(())
-}
-
-/// ヘッダー名が RFC 9110 Section 5.6.2 の token ルールに従うか検証する
-///
-/// token = 1*tchar
-/// tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." /
-///         "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
-///
-/// RFC 9113 Section 8.2: HTTP/2 ではフィールド名は小文字でなければならない。
-fn validate_header_name_chars(name: &[u8]) -> Result<(), Error> {
-    if name.is_empty() {
-        return Err(malformed_error(ValidationError::InvalidHeaderName(
-            name.to_vec(),
-        )));
-    }
-
-    for &b in name {
-        if !is_token_char(b) {
-            return Err(malformed_error(ValidationError::InvalidHeaderName(
+            return Err(malformed_error(ValidationError::PseudoHeaderInTrailers(
                 name.to_vec(),
             )));
         }
-    }
 
-    Ok(())
-}
-
-/// RFC 9110 token 文字かどうかを判定する (小文字のみ許可)
-const fn is_token_char(b: u8) -> bool {
-    matches!(b,
-        b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.' |
-        b'^' | b'_' | b'`' | b'|' | b'~' |
-        b'0'..=b'9' |
-        b'a'..=b'z'
-    )
-}
-
-/// RFC 9110 token 文字かどうかを判定する (大文字・小文字両方許可)
-///
-/// :protocol 値など、HTTP token 形式の値検証に使用する。
-const fn is_token_char_case_insensitive(b: u8) -> bool {
-    matches!(b,
-        b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.' |
-        b'^' | b'_' | b'`' | b'|' | b'~' |
-        b'0'..=b'9' |
-        b'a'..=b'z' |
-        b'A'..=b'Z'
-    )
-}
-
-/// バイト列が有効な HTTP token (1*tchar) かどうかを検証する
-fn is_valid_token(value: &[u8]) -> bool {
-    !value.is_empty() && value.iter().all(|&b| is_token_char_case_insensitive(b))
-}
-
-/// バイト列が有効な URI scheme かどうかを検証する
-///
-/// RFC 3986 Section 3.1: scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
-fn is_valid_scheme(value: &[u8]) -> bool {
-    if value.is_empty() {
-        return false;
-    }
-    if !value[0].is_ascii_alphabetic() {
-        return false;
-    }
-    value[1..]
-        .iter()
-        .all(|&b| b.is_ascii_alphanumeric() || b == b'+' || b == b'-' || b == b'.')
-}
-
-/// ヘッダー値に禁止文字が含まれていないか検証する
-///
-/// RFC 9110 Section 5.5: フィールド値に NUL (0x00), CR (0x0d), LF (0x0a) は禁止。
-/// RFC 9113 Section 8.2.1: フィールド値の先頭/末尾に SP (0x20) / HTAB (0x09) は禁止。
-fn validate_header_value_chars(value: &[u8]) -> Result<(), Error> {
-    // RFC 9113 Section 8.2.1: 先頭の SP/HTAB は禁止
-    if let Some(&first) = value.first()
-        && (first == 0x20 || first == 0x09)
-    {
-        return Err(malformed_error(ValidationError::InvalidHeaderValue(
-            value.to_vec(),
-        )));
-    }
-    // RFC 9113 Section 8.2.1: 末尾の SP/HTAB は禁止
-    if let Some(&last) = value.last()
-        && (last == 0x20 || last == 0x09)
-    {
-        return Err(malformed_error(ValidationError::InvalidHeaderValue(
-            value.to_vec(),
-        )));
-    }
-    for &b in value {
-        if b == 0x00 || b == 0x0d || b == 0x0a {
-            return Err(malformed_error(ValidationError::InvalidHeaderValue(
-                value.to_vec(),
-            )));
-        }
+        // 禁止ヘッダーのチェック (トレーラー用: TE ヘッダー自体が禁止)
+        validate_forbidden_header_for_response(name)?;
     }
 
     Ok(())
@@ -636,7 +482,6 @@ fn validate_header_value_chars(value: &[u8]) -> Result<(), Error> {
 fn validate_forbidden_header_for_request(name: &[u8], value: &[u8]) -> Result<(), Error> {
     validate_forbidden_header_common(name)?;
 
-    // RFC 9113 Section 8.2.2: TE ヘッダーはリクエストでのみ "trailers" 値に限り許可
     if name.eq_ignore_ascii_case(b"te") && !value.eq_ignore_ascii_case(TE_ALLOWED_VALUE) {
         return Err(malformed_error(ValidationError::InvalidTeHeader));
     }
@@ -651,7 +496,6 @@ fn validate_forbidden_header_for_request(name: &[u8], value: &[u8]) -> Result<()
 fn validate_forbidden_header_for_response(name: &[u8]) -> Result<(), Error> {
     validate_forbidden_header_common(name)?;
 
-    // RFC 9113 Section 8.2.2: レスポンス・トレーラーでは TE ヘッダーは禁止
     if name.eq_ignore_ascii_case(b"te") {
         return Err(malformed_error(ValidationError::ForbiddenHeader(
             name.to_vec(),
@@ -688,11 +532,9 @@ fn is_valid_connect_authority(authority: &[u8]) -> bool {
 
     // IPv6 リテラルの場合: [host]:port
     if authority.starts_with(b"[") {
-        // ']' を探す
         let Some(bracket_end) = authority.iter().position(|&b| b == b']') else {
             return false;
         };
-        // ']:' の後に port が続く必要がある
         let rest = &authority[bracket_end + 1..];
         if !rest.starts_with(b":") || rest.len() < 2 {
             return false;
@@ -704,11 +546,9 @@ fn is_valid_connect_authority(authority: &[u8]) -> bool {
     let Some(colon_pos) = authority.iter().rposition(|&b| b == b':') else {
         return false;
     };
-    // host 部分が空でないこと
     if colon_pos == 0 {
         return false;
     }
-    // port 部分が空でなく全て数字であること
     let port = &authority[colon_pos + 1..];
     !port.is_empty() && port.iter().all(|b| b.is_ascii_digit())
 }
@@ -722,13 +562,21 @@ fn malformed_error(validation_error: ValidationError) -> Error {
 mod tests {
     use super::*;
 
+    fn h(name: &str, value: &str) -> HeaderField {
+        HeaderField::new(name, value).unwrap()
+    }
+
+    fn h_unchecked(name: &[u8], value: &[u8]) -> HeaderField {
+        HeaderField::from_validated_parts(name.to_vec(), value.to_vec(), false)
+    }
+
     #[test]
     fn test_valid_get_request() {
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":authority", "example.com"),
+            h(":method", "GET"),
+            h(":scheme", "https"),
+            h(":path", "/"),
+            h(":authority", "example.com"),
         ];
 
         assert!(validate_request_headers(&headers).is_ok());
@@ -736,239 +584,196 @@ mod tests {
 
     #[test]
     fn test_valid_connect_request() {
-        let headers = vec![
-            HeaderField::from_str(":method", "CONNECT"),
-            HeaderField::from_str(":authority", "example.com:443"),
-        ];
-
+        let headers = vec![h(":method", "CONNECT"), h(":authority", "example.com:443")];
         assert!(validate_request_headers(&headers).is_ok());
     }
 
     #[test]
     fn test_missing_method() {
-        let headers = vec![
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-        ];
-
+        let headers = vec![h(":scheme", "https"), h(":path", "/")];
         assert!(validate_request_headers(&headers).is_err());
     }
 
     #[test]
     fn test_missing_scheme() {
-        let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":path", "/"),
-        ];
-
+        let headers = vec![h(":method", "GET"), h(":path", "/")];
         assert!(validate_request_headers(&headers).is_err());
     }
 
     #[test]
     fn test_missing_path() {
-        let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-        ];
-
+        let headers = vec![h(":method", "GET"), h(":scheme", "https")];
         assert!(validate_request_headers(&headers).is_err());
     }
 
     #[test]
     fn test_duplicate_method() {
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":method", "POST"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
+            h(":method", "GET"),
+            h(":method", "POST"),
+            h(":scheme", "https"),
+            h(":path", "/"),
         ];
-
         assert!(validate_request_headers(&headers).is_err());
     }
 
     #[test]
     fn test_pseudo_header_after_regular() {
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str("content-type", "text/html"),
-            HeaderField::from_str(":scheme", "https"),
+            h(":method", "GET"),
+            h("content-type", "text/html"),
+            h(":scheme", "https"),
         ];
-
         assert!(validate_request_headers(&headers).is_err());
     }
 
     #[test]
     fn test_forbidden_connection_header() {
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str("connection", "close"),
+            h(":method", "GET"),
+            h(":scheme", "https"),
+            h(":path", "/"),
+            h("connection", "close"),
         ];
-
         assert!(validate_request_headers(&headers).is_err());
     }
 
     #[test]
     fn test_forbidden_transfer_encoding() {
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str("transfer-encoding", "chunked"),
+            h(":method", "GET"),
+            h(":scheme", "https"),
+            h(":path", "/"),
+            h("transfer-encoding", "chunked"),
         ];
-
         assert!(validate_request_headers(&headers).is_err());
     }
 
     #[test]
     fn test_te_trailers_allowed() {
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":authority", "example.com"),
-            HeaderField::from_str("te", "trailers"),
+            h(":method", "GET"),
+            h(":scheme", "https"),
+            h(":path", "/"),
+            h(":authority", "example.com"),
+            h("te", "trailers"),
         ];
-
         assert!(validate_request_headers(&headers).is_ok());
     }
 
     #[test]
     fn test_te_gzip_forbidden() {
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str("te", "gzip"),
+            h(":method", "GET"),
+            h(":scheme", "https"),
+            h(":path", "/"),
+            h("te", "gzip"),
         ];
-
         assert!(validate_request_headers(&headers).is_err());
     }
 
     #[test]
     fn test_te_trailers_forbidden_in_response() {
-        // RFC 9113 Section 8.2.2: TE ヘッダーの例外はリクエストに限定される
-        let headers = vec![
-            HeaderField::from_str(":status", "200"),
-            HeaderField::from_str("te", "trailers"),
-        ];
-
+        // RFC 9113 §8.2.2: TE ヘッダーの例外はリクエストに限定される
+        let headers = vec![h(":status", "200"), h("te", "trailers")];
         assert!(validate_response_headers(&headers).is_err());
     }
 
     #[test]
     fn test_te_trailers_forbidden_in_trailers() {
-        // RFC 9113 Section 8.2.2: TE ヘッダーの例外はリクエストに限定される
-        let headers = vec![HeaderField::from_str("te", "trailers")];
-
+        let headers = vec![h("te", "trailers")];
         assert!(validate_trailers(&headers).is_err());
     }
 
     #[test]
-    fn test_uppercase_header_name() {
+    fn test_uppercase_header_name_via_decoder_path() {
+        // HPACK decoder 経路で from_validated_parts 経由に構築された大文字 name は
+        // check_field の再検査により InvalidHeaderField として弾かれる
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str("Content-Type", "text/html"),
+            h(":method", "GET"),
+            h(":scheme", "https"),
+            h(":path", "/"),
+            h_unchecked(b"Content-Type", b"text/html"),
         ];
-
         assert!(validate_request_headers(&headers).is_err());
     }
 
     #[test]
     fn test_empty_path() {
-        let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", ""),
-        ];
-
+        // 空 :path は HeaderField::new では通る (scheme 依存判定のため)
+        let headers = vec![h(":method", "GET"), h(":scheme", "https"), h(":path", "")];
         assert!(validate_request_headers(&headers).is_err());
     }
 
     #[test]
     fn test_connect_with_path() {
         let headers = vec![
-            HeaderField::from_str(":method", "CONNECT"),
-            HeaderField::from_str(":authority", "example.com:443"),
-            HeaderField::from_str(":path", "/"),
+            h(":method", "CONNECT"),
+            h(":authority", "example.com:443"),
+            h(":path", "/"),
         ];
-
         assert!(validate_request_headers(&headers).is_err());
     }
 
     #[test]
     fn test_valid_response() {
-        let headers = vec![
-            HeaderField::from_str(":status", "200"),
-            HeaderField::from_str("content-type", "text/html"),
-        ];
-
+        let headers = vec![h(":status", "200"), h("content-type", "text/html")];
         assert!(validate_response_headers(&headers).is_ok());
     }
 
     #[test]
     fn test_response_missing_status() {
-        let headers = vec![HeaderField::from_str("content-type", "text/html")];
-
+        let headers = vec![h("content-type", "text/html")];
         assert!(validate_response_headers(&headers).is_err());
     }
 
     #[test]
     fn test_response_with_method() {
-        let headers = vec![
-            HeaderField::from_str(":status", "200"),
-            HeaderField::from_str(":method", "GET"),
-        ];
-
+        let headers = vec![h(":status", "200"), h(":method", "GET")];
         assert!(validate_response_headers(&headers).is_err());
     }
 
     #[test]
     fn test_valid_trailers() {
-        let headers = vec![
-            HeaderField::from_str("x-checksum", "abc123"),
-            HeaderField::from_str("x-trailer", "value"),
-        ];
-
+        let headers = vec![h("x-checksum", "abc123"), h("x-trailer", "value")];
         assert!(validate_trailers(&headers).is_ok());
     }
 
     #[test]
     fn test_host_authority_mismatch() {
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":authority", "example.com"),
-            HeaderField::from_str("host", "other.com"),
+            h(":method", "GET"),
+            h(":scheme", "https"),
+            h(":path", "/"),
+            h(":authority", "example.com"),
+            h("host", "other.com"),
         ];
-
         assert!(validate_request_headers(&headers).is_err());
     }
 
     #[test]
     fn test_host_authority_match() {
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":authority", "example.com"),
-            HeaderField::from_str("host", "example.com"),
+            h(":method", "GET"),
+            h(":scheme", "https"),
+            h(":path", "/"),
+            h(":authority", "example.com"),
+            h("host", "example.com"),
         ];
-
         assert!(validate_request_headers(&headers).is_ok());
     }
 
     #[test]
     fn test_trailers_with_pseudo_header() {
-        let headers = vec![
-            HeaderField::from_str(":status", "200"),
-            HeaderField::from_str("x-trailer", "value"),
-        ];
-
+        let headers = vec![h(":status", "200"), h("x-trailer", "value")];
         assert!(validate_trailers(&headers).is_err());
+    }
+
+    #[test]
+    fn test_response_status_101_disallowed() {
+        // HeaderField::new は 101 を通す (3DIGIT 検査のみ)。
+        // 101 は HTTP/2 でサポートされないため validation 側で弾く。
+        let headers = vec![h(":status", "101")];
+        assert!(validate_response_headers(&headers).is_err());
     }
 }

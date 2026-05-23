@@ -8,4 +8,4 @@ publish = false
 proptest = "1.9"
 
 [dev-dependencies]
-shiguredo_http2 = { path = "../" }
+shiguredo_http2 = { path = "../", features = ["__test_helpers"] }

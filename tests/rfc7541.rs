@@ -47,8 +47,8 @@ fn test_c2_1_literal_header_with_indexing() {
 
     let headers = decoder.decode(&encoded).unwrap();
     assert_eq!(headers.len(), 1);
-    assert_eq!(headers[0].name, b"custom-key");
-    assert_eq!(headers[0].value, b"custom-header");
+    assert_eq!(headers[0].name(), b"custom-key");
+    assert_eq!(headers[0].value(), b"custom-header");
 
     // 動的テーブルにエントリが追加されていることを確認
     assert_eq!(decoder.dynamic_table().len(), 1);
@@ -66,8 +66,8 @@ fn test_c2_2_literal_header_without_indexing() {
 
     let headers = decoder.decode(&encoded).unwrap();
     assert_eq!(headers.len(), 1);
-    assert_eq!(headers[0].name, b":path");
-    assert_eq!(headers[0].value, b"/sample/path");
+    assert_eq!(headers[0].name(), b":path");
+    assert_eq!(headers[0].value(), b"/sample/path");
 
     // 動的テーブルにエントリが追加されていないことを確認
     assert_eq!(decoder.dynamic_table().len(), 0);
@@ -86,8 +86,8 @@ fn test_c2_3_literal_header_never_indexed() {
 
     let headers = decoder.decode(&encoded).unwrap();
     assert_eq!(headers.len(), 1);
-    assert_eq!(headers[0].name, b"password");
-    assert_eq!(headers[0].value, b"secret");
+    assert_eq!(headers[0].name(), b"password");
+    assert_eq!(headers[0].value(), b"secret");
 
     // 動的テーブルにエントリが追加されていないことを確認
     assert_eq!(decoder.dynamic_table().len(), 0);
@@ -103,8 +103,8 @@ fn test_c2_4_indexed_header_field() {
 
     let headers = decoder.decode(&encoded).unwrap();
     assert_eq!(headers.len(), 1);
-    assert_eq!(headers[0].name, b":method");
-    assert_eq!(headers[0].value, b"GET");
+    assert_eq!(headers[0].name(), b":method");
+    assert_eq!(headers[0].value(), b"GET");
 }
 
 /// C.3.1 - First Request (without Huffman)
@@ -124,17 +124,17 @@ fn test_c3_1_first_request() {
     let headers = decoder.decode(&encoded).unwrap();
     assert_eq!(headers.len(), 4);
 
-    assert_eq!(headers[0].name, b":method");
-    assert_eq!(headers[0].value, b"GET");
+    assert_eq!(headers[0].name(), b":method");
+    assert_eq!(headers[0].value(), b"GET");
 
-    assert_eq!(headers[1].name, b":scheme");
-    assert_eq!(headers[1].value, b"http");
+    assert_eq!(headers[1].name(), b":scheme");
+    assert_eq!(headers[1].value(), b"http");
 
-    assert_eq!(headers[2].name, b":path");
-    assert_eq!(headers[2].value, b"/");
+    assert_eq!(headers[2].name(), b":path");
+    assert_eq!(headers[2].value(), b"/");
 
-    assert_eq!(headers[3].name, b":authority");
-    assert_eq!(headers[3].value, b"www.example.com");
+    assert_eq!(headers[3].name(), b":authority");
+    assert_eq!(headers[3].value(), b"www.example.com");
 }
 
 /// C.4.1 - First Request (with Huffman)
@@ -155,17 +155,17 @@ fn test_c4_1_first_request_huffman() {
     let headers = decoder.decode(&encoded).unwrap();
     assert_eq!(headers.len(), 4);
 
-    assert_eq!(headers[0].name, b":method");
-    assert_eq!(headers[0].value, b"GET");
+    assert_eq!(headers[0].name(), b":method");
+    assert_eq!(headers[0].value(), b"GET");
 
-    assert_eq!(headers[1].name, b":scheme");
-    assert_eq!(headers[1].value, b"http");
+    assert_eq!(headers[1].name(), b":scheme");
+    assert_eq!(headers[1].value(), b"http");
 
-    assert_eq!(headers[2].name, b":path");
-    assert_eq!(headers[2].value, b"/");
+    assert_eq!(headers[2].name(), b":path");
+    assert_eq!(headers[2].value(), b"/");
 
-    assert_eq!(headers[3].name, b":authority");
-    assert_eq!(headers[3].value, b"www.example.com");
+    assert_eq!(headers[3].name(), b":authority");
+    assert_eq!(headers[3].value(), b"www.example.com");
 }
 
 /// C.5 - Response Examples without Huffman
@@ -190,14 +190,14 @@ fn test_c5_1_first_response() {
 
     let headers1 = decoder.decode(&encoded1).unwrap();
     assert_eq!(headers1.len(), 4);
-    assert_eq!(headers1[0].name, b":status");
-    assert_eq!(headers1[0].value, b"302");
-    assert_eq!(headers1[1].name, b"cache-control");
-    assert_eq!(headers1[1].value, b"private");
-    assert_eq!(headers1[2].name, b"date");
-    assert_eq!(headers1[2].value, b"Mon, 21 Oct 2013 20:13:21 GMT");
-    assert_eq!(headers1[3].name, b"location");
-    assert_eq!(headers1[3].value, b"https://www.example.com");
+    assert_eq!(headers1[0].name(), b":status");
+    assert_eq!(headers1[0].value(), b"302");
+    assert_eq!(headers1[1].name(), b"cache-control");
+    assert_eq!(headers1[1].value(), b"private");
+    assert_eq!(headers1[2].name(), b"date");
+    assert_eq!(headers1[2].value(), b"Mon, 21 Oct 2013 20:13:21 GMT");
+    assert_eq!(headers1[3].name(), b"location");
+    assert_eq!(headers1[3].value(), b"https://www.example.com");
 }
 
 /// Huffman encoding test for "www.example.com"
@@ -218,12 +218,12 @@ fn test_huffman_www_example_com() {
 #[test]
 fn test_encoder_decoder_roundtrip() {
     let headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/index.html"),
-        HeaderField::from_str(":authority", "www.example.com"),
-        HeaderField::from_str("accept", "text/html"),
-        HeaderField::from_str("accept-encoding", "gzip, deflate"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/index.html").unwrap(),
+        HeaderField::new(":authority", "www.example.com").unwrap(),
+        HeaderField::new("accept", "text/html").unwrap(),
+        HeaderField::new("accept-encoding", "gzip, deflate").unwrap(),
     ];
 
     let mut encoder = HpackEncoder::new(4096);
@@ -236,8 +236,8 @@ fn test_encoder_decoder_roundtrip() {
 
     assert_eq!(decoded.len(), headers.len());
     for (orig, dec) in headers.iter().zip(decoded.iter()) {
-        assert_eq!(orig.name, dec.name);
-        assert_eq!(orig.value, dec.value);
+        assert_eq!(orig.name(), dec.name());
+        assert_eq!(orig.value(), dec.value());
     }
 }
 
@@ -249,9 +249,9 @@ fn test_multiple_requests_dynamic_table() {
 
     // 最初のリクエスト
     let headers1 = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str("custom-header", "value1"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new("custom-header", "value1").unwrap(),
     ];
 
     let mut encoded1 = Vec::new();
@@ -262,9 +262,9 @@ fn test_multiple_requests_dynamic_table() {
 
     // 2番目のリクエスト（同じカスタムヘッダー名を使用）
     let headers2 = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":path", "/other"),
-        HeaderField::from_str("custom-header", "value2"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":path", "/other").unwrap(),
+        HeaderField::new("custom-header", "value2").unwrap(),
     ];
 
     let mut encoded2 = Vec::new();
@@ -272,9 +272,15 @@ fn test_multiple_requests_dynamic_table() {
 
     let decoded2 = decoder.decode(&encoded2).unwrap();
     assert_eq!(decoded2.len(), 3);
-    assert_eq!(decoded2[2].name, b"custom-header");
-    assert_eq!(decoded2[2].value, b"value2");
+    assert_eq!(decoded2[2].name(), b"custom-header");
+    assert_eq!(decoded2[2].value(), b"value2");
 
-    // 2番目のリクエストは動的テーブルを活用するため、より短くなるはず
-    // （ただし、これは最適化の度合いによる）
+    // 2 番目のリクエストは custom-header の name を動的テーブル参照で表現できるため、
+    // 1 回目より短くなる (RFC 7541 §2.3.2 動的テーブル活用)。
+    assert!(
+        encoded2.len() < encoded1.len(),
+        "second request should be shorter via dynamic table: encoded1={} encoded2={}",
+        encoded1.len(),
+        encoded2.len()
+    );
 }

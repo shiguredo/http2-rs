@@ -61,7 +61,7 @@ impl Decoder {
                 // Literal Header Field with Incremental Indexing (Section 6.2.1)
                 let (header, consumed) = self.decode_literal_indexed(&data[offset..])?;
                 self.dynamic_table
-                    .insert(header.name.clone(), header.value.clone());
+                    .insert_validated(header.name().to_vec(), header.value().to_vec());
                 headers.push(header);
                 offset += consumed;
                 seen_header = true;
@@ -117,13 +117,16 @@ impl Decoder {
         } else {
             // 既存の名前を参照
             let header = self.get_header_by_index(name_index as usize)?;
-            header.name
+            header.name().to_vec()
         };
 
         let (value, c) = self.decode_string(&data[consumed..])?;
         consumed += c;
 
-        Ok((HeaderField::new(name, value), consumed))
+        Ok((
+            HeaderField::from_validated_parts(name, value, false),
+            consumed,
+        ))
     }
 
     /// Literal Header Field without Indexing をデコードする (Section 6.2.2)
@@ -138,13 +141,16 @@ impl Decoder {
         } else {
             // 既存の名前を参照
             let header = self.get_header_by_index(name_index as usize)?;
-            header.name
+            header.name().to_vec()
         };
 
         let (value, c) = self.decode_string(&data[consumed..])?;
         consumed += c;
 
-        Ok((HeaderField::new(name, value), consumed))
+        Ok((
+            HeaderField::from_validated_parts(name, value, false),
+            consumed,
+        ))
     }
 
     /// Literal Header Field Never Indexed をデコードする (Section 6.2.3)
@@ -159,13 +165,16 @@ impl Decoder {
         } else {
             // 既存の名前を参照
             let header = self.get_header_by_index(name_index as usize)?;
-            header.name
+            header.name().to_vec()
         };
 
         let (value, c) = self.decode_string(&data[consumed..])?;
         consumed += c;
 
-        Ok((HeaderField::new_sensitive(name, value, true), consumed))
+        Ok((
+            HeaderField::from_validated_parts(name, value, true),
+            consumed,
+        ))
     }
 
     /// Dynamic Table Size Update をデコードする (Section 6.3)
@@ -245,8 +254,8 @@ mod tests {
         let headers = decoder.decode(&data).unwrap();
 
         assert_eq!(headers.len(), 1);
-        assert_eq!(headers[0].name, b":method");
-        assert_eq!(headers[0].value, b"GET");
+        assert_eq!(headers[0].name(), b":method");
+        assert_eq!(headers[0].value(), b"GET");
     }
 
     #[test]
@@ -263,8 +272,8 @@ mod tests {
         let headers = decoder.decode(&data).unwrap();
 
         assert_eq!(headers.len(), 1);
-        assert_eq!(headers[0].name, b":authority");
-        assert_eq!(headers[0].value, b"example.com");
+        assert_eq!(headers[0].name(), b":authority");
+        assert_eq!(headers[0].value(), b"example.com");
 
         // 動的テーブルに追加されていることを確認
         assert_eq!(decoder.dynamic_table().len(), 1);
@@ -276,11 +285,11 @@ mod tests {
         let mut decoder = Decoder::new(4096);
 
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":path", "/index.html"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":authority", "www.example.com"),
-            HeaderField::from_str("custom-header", "custom-value"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":path", "/index.html").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":authority", "www.example.com").unwrap(),
+            HeaderField::new("custom-header", "custom-value").unwrap(),
         ];
 
         let mut encoded = Vec::new();
@@ -290,8 +299,8 @@ mod tests {
 
         assert_eq!(decoded.len(), headers.len());
         for (original, decoded) in headers.iter().zip(decoded.iter()) {
-            assert_eq!(original.name, decoded.name);
-            assert_eq!(original.value, decoded.value);
+            assert_eq!(original.name(), decoded.name());
+            assert_eq!(original.value(), decoded.value());
         }
     }
 
@@ -326,9 +335,9 @@ mod tests {
         let headers = decoder.decode(&data).unwrap();
 
         assert_eq!(headers.len(), 1);
-        assert_eq!(headers[0].name, b"x-token");
-        assert_eq!(headers[0].value, b"secret");
-        assert!(headers[0].sensitive);
+        assert_eq!(headers[0].name(), b"x-token");
+        assert_eq!(headers[0].value(), b"secret");
+        assert!(headers[0].sensitive());
 
         // Never Indexed should not be added to dynamic table
         assert_eq!(decoder.dynamic_table().len(), 0);
@@ -348,9 +357,9 @@ mod tests {
         let headers = decoder.decode(&data).unwrap();
 
         assert_eq!(headers.len(), 1);
-        assert_eq!(headers[0].name, b":scheme");
-        assert_eq!(headers[0].value, b"https");
-        assert!(headers[0].sensitive);
+        assert_eq!(headers[0].name(), b":scheme");
+        assert_eq!(headers[0].value(), b"https");
+        assert!(headers[0].sensitive());
     }
 
     #[test]
@@ -359,9 +368,9 @@ mod tests {
         let mut decoder = Decoder::new(4096);
 
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::sensitive("authorization", "Bearer token"),
-            HeaderField::from_str(":path", "/"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new_with_sensitive("authorization", "Bearer token", true).unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
         ];
 
         let mut encoded = Vec::new();
@@ -370,11 +379,11 @@ mod tests {
         let decoded = decoder.decode(&encoded).unwrap();
 
         assert_eq!(decoded.len(), 3);
-        assert_eq!(decoded[0].name, b":method");
-        assert!(!decoded[0].sensitive);
-        assert_eq!(decoded[1].name, b"authorization");
-        assert!(decoded[1].sensitive);
-        assert_eq!(decoded[2].name, b":path");
-        assert!(!decoded[2].sensitive);
+        assert_eq!(decoded[0].name(), b":method");
+        assert!(!decoded[0].sensitive());
+        assert_eq!(decoded[1].name(), b"authorization");
+        assert!(decoded[1].sensitive());
+        assert_eq!(decoded[2].name(), b":path");
+        assert!(!decoded[2].sensitive());
     }
 }

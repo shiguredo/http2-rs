@@ -49,13 +49,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("TLS handshake completed");
 
     // リクエストを送信
+    // 固定リテラルは from_static でコンパイル時検査、動的値は new でランタイム検査する。
     let headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":path", path),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":authority", &format!("{host}:{port}")),
-        HeaderField::from_str("user-agent", "shiguredo-http2"),
-        HeaderField::from_str("accept", "*/*"),
+        HeaderField::from_static(b":method", b"GET"),
+        HeaderField::new(":path", path).unwrap(),
+        HeaderField::from_static(b":scheme", b"https"),
+        HeaderField::new(":authority", format!("{host}:{port}")).unwrap(),
+        HeaderField::from_static(b"user-agent", b"shiguredo-http2"),
+        HeaderField::from_static(b"accept", b"*/*"),
     ];
 
     let stream_id = client.send_request(headers, true).await?;
@@ -87,11 +88,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 for h in headers {
-                    if !h.name.starts_with(b":") {
+                    if !h.name().starts_with(b":") {
                         println!(
                             "  {}: {}",
-                            String::from_utf8_lossy(&h.name),
-                            String::from_utf8_lossy(&h.value)
+                            String::from_utf8_lossy(h.name()),
+                            String::from_utf8_lossy(h.value())
                         );
                     }
                 }
@@ -151,6 +152,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn find_header(headers: &[HeaderField], name: &str) -> Option<String> {
     headers
         .iter()
-        .find(|h| h.name == name.as_bytes())
-        .map(|h| String::from_utf8_lossy(&h.value).to_string())
+        .find(|h| h.name() == name.as_bytes())
+        .map(|h| String::from_utf8_lossy(h.value()).to_string())
 }

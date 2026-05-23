@@ -430,7 +430,7 @@ impl Connection {
         // 送信済みの場合のみ許可する。
         let has_protocol = headers
             .iter()
-            .any(|h| h.name == crate::validation::pseudo_headers::PROTOCOL);
+            .any(|h| h.name() == crate::validation::pseudo_headers::PROTOCOL);
         if has_protocol && !self.remote_settings.enable_connect_protocol {
             return Err(Error::invalid_input(
                 "cannot send :protocol without peer's SETTINGS_ENABLE_CONNECT_PROTOCOL=1",
@@ -464,13 +464,13 @@ impl Connection {
         // リクエストメソッドと :protocol を記録する
         if let Some(method_header) = headers
             .iter()
-            .find(|h| h.name == validation::pseudo_headers::METHOD)
+            .find(|h| h.name() == validation::pseudo_headers::METHOD)
         {
-            stream.set_request_method(method_header.value.clone());
+            stream.set_request_method(method_header.value().to_vec());
             let protocol_value = headers
                 .iter()
-                .find(|h| h.name == validation::pseudo_headers::PROTOCOL)
-                .map(|h| h.value.clone());
+                .find(|h| h.name() == validation::pseudo_headers::PROTOCOL)
+                .map(|h| h.value().to_vec());
             stream.set_has_protocol(protocol_value.is_some());
             if let Some(proto) = protocol_value {
                 stream.set_protocol(proto);
@@ -756,8 +756,8 @@ impl Connection {
 
         let is_informational = headers
             .iter()
-            .find(|h| h.name == validation::pseudo_headers::STATUS)
-            .is_some_and(|h| h.value.len() == 3 && h.value[0] == b'1');
+            .find(|h| h.name() == validation::pseudo_headers::STATUS)
+            .is_some_and(|h| h.value().len() == 3 && h.value()[0] == b'1');
 
         // RFC 9113 Section 8.1: 1xx 情報レスポンスに END_STREAM を付けてはならない
         // END_STREAM 付きの情報レスポンスは malformed である (Section 8.1.1)
@@ -808,8 +808,8 @@ impl Connection {
             // CONNECT トンネル確立済みフラグを設定する
             let status = headers
                 .iter()
-                .find(|h| h.name == validation::pseudo_headers::STATUS)
-                .map(|h| &h.value[..]);
+                .find(|h| h.name() == validation::pseudo_headers::STATUS)
+                .map(HeaderField::value);
             let is_2xx = status.is_some_and(|s| s.len() == 3 && s[0] == b'2');
             if is_2xx {
                 let is_connect = stream.request_method().is_some_and(|m| m == b"CONNECT");
@@ -1188,7 +1188,7 @@ impl Connection {
 
         // RFC 9113 Section 8.1: トレーラーは疑似ヘッダーを含まない
         // 疑似ヘッダーの有無でトレーラーかどうかを判定
-        let has_pseudo_header = headers.iter().any(|h| h.name.starts_with(b":"));
+        let has_pseudo_header = headers.iter().any(|h| h.name().starts_with(b":"));
 
         // RFC 9113 Section 8.1 / 8.3.1: 初回 HEADERS には疑似ヘッダーが必須
         if !has_pseudo_header {
@@ -1240,8 +1240,8 @@ impl Connection {
                     // 送信済みの場合のみ許可
                     let protocol_value = headers
                         .iter()
-                        .find(|h| h.name == validation::pseudo_headers::PROTOCOL)
-                        .map(|h| h.value.clone());
+                        .find(|h| h.name() == validation::pseudo_headers::PROTOCOL)
+                        .map(|h| h.value().to_vec());
                     let has_protocol = protocol_value.is_some();
                     if has_protocol && !self.local_settings.enable_connect_protocol {
                         return Err(Error::stream_error(
@@ -1254,8 +1254,8 @@ impl Connection {
                     // CONNECT フレーム制限 (修正 1) と Content-Length 例外 (修正 2) に使用
                     let method = headers
                         .iter()
-                        .find(|h| h.name == validation::pseudo_headers::METHOD)
-                        .map(|h| h.value.clone());
+                        .find(|h| h.name() == validation::pseudo_headers::METHOD)
+                        .map(|h| h.value().to_vec());
                     if let Some(method) = method {
                         let stream = self.streams.entry(stream_id).or_insert_with(|| {
                             Stream::new(
@@ -1277,8 +1277,8 @@ impl Connection {
                     // クライアント側: レスポンスステータスの判定
                     let status = headers
                         .iter()
-                        .find(|h| h.name == validation::pseudo_headers::STATUS)
-                        .map(|h| &h.value[..]);
+                        .find(|h| h.name() == validation::pseudo_headers::STATUS)
+                        .map(HeaderField::value);
 
                     // 通常 CONNECT の 2xx レスポンスで CONNECT 確立
                     let is_2xx = status.is_some_and(|s| s.len() == 3 && s[0] == b'2');
@@ -1349,8 +1349,8 @@ impl Connection {
                             // フラグを設定しない
                             let is_informational = headers
                                 .iter()
-                                .find(|h| h.name == validation::pseudo_headers::STATUS)
-                                .is_some_and(|h| h.value.len() == 3 && h.value[0] == b'1');
+                                .find(|h| h.name() == validation::pseudo_headers::STATUS)
+                                .is_some_and(|h| h.value().len() == 3 && h.value()[0] == b'1');
                             // RFC 9113 Section 8.1: END_STREAM 付きの情報レスポンス (1xx) は
                             // malformed である (Section 8.1.1)
                             if is_informational && end_stream {
@@ -1374,8 +1374,8 @@ impl Connection {
                             // 204/304 レスポンスはコンテンツを持たない
                             let status = headers
                                 .iter()
-                                .find(|h| h.name == validation::pseudo_headers::STATUS)
-                                .map(|h| &h.value[..]);
+                                .find(|h| h.name() == validation::pseudo_headers::STATUS)
+                                .map(HeaderField::value);
                             let is_no_content = status == Some(b"204") || status == Some(b"304");
                             // HEAD レスポンスはコンテンツを持たない
                             let is_head = stream.request_method().is_some_and(|m| m == b"HEAD");
@@ -1418,8 +1418,8 @@ impl Connection {
     fn extract_content_length(headers: &[HeaderField]) -> Result<Option<u64>> {
         let mut content_length: Option<u64> = None;
         for header in headers {
-            if header.name == b"content-length" {
-                let value_str = std::str::from_utf8(&header.value).map_err(|_| {
+            if header.name() == b"content-length" {
+                let value_str = std::str::from_utf8(header.value()).map_err(|_| {
                     Error::stream_error(ErrorCode::ProtocolError, "invalid content-length encoding")
                 })?;
                 let len: u64 = value_str.parse().map_err(|_| {
@@ -1922,10 +1922,7 @@ impl Connection {
     ///
     /// 各ヘッダーフィールドのサイズは名前と値のオクテット長に 32 を加えたもの。
     fn calculate_header_list_size(headers: &[HeaderField]) -> usize {
-        headers
-            .iter()
-            .map(|h| h.name.len() + h.value.len() + 32)
-            .sum()
+        headers.iter().map(HeaderField::size).sum()
     }
 
     /// フレームを出力バッファに書き込む
@@ -1944,7 +1941,7 @@ impl Connection {
 fn concatenate_cookies(headers: Vec<HeaderField>) -> Vec<HeaderField> {
     let cookie_count = headers
         .iter()
-        .filter(|h| h.name.eq_ignore_ascii_case(b"cookie"))
+        .filter(|h| h.name().eq_ignore_ascii_case(b"cookie"))
         .count();
     if cookie_count <= 1 {
         return headers;
@@ -1955,22 +1952,34 @@ fn concatenate_cookies(headers: Vec<HeaderField>) -> Vec<HeaderField> {
     let mut cookie_sensitive = false;
 
     for header in headers {
-        if header.name.eq_ignore_ascii_case(b"cookie") {
-            if header.sensitive {
+        if header.name().eq_ignore_ascii_case(b"cookie") {
+            if header.sensitive() {
                 cookie_sensitive = true;
             }
-            cookie_values.push(header.value);
+            // 空 cookie は RFC 6265 §4.2.1 (cookie-string = cookie-pair *( ";" SP cookie-pair ))
+            // の文法外。連結すると末尾 SP が生まれて field-value 規則を侵すため除外する。
+            let value = header.value();
+            if !value.is_empty() {
+                cookie_values.push(value.to_vec());
+            }
         } else {
             result.push(header);
         }
     }
 
+    if cookie_values.is_empty() {
+        return result;
+    }
+
     let concatenated = cookie_values.join(&b"; "[..]);
-    result.push(HeaderField {
-        name: b"cookie".to_vec(),
-        value: concatenated,
-        sensitive: cookie_sensitive,
-    });
+    // 連結後の cookie は HPACK decoder 経路で個別 cookie が既に検証済みの値であり、
+    // 区切り文字 "; " は ASCII、空 cookie は事前に除外しているため、両端 SP/HTAB は
+    // 発生しない。`from_validated_parts` で構築する。
+    result.push(HeaderField::from_validated_parts(
+        b"cookie".to_vec(),
+        concatenated,
+        cookie_sensitive,
+    ));
 
     result
 }

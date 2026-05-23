@@ -92,8 +92,8 @@ impl WtServerRequest {
     fn header(&self, name: &[u8]) -> Option<&[u8]> {
         self.headers
             .iter()
-            .find(|h| h.name == name)
-            .map(|h| h.value.as_slice())
+            .find(|h| h.name() == name)
+            .map(shiguredo_http2::HeaderField::value)
     }
 
     /// セッションを受け入れる
@@ -110,7 +110,7 @@ impl WtServerRequest {
         // draft-ietf-webtrans-http2-14 Section 3.2:
         // WebTransport セッション確立時はサーバーが 2xx ステータスを返し、
         // END_STREAM は立てない (Capsule Protocol で通信を継続する)。
-        let response = vec![HeaderField::from_str(":status", "200")];
+        let response = vec![HeaderField::from_static(b":status", b"200")];
         conn.send_response(stream_id, response, false).await?;
 
         // WtSession を作成して Active 状態にする
@@ -156,14 +156,27 @@ impl WtServerRequest {
     /// セッションを拒否する
     ///
     /// 指定した HTTP ステータスで END_STREAM 付きレスポンスを送信する。
+    ///
+    /// # Errors
+    ///
+    /// `status` が有効な HTTP ステータスコード (RFC 9110 §15: 100..=599) でない場合は
+    /// `Error::Io` を返す。
     pub async fn reject(self, status: u16) -> Result<()> {
         let Self {
             mut conn,
             stream_id,
             ..
         } = self;
+        if !(100..=599).contains(&status) {
+            return Err(crate::error::Error::Io(std::io::Error::other(format!(
+                "reject: status code must be in 100..=599 (RFC 9110 §15), got {status}"
+            ))));
+        }
         let status_str = status.to_string();
-        let response = vec![HeaderField::from_str(":status", &status_str)];
+        let response = vec![
+            HeaderField::new(":status", &status_str)
+                .expect("3-digit numeric status produces a valid :status header"),
+        ];
         conn.send_response(stream_id, response, true).await?;
         Ok(())
     }

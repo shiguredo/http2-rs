@@ -25,7 +25,7 @@ fn error_code_strategy() -> impl Strategy<Value = ErrorCode> {
 /// HeaderField を生成する Strategy
 fn header_field_strategy() -> impl Strategy<Value = HeaderField> {
     ("[a-z-]{1,20}", "[a-zA-Z0-9]{1,50}")
-        .prop_map(|(name, value)| HeaderField::from_str(&name, &value))
+        .prop_map(|(name, value)| HeaderField::new(&name, &value).unwrap())
 }
 
 /// ストリームレベルの Event を生成する Strategy

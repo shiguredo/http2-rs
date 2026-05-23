@@ -3,6 +3,20 @@
 use proptest::prelude::*;
 use shiguredo_http2::{HeaderField, validation};
 
+/// PBT で生成した「ランダム通常ヘッダー」が以下の場合は除外する:
+/// - リクエストで禁止 (RFC 9113 §8.2.2): connection / keep-alive / proxy-connection
+///   / transfer-encoding / upgrade / te
+/// - PBT で固定 authority と不一致を生む可能性がある: host
+const FORBIDDEN_FOR_VALIDATION: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "transfer-encoding",
+    "upgrade",
+    "te",
+    "host",
+];
+
 /// 有効なヘッダー名を生成する（小文字 ASCII）
 fn valid_header_name() -> impl Strategy<Value = Vec<u8>> {
     prop::collection::vec(
@@ -104,19 +118,19 @@ proptest! {
         ),
     ) {
         let mut headers = vec![
-            HeaderField::from_str(":method", method),
-            HeaderField::from_str(":scheme", scheme),
-            HeaderField::from_str(":path", &path),
-            HeaderField::from_str(":authority", &authority),
+            HeaderField::new(":method", method).unwrap(),
+            HeaderField::new(":scheme", scheme).unwrap(),
+            HeaderField::new(":path", &path).unwrap(),
+            HeaderField::new(":authority", &authority).unwrap(),
         ];
 
         for (name, value) in regular_headers {
             // 禁止ヘッダーを避ける
             let name_str = String::from_utf8_lossy(&name);
-            if !["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "te"]
+            if !FORBIDDEN_FOR_VALIDATION
                 .contains(&name_str.as_ref())
             {
-                headers.push(HeaderField::new(name, value));
+                headers.push(HeaderField::new(name, value).unwrap());
             }
         }
 
@@ -132,15 +146,15 @@ proptest! {
             0..=4
         ),
     ) {
-        let mut headers = vec![HeaderField::from_str(":status", &status)];
+        let mut headers = vec![HeaderField::new(":status", &status).unwrap()];
 
         for (name, value) in regular_headers {
             // 禁止ヘッダーを避ける
             let name_str = String::from_utf8_lossy(&name);
-            if !["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "te"]
+            if !FORBIDDEN_FOR_VALIDATION
                 .contains(&name_str.as_ref())
             {
-                headers.push(HeaderField::new(name, value));
+                headers.push(HeaderField::new(name, value).unwrap());
             }
         }
 
@@ -157,17 +171,17 @@ proptest! {
         ),
     ) {
         let mut headers = vec![
-            HeaderField::from_str(":method", "CONNECT"),
-            HeaderField::from_str(":authority", &authority),
+            HeaderField::new(":method", "CONNECT").unwrap(),
+            HeaderField::new(":authority", &authority).unwrap(),
         ];
 
         for (name, value) in regular_headers {
             // 禁止ヘッダーを避ける
             let name_str = String::from_utf8_lossy(&name);
-            if !["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "te"]
+            if !FORBIDDEN_FOR_VALIDATION
                 .contains(&name_str.as_ref())
             {
-                headers.push(HeaderField::new(name, value));
+                headers.push(HeaderField::new(name, value).unwrap());
             }
         }
 
@@ -187,10 +201,10 @@ proptest! {
         value in valid_header_value(),
     ) {
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::new(forbidden.as_bytes().to_vec(), value),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(forbidden.as_bytes(), value).unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -203,11 +217,13 @@ proptest! {
         suffix in "[a-z]{1,8}",
     ) {
         let name = format!("{prefix}X{suffix}"); // 大文字 X を挿入
+        // HeaderField::new は構築時に弾くため、validation 経路の検査を確認するには
+        // wire 上の不正データを模擬する from_validated_parts で構築する。
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(&name, "value"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::from_validated_parts(name.into_bytes(), b"value".to_vec(), false),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -223,13 +239,20 @@ proptest! {
         ],
     ) {
         let mut headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
         ];
 
-        // 重複を追加（:method, :scheme, :path のいずれか）
-        headers.push(HeaderField::from_str(pseudo, "duplicate"));
+        // 重複を追加。pseudo の値構文要件をかわすため、各 pseudo に対応した
+        // valid な値を選ぶ。
+        let dup_value: &str = match pseudo {
+            ":method" => "POST",
+            ":scheme" => "http",
+            ":path" => "/dup",
+            _ => "value",
+        };
+        headers.push(HeaderField::new(pseudo, dup_value).unwrap());
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
     }
@@ -242,11 +265,11 @@ proptest! {
         ],
     ) {
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str("content-type", "text/html"),
-            HeaderField::from_str(extra_pseudo, "value"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new("content-type", "text/html").unwrap(),
+            HeaderField::new(extra_pseudo, "example.com").unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -265,12 +288,12 @@ proptest! {
             .filter_map(|(name, value)| {
                 // 禁止ヘッダーを避ける
                 let name_str = String::from_utf8_lossy(&name);
-                if ["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "te"]
+                if FORBIDDEN_FOR_VALIDATION
                     .contains(&name_str.as_ref())
                 {
                     None
                 } else {
-                    Some(HeaderField::new(name, value))
+                    Some(HeaderField::new(name, value).unwrap())
                 }
             })
             .collect();
@@ -289,9 +312,17 @@ proptest! {
             Just(":authority"),
         ],
     ) {
+        // 各 pseudo の値構文要件をかわすため、対応した valid 値を選ぶ。
+        let value: &str = match pseudo {
+            ":status" => "200",
+            ":method" => "GET",
+            ":scheme" => "https",
+            ":path" => "/",
+            _ => "example.com",
+        };
         let headers = vec![
-            HeaderField::from_str(pseudo, "value"),
-            HeaderField::from_str("x-trailer", "value"),
+            HeaderField::new(pseudo, value).unwrap(),
+            HeaderField::new("x-trailer", "value").unwrap(),
         ];
 
         prop_assert!(validation::validate_trailers(&headers).is_err());
@@ -309,11 +340,11 @@ proptest! {
         ],
     ) {
         let headers = vec![
-            HeaderField::from_str(":method", "CONNECT"),
-            HeaderField::from_str(":scheme", scheme),
-            HeaderField::from_str(":path", &path),
-            HeaderField::from_str(":authority", &authority),
-            HeaderField::from_str(":protocol", protocol),
+            HeaderField::new(":method", "CONNECT").unwrap(),
+            HeaderField::new(":scheme", scheme).unwrap(),
+            HeaderField::new(":path", &path).unwrap(),
+            HeaderField::new(":authority", &authority).unwrap(),
+            HeaderField::new(":protocol", protocol).unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
@@ -326,10 +357,10 @@ proptest! {
         authority in "[a-z][a-z0-9]{0,10}\\.[a-z]{2,3}:[0-9]{1,5}",
     ) {
         let headers = vec![
-            HeaderField::from_str(":method", "CONNECT"),
-            HeaderField::from_str(":path", &path),
-            HeaderField::from_str(":authority", &authority),
-            HeaderField::from_str(":protocol", "webtransport"),
+            HeaderField::new(":method", "CONNECT").unwrap(),
+            HeaderField::new(":path", &path).unwrap(),
+            HeaderField::new(":authority", &authority).unwrap(),
+            HeaderField::new(":protocol", "webtransport").unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -342,10 +373,10 @@ proptest! {
         authority in "[a-z][a-z0-9]{0,10}\\.[a-z]{2,3}:[0-9]{1,5}",
     ) {
         let headers = vec![
-            HeaderField::from_str(":method", "CONNECT"),
-            HeaderField::from_str(":scheme", scheme),
-            HeaderField::from_str(":authority", &authority),
-            HeaderField::from_str(":protocol", "webtransport"),
+            HeaderField::new(":method", "CONNECT").unwrap(),
+            HeaderField::new(":scheme", scheme).unwrap(),
+            HeaderField::new(":authority", &authority).unwrap(),
+            HeaderField::new(":protocol", "webtransport").unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -362,11 +393,11 @@ proptest! {
         let host = format!("{authority}.{host_suffix}");
         prop_assume!(authority != host);
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", scheme),
-            HeaderField::from_str(":path", &path),
-            HeaderField::from_str(":authority", &authority),
-            HeaderField::from_str("host", &host),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", scheme).unwrap(),
+            HeaderField::new(":path", &path).unwrap(),
+            HeaderField::new(":authority", &authority).unwrap(),
+            HeaderField::new("host", &host).unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -380,11 +411,11 @@ proptest! {
         path in http_path(),
     ) {
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", scheme),
-            HeaderField::from_str(":path", &path),
-            HeaderField::from_str(":authority", &authority),
-            HeaderField::from_str("host", &authority),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", scheme).unwrap(),
+            HeaderField::new(":path", &path).unwrap(),
+            HeaderField::new(":authority", &authority).unwrap(),
+            HeaderField::new("host", &authority).unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
@@ -403,10 +434,10 @@ proptest! {
         path in http_path(),
     ) {
         let headers = vec![
-            HeaderField::from_str(":method", method),
-            HeaderField::from_str(":scheme", scheme),
-            HeaderField::from_str(":path", &path),
-            HeaderField::from_str(":protocol", "webtransport"),
+            HeaderField::new(":method", method).unwrap(),
+            HeaderField::new(":scheme", scheme).unwrap(),
+            HeaderField::new(":path", &path).unwrap(),
+            HeaderField::new(":protocol", "webtransport").unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -420,9 +451,9 @@ proptest! {
         path in http_path(),
     ) {
         let headers = vec![
-            HeaderField::from_str(":method", method),
-            HeaderField::from_str(":scheme", scheme),
-            HeaderField::from_str(":path", &path),
+            HeaderField::new(":method", method).unwrap(),
+            HeaderField::new(":scheme", scheme).unwrap(),
+            HeaderField::new(":path", &path).unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -437,10 +468,10 @@ proptest! {
         host in "[a-z][a-z0-9]{0,10}\\.[a-z]{2,3}",
     ) {
         let headers = vec![
-            HeaderField::from_str(":method", method),
-            HeaderField::from_str(":scheme", scheme),
-            HeaderField::from_str(":path", &path),
-            HeaderField::from_str("host", &host),
+            HeaderField::new(":method", method).unwrap(),
+            HeaderField::new(":scheme", scheme).unwrap(),
+            HeaderField::new(":path", &path).unwrap(),
+            HeaderField::new("host", &host).unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
@@ -462,11 +493,13 @@ proptest! {
         name.extend_from_slice(suffix.as_bytes());
 
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":authority", "example.com"),
-            HeaderField::new(name, b"value".to_vec()),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":authority", "example.com").unwrap(),
+            // HeaderField::new は構築時に弾くため、wire 由来データを模擬するために
+            // from_validated_parts を使って validation 経路の検査を確認する。
+            HeaderField::from_validated_parts(name, b"value".to_vec(), false),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -483,11 +516,11 @@ proptest! {
         value.extend_from_slice(suffix.as_bytes());
 
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":authority", "example.com"),
-            HeaderField::new(b"x-test".to_vec(), value),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":authority", "example.com").unwrap(),
+            HeaderField::from_validated_parts(b"x-test".to_vec(), value, false),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -505,11 +538,11 @@ proptest! {
         value.extend_from_slice(suffix.as_bytes());
 
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":authority", "example.com"),
-            HeaderField::new(b"x-test".to_vec(), value),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":authority", "example.com").unwrap(),
+            HeaderField::from_validated_parts(b"x-test".to_vec(), value, false),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -523,14 +556,14 @@ proptest! {
             0..=4
         ),
     ) {
-        let mut headers = vec![HeaderField::from_str(":status", "101")];
+        let mut headers = vec![HeaderField::new(":status", "101").unwrap()];
 
         for (name, value) in regular_headers {
             let name_str = String::from_utf8_lossy(&name);
-            if !["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "te"]
+            if !FORBIDDEN_FOR_VALIDATION
                 .contains(&name_str.as_ref())
             {
-                headers.push(HeaderField::new(name, value));
+                headers.push(HeaderField::new(name, value).unwrap());
             }
         }
 
@@ -547,11 +580,11 @@ proptest! {
         value.extend_from_slice(body.as_bytes());
 
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":authority", "example.com"),
-            HeaderField::new(b"x-test".to_vec(), value),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":authority", "example.com").unwrap(),
+            HeaderField::from_validated_parts(b"x-test".to_vec(), value, false),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -567,11 +600,11 @@ proptest! {
         value.push(ws);
 
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":authority", "example.com"),
-            HeaderField::new(b"x-test".to_vec(), value),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":authority", "example.com").unwrap(),
+            HeaderField::from_validated_parts(b"x-test".to_vec(), value, false),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -586,11 +619,11 @@ proptest! {
         let value = format!("{prefix} {suffix}").into_bytes();
 
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":authority", "example.com"),
-            HeaderField::new(b"x-test".to_vec(), value),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":authority", "example.com").unwrap(),
+            HeaderField::from_validated_parts(b"x-test".to_vec(), value, false),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
@@ -603,8 +636,8 @@ proptest! {
     ) {
         // host のみ (ポートなし) は authority-form ではないため拒否される
         let headers = vec![
-            HeaderField::from_str(":method", "CONNECT"),
-            HeaderField::from_str(":authority", &host),
+            HeaderField::new(":method", "CONNECT").unwrap(),
+            HeaderField::new(":authority", &host).unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -618,8 +651,8 @@ proptest! {
     ) {
         let authority = format!("{host}:{port}");
         let headers = vec![
-            HeaderField::from_str(":method", "CONNECT"),
-            HeaderField::from_str(":authority", &authority),
+            HeaderField::new(":method", "CONNECT").unwrap(),
+            HeaderField::new(":authority", &authority).unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
@@ -632,8 +665,8 @@ proptest! {
     ) {
         let authority = format!("[::1]:{port}");
         let headers = vec![
-            HeaderField::from_str(":method", "CONNECT"),
-            HeaderField::from_str(":authority", &authority),
+            HeaderField::new(":method", "CONNECT").unwrap(),
+            HeaderField::new(":authority", &authority).unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
@@ -652,10 +685,10 @@ proptest! {
         ],
     ) {
         let headers = vec![
-            HeaderField::from_str(":method", method),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "*"),
-            HeaderField::from_str(":authority", "example.com"),
+            HeaderField::new(":method", method).unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", "*").unwrap(),
+            HeaderField::new(":authority", "example.com").unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -667,10 +700,10 @@ proptest! {
         scheme in http_scheme(),
     ) {
         let headers = vec![
-            HeaderField::from_str(":method", "OPTIONS"),
-            HeaderField::from_str(":scheme", scheme),
-            HeaderField::from_str(":path", "*"),
-            HeaderField::from_str(":authority", "example.com"),
+            HeaderField::new(":method", "OPTIONS").unwrap(),
+            HeaderField::new(":scheme", scheme).unwrap(),
+            HeaderField::new(":path", "*").unwrap(),
+            HeaderField::new(":authority", "example.com").unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
@@ -685,10 +718,10 @@ proptest! {
     ) {
         let authority = format!("{user}@{host}");
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", scheme),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":authority", &authority),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", scheme).unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":authority", &authority).unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -702,10 +735,10 @@ proptest! {
     ) {
         let authority = format!("{user}@{host}");
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "ftp"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":authority", &authority),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "ftp").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":authority", &authority).unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());

@@ -13,15 +13,40 @@ enum TableOp {
     Clear,
 }
 
-/// バイト列を生成する (ASCII のみ、適度な長さ)
-fn byte_string() -> impl Strategy<Value = Vec<u8>> {
-    prop::collection::vec(0x20u8..=0x7e, 0..100)
+/// HPACK 動的テーブルに挿入可能な field-name を生成する
+/// (token-lowercase + 数字 + '-' + '_', 非空)
+fn valid_name() -> impl Strategy<Value = Vec<u8>> {
+    prop::collection::vec(
+        prop::sample::select(
+            (b'a'..=b'z')
+                .chain(b'0'..=b'9')
+                .chain([b'-', b'_'])
+                .collect::<Vec<_>>(),
+        ),
+        1..100,
+    )
+}
+
+/// HPACK 動的テーブルに挿入可能な field-value を生成する
+///
+/// RFC 9113 §8.2.1: visible ASCII + 内部 SP/HTAB 許容、両端 SP/HTAB は除去、
+/// NUL/CR/LF は構築時検査で禁止。
+fn valid_value() -> impl Strategy<Value = Vec<u8>> {
+    prop::collection::vec(0x20u8..=0x7e, 0..100).prop_map(|v| {
+        v.iter()
+            .position(|&b| b != 0x20 && b != 0x09)
+            .map(|start| {
+                let end = v.iter().rposition(|&b| b != 0x20 && b != 0x09).unwrap();
+                v[start..=end].to_vec()
+            })
+            .unwrap_or_default()
+    })
 }
 
 /// テーブル操作の Strategy
 fn table_op() -> impl Strategy<Value = TableOp> {
     prop_oneof![
-        (byte_string(), byte_string()).prop_map(|(name, value)| TableOp::Insert { name, value }),
+        (valid_name(), valid_value()).prop_map(|(name, value)| TableOp::Insert { name, value }),
         (0..10000usize).prop_map(TableOp::SetMaxSize),
         Just(TableOp::Clear),
     ]
@@ -46,7 +71,7 @@ proptest! {
         for op in ops {
             match op {
                 TableOp::Insert { name, value } => {
-                    table.insert(name, value);
+                    table.insert(name, value).unwrap();
                 }
                 TableOp::SetMaxSize(new_max) => {
                     table.set_max_size(new_max);
@@ -72,12 +97,12 @@ proptest! {
     #[test]
     fn prop_size_equals_sum_of_entries(
         max_size in 100..10000usize,
-        entries in prop::collection::vec((byte_string(), byte_string()), 0..20),
+        entries in prop::collection::vec((valid_name(), valid_value()), 0..20),
     ) {
         let mut table = DynamicTable::new(max_size);
 
         for (name, value) in entries {
-            table.insert(name, value);
+            table.insert(name, value).unwrap();
         }
 
         // 全エントリのサイズの合計を計算
@@ -101,17 +126,17 @@ proptest! {
     #[test]
     fn prop_fifo_order(
         max_size in 1000..10000usize,
-        entries in prop::collection::vec((byte_string(), byte_string()), 1..10),
+        entries in prop::collection::vec((valid_name(), valid_value()), 1..10),
     ) {
         let mut table = DynamicTable::new(max_size);
 
         for (name, value) in &entries {
-            table.insert(name.clone(), value.clone());
+            table.insert(name.clone(), value.clone()).unwrap();
 
             // 最新のエントリは常に index 0
             let newest = table.get(0).unwrap();
-            prop_assert_eq!(&newest.name, name);
-            prop_assert_eq!(&newest.value, value);
+            prop_assert_eq!(newest.name(), name);
+            prop_assert_eq!(newest.value(), value);
         }
     }
 
@@ -121,14 +146,14 @@ proptest! {
     #[test]
     fn prop_oversized_entry_clears_table(
         max_size in 50..500usize,
-        initial_entries in prop::collection::vec((byte_string(), byte_string()), 1..5),
+        initial_entries in prop::collection::vec((valid_name(), valid_value()), 1..5),
     ) {
         let mut table = DynamicTable::new(max_size);
 
         // 初期エントリを追加
         for (name, value) in initial_entries {
             if entry_size(&name, &value) <= max_size {
-                table.insert(name, value);
+                table.insert(name, value).unwrap();
             }
         }
 
@@ -139,7 +164,7 @@ proptest! {
         let large_value = vec![b'y'; 1];
         prop_assert!(entry_size(&large_name, &large_value) > max_size);
 
-        table.insert(large_name, large_value);
+        table.insert(large_name, large_value).unwrap();
 
         // テーブルはクリアされる
         prop_assert!(table.is_empty(), "Table should be empty after oversized insert");
@@ -157,14 +182,14 @@ proptest! {
     #[test]
     fn prop_set_max_size_immediate_eviction(
         initial_max in 500..5000usize,
-        entries in prop::collection::vec((byte_string(), byte_string()), 1..10),
+        entries in prop::collection::vec((valid_name(), valid_value()), 1..10),
         new_max in 0..500usize,
     ) {
         let mut table = DynamicTable::new(initial_max);
 
         // エントリを追加
         for (name, value) in entries {
-            table.insert(name, value);
+            table.insert(name, value).unwrap();
         }
 
         // max_size を減少
@@ -186,15 +211,15 @@ proptest! {
     #[test]
     fn prop_find_consistency(
         max_size in 1000..10000usize,
-        name in byte_string(),
-        value in byte_string(),
+        name in valid_name(),
+        value in valid_value(),
     ) {
         // エントリが max_size に収まる場合のみテスト
         let size = entry_size(&name, &value);
         prop_assume!(size <= max_size);
 
         let mut table = DynamicTable::new(max_size);
-        table.insert(name.clone(), value.clone());
+        table.insert(name.clone(), value.clone()).unwrap();
 
         // 完全一致で見つかる
         let result = table.find(&name, &value);
@@ -207,15 +232,15 @@ proptest! {
     #[test]
     fn prop_find_name_only_match(
         max_size in 1000..10000usize,
-        name in byte_string(),
-        value1 in byte_string(),
-        value2 in byte_string(),
+        name in valid_name(),
+        value1 in valid_value(),
+        value2 in valid_value(),
     ) {
         prop_assume!(value1 != value2);
         prop_assume!(entry_size(&name, &value1) <= max_size);
 
         let mut table = DynamicTable::new(max_size);
-        table.insert(name.clone(), value1);
+        table.insert(name.clone(), value1).unwrap();
 
         // 名前のみ一致
         let result = table.find(&name, &value2);
@@ -228,15 +253,15 @@ proptest! {
     #[test]
     fn prop_find_not_found(
         max_size in 100..1000usize,
-        name1 in byte_string(),
-        value1 in byte_string(),
-        name2 in byte_string(),
+        name1 in valid_name(),
+        value1 in valid_value(),
+        name2 in valid_name(),
     ) {
         prop_assume!(name1 != name2);
         prop_assume!(entry_size(&name1, &value1) <= max_size);
 
         let mut table = DynamicTable::new(max_size);
-        table.insert(name1, value1);
+        table.insert(name1, value1).unwrap();
 
         // 異なる名前は見つからない
         let result = table.find(&name2, b"any");
@@ -249,13 +274,13 @@ proptest! {
     /// 数学的意義: RFC 7541 Section 4.1 準拠
     #[test]
     fn prop_entry_size_formula(
-        name in byte_string(),
-        value in byte_string(),
+        name in valid_name(),
+        value in valid_value(),
     ) {
         let expected = name.len() + value.len() + 32;
 
         let mut table = DynamicTable::new(expected + 100);
-        table.insert(name.clone(), value.clone());
+        table.insert(name.clone(), value.clone()).unwrap();
 
         let entry = table.get(0).unwrap();
         prop_assert_eq!(
@@ -271,13 +296,13 @@ proptest! {
     #[test]
     fn prop_clear_resets_state(
         max_size in 100..10000usize,
-        entries in prop::collection::vec((byte_string(), byte_string()), 1..20),
+        entries in prop::collection::vec((valid_name(), valid_value()), 1..20),
     ) {
         let mut table = DynamicTable::new(max_size);
 
         // エントリを追加
         for (name, value) in entries {
-            table.insert(name, value);
+            table.insert(name, value).unwrap();
         }
 
         // クリア
@@ -304,21 +329,21 @@ proptest! {
         let num_entries = max_size / small_entry_size;
 
         for i in 0..num_entries {
-            table.insert(format!("n{i:02}").into_bytes(), vec![b'v']);
+            table.insert(format!("n{i:02}").into_bytes(), vec![b'v']).unwrap();
         }
 
         prop_assert_eq!(table.len(), num_entries);
 
         // 追加のエントリを挿入 -> 最も古いエントリが削除される
-        table.insert(b"new".to_vec(), vec![b'v']);
+        table.insert(b"new", vec![b'v']).unwrap();
 
         // 最新のエントリが index 0 にある
-        prop_assert_eq!(&table.get(0).unwrap().name, b"new");
+        prop_assert_eq!(table.get(0).unwrap().name(), b"new");
 
         // 最も古いエントリ (n00) は削除されている
         let mut found_n00 = false;
         for i in 0..table.len() {
-            if table.get(i).unwrap().name == b"n00" {
+            if table.get(i).unwrap().name() == b"n00" {
                 found_n00 = true;
                 break;
             }
@@ -332,13 +357,13 @@ proptest! {
     #[test]
     fn prop_set_max_size_zero_clears(
         initial_max in 100..1000usize,
-        entries in prop::collection::vec((byte_string(), byte_string()), 1..5),
+        entries in prop::collection::vec((valid_name(), valid_value()), 1..5),
     ) {
         let mut table = DynamicTable::new(initial_max);
 
         for (name, value) in entries {
             if entry_size(&name, &value) <= initial_max {
-                table.insert(name, value);
+                table.insert(name, value).unwrap();
             }
         }
 
@@ -355,14 +380,14 @@ proptest! {
     #[test]
     fn prop_get_by_absolute_index(
         max_size in 1000..10000usize,
-        entries in prop::collection::vec((byte_string(), byte_string()), 1..5),
+        entries in prop::collection::vec((valid_name(), valid_value()), 1..5),
     ) {
         let mut table = DynamicTable::new(max_size);
         let mut inserted: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
 
         for (name, value) in entries {
             if entry_size(&name, &value) <= max_size {
-                table.insert(name.clone(), value.clone());
+                table.insert(name.clone(), value.clone()).unwrap();
                 inserted.push((name, value));
             }
         }
@@ -377,8 +402,8 @@ proptest! {
         for (i, (name, value)) in inserted.iter().rev().enumerate() {
             let abs_index = 62 + i;
             if let Some(entry) = table.get_by_absolute_index(abs_index) {
-                prop_assert_eq!(&entry.name, name);
-                prop_assert_eq!(&entry.value, value);
+                prop_assert_eq!(entry.name(), name);
+                prop_assert_eq!(entry.value(), value);
             }
         }
     }
@@ -389,7 +414,7 @@ proptest! {
     #[test]
     fn prop_size_tracking_accuracy(
         max_size in 1000..10000usize,
-        entries in prop::collection::vec((byte_string(), byte_string()), 0..20),
+        entries in prop::collection::vec((valid_name(), valid_value()), 0..20),
     ) {
         let mut table = DynamicTable::new(max_size);
 
@@ -397,7 +422,7 @@ proptest! {
             let size_before = table.size();
             let entry_sz = entry_size(&name, &value);
 
-            table.insert(name, value);
+            table.insert(name, value).unwrap();
 
             // エントリが追加された場合、サイズは増加する
             // eviction が発生した場合、サイズは減少する可能性がある
