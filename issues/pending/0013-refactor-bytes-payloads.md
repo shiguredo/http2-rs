@@ -3,6 +3,19 @@
 - Created: 2026-05-07
 - Model: Opus 4.7
 
+## Pending 理由
+
+2026-05-23 時点で `issues/pending/` に退避。
+
+`shiguredo_http2` ルートクレートに `bytes` クレート (1.x) を依存追加する設計判断が
+保留となったため、本 issue 全体を一時的に pending とする。
+
+`bytes` 依存が決定したタイミングで reopen する。なお、本 issue で対象としていた
+`HeaderField` の `Vec<u8>` → `Bytes` 置換のうち、`from_static` を const fn 化する
+要求は issue 0024 で `enum HeaderBytes { Static(&'static [u8]), Owned(Vec<u8>) }`
+として依存ゼロで実装する方針となったため、本 issue を reopen する際は
+スコープから `HeaderField` 関連を除外する必要がある。
+
 ## 概要
 
 `shiguredo_http2` ルートクレートに `bytes` クレート (1.x) を依存追加し、HTTP/2 protocol 層 (frame, HPACK, event) と WebTransport 層 (capsule, event, session) のバイト列ペイロードを `Vec<u8>` から `bytes::Bytes` / `bytes::BytesMut` に置換する。
