@@ -158,8 +158,8 @@ async fn handle_connection(
 fn find_header(headers: &[HeaderField], name: &str) -> Option<String> {
     headers
         .iter()
-        .find(|h| h.name == name.as_bytes())
-        .map(|h| String::from_utf8_lossy(&h.value).to_string())
+        .find(|h| h.name() == name.as_bytes())
+        .map(|h| String::from_utf8_lossy(h.value()).to_string())
 }
 
 async fn send_response(
@@ -173,11 +173,12 @@ async fn send_response(
         _ => ("404", "Not Found\n"),
     };
 
+    // 固定リテラルは from_static でコンパイル時検査、動的値は new でランタイム検査する。
     let headers = vec![
-        HeaderField::from_str(":status", status),
-        HeaderField::from_str("content-type", "text/plain; charset=utf-8"),
-        HeaderField::from_str("content-length", &body.len().to_string()),
-        HeaderField::from_str("server", "shiguredo-http2"),
+        HeaderField::new(":status", status).unwrap(),
+        HeaderField::from_static(b"content-type", b"text/plain; charset=utf-8"),
+        HeaderField::new("content-length", body.len().to_string()).unwrap(),
+        HeaderField::from_static(b"server", b"shiguredo-http2"),
     ];
 
     conn.send_response(stream_id, headers, false).await?;

@@ -61,12 +61,37 @@ impl DynamicTable {
         self.evict();
     }
 
-    /// エントリを追加する
+    /// エントリを追加する (検査つき)
     ///
-    /// 新しいエントリは先頭に追加される。
-    /// サイズ制限を超える場合、古いエントリが削除される。
-    pub fn insert(&mut self, name: Vec<u8>, value: Vec<u8>) {
-        let entry = HeaderField::new(name, value);
+    /// `name` / `value` は [`HeaderField::new`] で検査され、不正な場合は
+    /// エントリを追加せずに `Err` を返す。
+    ///
+    /// HPACK encoder / decoder 内部経路で wire 上のデータを直接挿入する場合は
+    /// [`Self::insert_validated`] を使う。
+    ///
+    /// # Errors
+    ///
+    /// field-name / field-value の構文違反時は [`HeaderFieldError`] を返す。
+    pub fn insert(
+        &mut self,
+        name: impl AsRef<[u8]>,
+        value: impl AsRef<[u8]>,
+    ) -> Result<(), crate::hpack::HeaderFieldError> {
+        let entry = HeaderField::new(name, value)?;
+        self.insert_entry(entry);
+        Ok(())
+    }
+
+    /// 検証済みバイト列からエントリを追加する (crate 内部限定)
+    ///
+    /// HPACK encoder / decoder 経路で wire 上のデータをそのまま挿入する場合に使う。
+    /// 下流の利用者は [`Self::insert`] のみを使う。
+    pub(crate) fn insert_validated(&mut self, name: Vec<u8>, value: Vec<u8>) {
+        let entry = HeaderField::from_validated_parts(name, value, false);
+        self.insert_entry(entry);
+    }
+
+    fn insert_entry(&mut self, entry: HeaderField) {
         let entry_size = entry.size();
 
         // エントリが最大サイズより大きい場合、テーブルをクリアする
@@ -122,8 +147,8 @@ impl DynamicTable {
         let mut name_match = None;
 
         for (i, entry) in self.entries.iter().enumerate() {
-            if entry.name == name {
-                if entry.value == value {
+            if entry.name() == name {
+                if entry.value() == value {
                     return Some((i, true));
                 }
                 if name_match.is_none() {
@@ -167,26 +192,26 @@ mod tests {
     fn test_insert_and_get() {
         let mut table = DynamicTable::new(4096);
 
-        table.insert(b"content-type".to_vec(), b"text/html".to_vec());
+        table.insert(b"content-type", b"text/html").unwrap();
         assert_eq!(table.len(), 1);
 
         let entry = table.get(0).unwrap();
-        assert_eq!(entry.name, b"content-type");
-        assert_eq!(entry.value, b"text/html");
+        assert_eq!(entry.name(), b"content-type");
+        assert_eq!(entry.value(), b"text/html");
     }
 
     #[test]
     fn test_fifo_order() {
         let mut table = DynamicTable::new(4096);
 
-        table.insert(b"first".to_vec(), b"1".to_vec());
-        table.insert(b"second".to_vec(), b"2".to_vec());
-        table.insert(b"third".to_vec(), b"3".to_vec());
+        table.insert(b"first", b"1").unwrap();
+        table.insert(b"second", b"2").unwrap();
+        table.insert(b"third", b"3").unwrap();
 
         // 最新のエントリがインデックス 0
-        assert_eq!(table.get(0).unwrap().name, b"third");
-        assert_eq!(table.get(1).unwrap().name, b"second");
-        assert_eq!(table.get(2).unwrap().name, b"first");
+        assert_eq!(table.get(0).unwrap().name(), b"third");
+        assert_eq!(table.get(1).unwrap().name(), b"second");
+        assert_eq!(table.get(2).unwrap().name(), b"first");
     }
 
     #[test]
@@ -195,24 +220,24 @@ mod tests {
         let mut table = DynamicTable::new(100);
 
         // エントリサイズ: 5 + 1 + 32 = 38
-        table.insert(b"name1".to_vec(), b"1".to_vec());
+        table.insert(b"name1", b"1").unwrap();
         // エントリサイズ: 5 + 1 + 32 = 38
-        table.insert(b"name2".to_vec(), b"2".to_vec());
+        table.insert(b"name2", b"2").unwrap();
         assert_eq!(table.len(), 2);
 
         // 3つ目を追加すると最初のエントリが削除される
-        table.insert(b"name3".to_vec(), b"3".to_vec());
+        table.insert(b"name3", b"3").unwrap();
         assert_eq!(table.len(), 2);
-        assert_eq!(table.get(0).unwrap().name, b"name3");
-        assert_eq!(table.get(1).unwrap().name, b"name2");
+        assert_eq!(table.get(0).unwrap().name(), b"name3");
+        assert_eq!(table.get(1).unwrap().name(), b"name2");
     }
 
     #[test]
     fn test_set_max_size() {
         let mut table = DynamicTable::new(4096);
 
-        table.insert(b"name1".to_vec(), b"value1".to_vec());
-        table.insert(b"name2".to_vec(), b"value2".to_vec());
+        table.insert(b"name1", b"value1").unwrap();
+        table.insert(b"name2", b"value2").unwrap();
         assert_eq!(table.len(), 2);
 
         // サイズを 0 に設定するとすべて削除される
@@ -224,8 +249,8 @@ mod tests {
     fn test_find() {
         let mut table = DynamicTable::new(4096);
 
-        table.insert(b"content-type".to_vec(), b"text/html".to_vec());
-        table.insert(b"content-type".to_vec(), b"application/json".to_vec());
+        table.insert(b"content-type", b"text/html").unwrap();
+        table.insert(b"content-type", b"application/json").unwrap();
 
         // 完全一致
         let result = table.find(b"content-type", b"application/json");
@@ -245,7 +270,7 @@ mod tests {
         let mut table = DynamicTable::new(50);
 
         // このエントリは最大サイズより大きい
-        table.insert(b"very-long-name".to_vec(), b"very-long-value".to_vec());
+        table.insert(b"very-long-name", b"very-long-value").unwrap();
 
         // テーブルは空のまま
         assert!(table.is_empty());

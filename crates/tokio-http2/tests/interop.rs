@@ -96,11 +96,11 @@ async fn test_nghttp2_client_http2_server_basic() {
                     if end_stream {
                         let method = headers
                             .iter()
-                            .find(|h| h.name == b":method")
+                            .find(|h| h.name() == b":method")
                             .expect("missing :method header");
-                        assert_eq!(method.value, b"GET");
+                        assert_eq!(method.value(), b"GET");
 
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -230,10 +230,10 @@ async fn test_http2_client_nghttp2_server_basic() {
 
     // RFC 9113 Section 8.3.1: :method, :scheme, :path, :authority が必須
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -257,9 +257,9 @@ async fn test_http2_client_nghttp2_server_basic() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| h.name() == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(status.value(), b"200");
                 break;
             }
             Http2Event::SettingsReceived { .. } | Http2Event::ConnectionPreface => {}
@@ -297,7 +297,7 @@ async fn test_nghttp2_client_http2_server_multiple_streams() {
                     ..
                 })) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -423,10 +423,10 @@ async fn test_http2_client_nghttp2_server_multiple_streams() {
     let mut stream_ids = Vec::new();
     for i in 0..3 {
         let request_headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", &format!("/path{}", i)),
-            HeaderField::from_str(":authority", "localhost"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", format!("/path{}", i)).unwrap(),
+            HeaderField::new(":authority", "localhost").unwrap(),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -453,9 +453,9 @@ async fn test_http2_client_nghttp2_server_multiple_streams() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(status.value(), b"200");
 
             responses_received += 1;
             if responses_received >= 3 {
@@ -590,10 +590,10 @@ async fn test_http2_client_nghttp2_server_rst_stream() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -1019,9 +1019,9 @@ async fn test_nghttp2_client_http2_server_post_with_body() {
                 })) => {
                     let method = headers
                         .iter()
-                        .find(|h| h.name == b":method")
+                        .find(|h| h.name() == b":method")
                         .expect("missing :method header");
-                    assert_eq!(method.value, b"POST");
+                    assert_eq!(method.value(), b"POST");
                     request_stream_id = stream_id;
                     headers_received = true;
 
@@ -1056,7 +1056,7 @@ async fn test_nghttp2_client_http2_server_post_with_body() {
         assert_eq!(request_body, b"Hello from nghttp2!");
 
         // レスポンスを送信
-        let response_headers = vec![HeaderField::from_str(":status", "200")];
+        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
         conn.send_response(request_stream_id, response_headers, true)
             .await
             .expect("failed to send response");
@@ -1194,11 +1194,11 @@ async fn test_http2_client_nghttp2_server_post_with_body() {
 
     // POST リクエストを送信（ヘッダー）
     let request_headers = vec![
-        HeaderField::from_str(":method", "POST"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
-        HeaderField::from_str("content-type", "text/plain"),
+        HeaderField::new(":method", "POST").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new("content-type", "text/plain").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -1232,9 +1232,9 @@ async fn test_http2_client_nghttp2_server_post_with_body() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| h.name() == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(status.value(), b"200");
                 received_headers = true;
             }
             Http2Event::DataReceived {
@@ -1290,8 +1290,8 @@ async fn test_nghttp2_client_http2_server_response_body() {
                     if end_stream {
                         // レスポンスヘッダーを送信
                         let response_headers = vec![
-                            HeaderField::from_str(":status", "200"),
-                            HeaderField::from_str("content-type", "text/plain"),
+                            HeaderField::new(":status", "200").unwrap(),
+                            HeaderField::new("content-type", "text/plain").unwrap(),
                         ];
                         conn.send_response(stream_id, response_headers, false)
                             .await
@@ -1436,10 +1436,10 @@ async fn test_http2_client_nghttp2_server_response_body() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -1466,9 +1466,9 @@ async fn test_http2_client_nghttp2_server_response_body() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| h.name() == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(status.value(), b"200");
                 received_headers = true;
             }
             Http2Event::DataReceived {
@@ -1523,11 +1523,11 @@ async fn test_nghttp2_client_http2_server_put() {
                     if end_stream {
                         let method = headers
                             .iter()
-                            .find(|h| h.name == b":method")
+                            .find(|h| h.name() == b":method")
                             .expect("missing :method header");
-                        assert_eq!(method.value, b"PUT");
+                        assert_eq!(method.value(), b"PUT");
 
-                        let response_headers = vec![HeaderField::from_str(":status", "204")];
+                        let response_headers = vec![HeaderField::new(":status", "204").unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -1642,10 +1642,10 @@ async fn test_http2_client_nghttp2_server_delete() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "DELETE"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/resource/123"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "DELETE").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/resource/123").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -1667,9 +1667,9 @@ async fn test_http2_client_nghttp2_server_delete() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"204");
+            assert_eq!(status.value(), b"204");
             break;
         }
     }
@@ -1703,14 +1703,14 @@ async fn test_nghttp2_client_http2_server_head() {
                     if end_stream {
                         let method = headers
                             .iter()
-                            .find(|h| h.name == b":method")
+                            .find(|h| h.name() == b":method")
                             .expect("missing :method header");
-                        assert_eq!(method.value, b"HEAD");
+                        assert_eq!(method.value(), b"HEAD");
 
                         // HEAD レスポンスはボディなし
                         let response_headers = vec![
-                            HeaderField::from_str(":status", "200"),
-                            HeaderField::from_str("content-length", "1234"),
+                            HeaderField::new(":status", "200").unwrap(),
+                            HeaderField::new("content-length", "1234").unwrap(),
                         ];
                         conn.send_response(stream_id, response_headers, true)
                             .await
@@ -1807,7 +1807,7 @@ async fn test_nghttp2_client_http2_server_404() {
                     ..
                 })) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::from_str(":status", "404")];
+                        let response_headers = vec![HeaderField::new(":status", "404").unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -1915,10 +1915,10 @@ async fn test_http2_client_nghttp2_server_500() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/error"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/error").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -1940,9 +1940,9 @@ async fn test_http2_client_nghttp2_server_500() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"500");
+            assert_eq!(status.value(), b"500");
             break;
         }
     }
@@ -1981,21 +1981,21 @@ async fn test_nghttp2_client_http2_server_custom_headers() {
                         // カスタムヘッダーを検証
                         let x_custom = headers
                             .iter()
-                            .find(|h| h.name == b"x-custom-header")
+                            .find(|h| h.name() == b"x-custom-header")
                             .expect("missing x-custom-header");
-                        assert_eq!(x_custom.value, b"custom-value");
+                        assert_eq!(x_custom.value(), b"custom-value");
 
                         let x_request_id = headers
                             .iter()
-                            .find(|h| h.name == b"x-request-id")
+                            .find(|h| h.name() == b"x-request-id")
                             .expect("missing x-request-id");
-                        assert_eq!(x_request_id.value, b"12345");
+                        assert_eq!(x_request_id.value(), b"12345");
 
                         // レスポンスにもカスタムヘッダーを付与
                         let response_headers = vec![
-                            HeaderField::from_str(":status", "200"),
-                            HeaderField::from_str("x-response-id", "67890"),
-                            HeaderField::from_str("x-server", "test-server"),
+                            HeaderField::new(":status", "200").unwrap(),
+                            HeaderField::new("x-response-id", "67890").unwrap(),
+                            HeaderField::new("x-server", "test-server").unwrap(),
                         ];
                         conn.send_response(stream_id, response_headers, true)
                             .await
@@ -2130,11 +2130,11 @@ async fn test_http2_client_nghttp2_server_custom_headers() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
-        HeaderField::from_str("x-custom-header", "custom-value"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new("x-custom-header", "custom-value").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -2156,15 +2156,15 @@ async fn test_http2_client_nghttp2_server_custom_headers() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(status.value(), b"200");
 
             let x_response_id = headers
                 .iter()
-                .find(|h| h.name == b"x-response-id")
+                .find(|h| h.name() == b"x-response-id")
                 .expect("missing x-response-id header");
-            assert_eq!(x_response_id.value, b"67890");
+            assert_eq!(x_response_id.value(), b"67890");
             break;
         }
     }
@@ -2299,10 +2299,10 @@ async fn test_http2_client_nghttp2_server_rst_stream_refused() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -2359,7 +2359,7 @@ async fn test_nghttp2_client_http2_server_large_response() {
                     ..
                 })) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response headers");
@@ -2500,10 +2500,10 @@ async fn test_http2_client_nghttp2_server_large_request() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "POST"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/upload"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "POST").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/upload").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -2530,9 +2530,9 @@ async fn test_http2_client_nghttp2_server_large_request() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(status.value(), b"200");
             break;
         }
     }
@@ -2563,7 +2563,7 @@ async fn test_nghttp2_client_rst_stream_to_http2_server() {
             match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
                 Ok(Ok(Http2Event::HeadersReceived { stream_id, .. })) => {
                     // レスポンスを送信開始（end_stream=false）
-                    let response_headers = vec![HeaderField::from_str(":status", "200")];
+                    let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                     conn.send_response(stream_id, response_headers, false)
                         .await
                         .expect("failed to send response");
@@ -2659,7 +2659,7 @@ async fn test_multiple_nghttp2_clients_http2_server() {
                         })) => {
                             if end_stream {
                                 let response_headers =
-                                    vec![HeaderField::from_str(":status", "200")];
+                                    vec![HeaderField::new(":status", "200").unwrap()];
                                 conn.send_response(stream_id, response_headers, true)
                                     .await
                                     .expect("failed to send response");
@@ -2791,8 +2791,8 @@ async fn test_nghttp2_client_http2_server_response_headers_then_data() {
                     if end_stream {
                         // ヘッダーのみ送信 (end_stream=false)
                         let response_headers = vec![
-                            HeaderField::from_str(":status", "200"),
-                            HeaderField::from_str("content-type", "text/plain"),
+                            HeaderField::new(":status", "200").unwrap(),
+                            HeaderField::new("content-type", "text/plain").unwrap(),
                         ];
                         conn.send_response(stream_id, response_headers, false)
                             .await
@@ -2908,8 +2908,8 @@ async fn test_http2_client_http2_server_response_headers_then_data() {
                 })) => {
                     if end_stream {
                         let response_headers = vec![
-                            HeaderField::from_str(":status", "200"),
-                            HeaderField::from_str("content-type", "text/plain"),
+                            HeaderField::new(":status", "200").unwrap(),
+                            HeaderField::new("content-type", "text/plain").unwrap(),
                         ];
                         conn.send_response(stream_id, response_headers, false)
                             .await
@@ -2940,10 +2940,10 @@ async fn test_http2_client_http2_server_response_headers_then_data() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -2970,9 +2970,9 @@ async fn test_http2_client_http2_server_response_headers_then_data() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| h.name() == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(status.value(), b"200");
                 received_headers = true;
             }
             Http2Event::DataReceived {
@@ -3029,7 +3029,7 @@ async fn test_nghttp2_client_http2_server_multiple_data_frames() {
                     ..
                 })) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response headers");
@@ -3167,10 +3167,10 @@ async fn test_http2_client_nghttp2_server_multiple_data_frames() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "POST"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "POST").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -3208,9 +3208,9 @@ async fn test_http2_client_nghttp2_server_multiple_data_frames() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(status.value(), b"200");
             break;
         }
     }
@@ -3247,20 +3247,20 @@ async fn test_nghttp2_client_http2_server_post_empty_body() {
                 })) => {
                     let method = headers
                         .iter()
-                        .find(|h| h.name == b":method")
+                        .find(|h| h.name() == b":method")
                         .expect("missing :method header");
-                    assert_eq!(method.value, b"POST");
+                    assert_eq!(method.value(), b"POST");
 
                     let content_length = headers
                         .iter()
-                        .find(|h| h.name == b"content-length")
+                        .find(|h| h.name() == b"content-length")
                         .expect("missing content-length header");
-                    assert_eq!(content_length.value, b"0");
+                    assert_eq!(content_length.value(), b"0");
 
                     // end_stream=true であることを確認 (ボディなし)
                     assert!(end_stream);
 
-                    let response_headers = vec![HeaderField::from_str(":status", "200")];
+                    let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                     conn.send_response(stream_id, response_headers, true)
                         .await
                         .expect("failed to send response");
@@ -3383,11 +3383,11 @@ async fn test_http2_client_nghttp2_server_post_empty_body() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "POST"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
-        HeaderField::from_str("content-length", "0"),
+        HeaderField::new(":method", "POST").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new("content-length", "0").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -3411,9 +3411,9 @@ async fn test_http2_client_nghttp2_server_post_empty_body() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(status.value(), b"200");
             break;
         }
     }
@@ -3451,8 +3451,8 @@ async fn test_nghttp2_client_http2_server_404_with_body() {
                 })) => {
                     if end_stream {
                         let response_headers = vec![
-                            HeaderField::from_str(":status", "404"),
-                            HeaderField::from_str("content-type", "text/plain"),
+                            HeaderField::new(":status", "404").unwrap(),
+                            HeaderField::new("content-type", "text/plain").unwrap(),
                         ];
                         conn.send_response(stream_id, response_headers, false)
                             .await
@@ -3559,8 +3559,8 @@ async fn test_nghttp2_client_http2_server_500_with_body() {
                 })) => {
                     if end_stream {
                         let response_headers = vec![
-                            HeaderField::from_str(":status", "500"),
-                            HeaderField::from_str("content-type", "text/plain"),
+                            HeaderField::new(":status", "500").unwrap(),
+                            HeaderField::new("content-type", "text/plain").unwrap(),
                         ];
                         conn.send_response(stream_id, response_headers, false)
                             .await
@@ -3671,13 +3671,13 @@ async fn test_nghttp2_client_http2_server_options() {
                     if end_stream {
                         let method = headers
                             .iter()
-                            .find(|h| h.name == b":method")
+                            .find(|h| h.name() == b":method")
                             .expect("missing :method header");
-                        assert_eq!(method.value, b"OPTIONS");
+                        assert_eq!(method.value(), b"OPTIONS");
 
                         let response_headers = vec![
-                            HeaderField::from_str(":status", "204"),
-                            HeaderField::from_str("allow", "GET, POST, OPTIONS"),
+                            HeaderField::new(":status", "204").unwrap(),
+                            HeaderField::new("allow", "GET, POST, OPTIONS").unwrap(),
                         ];
                         conn.send_response(stream_id, response_headers, true)
                             .await
@@ -3804,10 +3804,10 @@ async fn test_http2_client_nghttp2_server_options() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "OPTIONS"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "OPTIONS").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -3831,15 +3831,15 @@ async fn test_http2_client_nghttp2_server_options() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"204");
+            assert_eq!(status.value(), b"204");
 
             let allow = headers
                 .iter()
-                .find(|h| h.name == b"allow")
+                .find(|h| h.name() == b"allow")
                 .expect("missing allow header");
-            assert_eq!(allow.value, b"GET, POST, OPTIONS");
+            assert_eq!(allow.value(), b"GET, POST, OPTIONS");
             break;
         }
     }
@@ -3881,18 +3881,22 @@ async fn test_nghttp2_client_http2_server_many_headers() {
                             let expected_value = format!("value-{}", i);
                             let header = headers
                                 .iter()
-                                .find(|h| h.name == name.as_bytes())
+                                .find(|h| h.name() == name.as_bytes())
                                 .unwrap_or_else(|| panic!("missing {}", name));
-                            assert_eq!(header.value, expected_value.as_bytes());
+                            assert_eq!(header.value(), expected_value.as_bytes());
                         }
 
                         // レスポンスにも 20 個のカスタムヘッダーを付与
-                        let mut response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let mut response_headers =
+                            vec![HeaderField::new(":status", "200").unwrap()];
                         for i in 0..20 {
-                            response_headers.push(HeaderField::from_str(
-                                &format!("x-resp-{}", i),
-                                &format!("resp-value-{}", i),
-                            ));
+                            response_headers.push(
+                                HeaderField::new(
+                                    format!("x-resp-{}", i),
+                                    format!("resp-value-{}", i),
+                                )
+                                .unwrap(),
+                            );
                         }
                         conn.send_response(stream_id, response_headers, true)
                             .await
@@ -4037,16 +4041,14 @@ async fn test_http2_client_nghttp2_server_many_headers() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let mut request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     for i in 0..20 {
-        request_headers.push(HeaderField::from_str(
-            &format!("x-header-{}", i),
-            &format!("value-{}", i),
-        ));
+        request_headers
+            .push(HeaderField::new(format!("x-header-{}", i), format!("value-{}", i)).unwrap());
     }
 
     let stream_id = client
@@ -4071,18 +4073,18 @@ async fn test_http2_client_nghttp2_server_many_headers() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(status.value(), b"200");
 
             for i in 0..20 {
                 let name = format!("x-resp-{}", i);
                 let expected_value = format!("resp-value-{}", i);
                 let header = headers
                     .iter()
-                    .find(|h| h.name == name.as_bytes())
+                    .find(|h| h.name() == name.as_bytes())
                     .unwrap_or_else(|| panic!("missing {}", name));
-                assert_eq!(header.value, expected_value.as_bytes());
+                assert_eq!(header.value(), expected_value.as_bytes());
             }
             break;
         }
@@ -4122,7 +4124,7 @@ async fn test_nghttp2_client_http2_server_goaway_after_stream() {
                         received_stream_id = stream_id;
 
                         // まずレスポンスを送信
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -4267,10 +4269,10 @@ async fn test_http2_client_nghttp2_server_goaway_after_stream() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -4297,9 +4299,9 @@ async fn test_http2_client_nghttp2_server_goaway_after_stream() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| h.name() == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(status.value(), b"200");
                 received_response = true;
             }
             Http2Event::GoawayReceived {
@@ -4380,7 +4382,7 @@ async fn test_http2_client_http2_server_bidirectional_data() {
 
         assert_eq!(received_body, request_body_expected);
 
-        let resp_headers = vec![HeaderField::from_str(":status", "200")];
+        let resp_headers = vec![HeaderField::new(":status", "200").unwrap()];
         conn.send_response(request_stream_id, resp_headers, false)
             .await
             .expect("failed to send response headers");
@@ -4400,10 +4402,10 @@ async fn test_http2_client_http2_server_bidirectional_data() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "POST"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "POST").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -4432,9 +4434,9 @@ async fn test_http2_client_http2_server_bidirectional_data() {
                 assert_eq!(recv_stream_id, stream_id);
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| h.name() == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(status.value(), b"200");
 
                 if end_stream {
                     break;
@@ -4523,10 +4525,10 @@ async fn test_http2_client_nghttp2_server_bidirectional_data() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "POST"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "POST").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -4555,9 +4557,9 @@ async fn test_http2_client_nghttp2_server_bidirectional_data() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(status.value(), b"200");
             break;
         }
     }
@@ -4596,10 +4598,10 @@ async fn test_nghttp2_client_http2_server_rst_one_stream_continue_other() {
                     if end_stream {
                         let path = headers
                             .iter()
-                            .find(|h| h.name == b":path")
+                            .find(|h| h.name() == b":path")
                             .expect("missing :path header");
 
-                        streams_received.push((stream_id, path.value.clone()));
+                        streams_received.push((stream_id, path.value().to_vec()));
 
                         if streams_received.len() == 2 {
                             // /reset パスのストリームを RST_STREAM
@@ -4611,7 +4613,7 @@ async fn test_nghttp2_client_http2_server_rst_one_stream_continue_other() {
                                         .expect("failed to send rst_stream");
                                 } else {
                                     let response_headers =
-                                        vec![HeaderField::from_str(":status", "200")];
+                                        vec![HeaderField::new(":status", "200").unwrap()];
                                     conn.send_response(*sid, response_headers, true)
                                         .await
                                         .expect("failed to send response");
@@ -4777,10 +4779,10 @@ async fn test_http2_client_nghttp2_server_rst_one_stream_continue_other() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let reset_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/reset"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/reset").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let reset_stream_id = client
         .send_request(reset_headers, true)
@@ -4788,10 +4790,10 @@ async fn test_http2_client_nghttp2_server_rst_one_stream_continue_other() {
         .expect("failed to send request");
 
     let ok_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/ok"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/ok").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let ok_stream_id = client
         .send_request(ok_headers, true)
@@ -4818,9 +4820,9 @@ async fn test_http2_client_nghttp2_server_rst_one_stream_continue_other() {
 
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| h.name() == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(status.value(), b"200");
                 got_response = true;
             }
             Http2Event::StreamReset {
@@ -4875,7 +4877,7 @@ async fn test_nghttp2_client_http2_server_204_no_content() {
                 })) => {
                     if end_stream {
                         // 204 はボディなし (end_stream=true)
-                        let response_headers = vec![HeaderField::from_str(":status", "204")];
+                        let response_headers = vec![HeaderField::new(":status", "204").unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -4985,10 +4987,10 @@ async fn test_http2_client_nghttp2_server_204_no_content() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "DELETE"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/resource/1"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "DELETE").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/resource/1").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -5012,9 +5014,9 @@ async fn test_http2_client_nghttp2_server_204_no_content() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"204");
+            assert_eq!(status.value(), b"204");
             break;
         }
     }
@@ -5061,7 +5063,8 @@ mod stress_tests {
                         ..
                     } => {
                         if end_stream {
-                            let response_headers = vec![HeaderField::from_str(":status", "200")];
+                            let response_headers =
+                                vec![HeaderField::new(":status", "200").unwrap()];
                             conn.send_response(stream_id, response_headers, true)
                                 .await
                                 .expect("failed to send response");
@@ -5173,10 +5176,10 @@ mod stress_tests {
         let mut stream_ids = Vec::new();
         for i in 0..stream_count {
             let request_headers = vec![
-                HeaderField::from_str(":method", "GET"),
-                HeaderField::from_str(":scheme", "https"),
-                HeaderField::from_str(":authority", "localhost"),
-                HeaderField::from_str(":path", &format!("/path/{}", i)),
+                HeaderField::new(":method", "GET").unwrap(),
+                HeaderField::new(":scheme", "https").unwrap(),
+                HeaderField::new(":authority", "localhost").unwrap(),
+                HeaderField::new(":path", format!("/path/{}", i)).unwrap(),
             ];
             let stream_id = client
                 .send_request(request_headers, true)
@@ -5342,10 +5345,10 @@ mod stress_tests {
 
         for _ in 0..rst_count {
             let request_headers = vec![
-                HeaderField::from_str(":method", "GET"),
-                HeaderField::from_str(":scheme", "https"),
-                HeaderField::from_str(":authority", "localhost"),
-                HeaderField::from_str(":path", "/"),
+                HeaderField::new(":method", "GET").unwrap(),
+                HeaderField::new(":scheme", "https").unwrap(),
+                HeaderField::new(":authority", "localhost").unwrap(),
+                HeaderField::new(":path", "/").unwrap(),
             ];
             client
                 .send_request(request_headers, true)
@@ -5402,7 +5405,8 @@ mod stress_tests {
                         ..
                     } => {
                         if end_stream {
-                            let response_headers = vec![HeaderField::from_str(":status", "200")];
+                            let response_headers =
+                                vec![HeaderField::new(":status", "200").unwrap()];
                             conn.send_response(stream_id, response_headers, false)
                                 .await
                                 .expect("failed to send response");
@@ -5518,10 +5522,10 @@ mod stress_tests {
         wait_for_http2_settings_ack(&mut client).await;
 
         let request_headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":authority", "localhost"),
-            HeaderField::from_str(":path", "/"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":authority", "localhost").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
         ];
         client
             .send_request(request_headers, true)
@@ -5577,7 +5581,7 @@ mod stress_tests {
                 match event {
                     Http2Event::HeadersReceived { stream_id: sid, .. } => {
                         stream_id = sid;
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
@@ -5699,10 +5703,10 @@ mod stress_tests {
         wait_for_http2_settings_ack(&mut client).await;
 
         let request_headers = vec![
-            HeaderField::from_str(":method", "POST"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":authority", "localhost"),
-            HeaderField::from_str(":path", "/echo"),
+            HeaderField::new(":method", "POST").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":authority", "localhost").unwrap(),
+            HeaderField::new(":path", "/echo").unwrap(),
         ];
         let stream_id = client
             .send_request(request_headers, false)
@@ -5903,11 +5907,12 @@ mod stress_tests {
                         if end_stream {
                             let custom_count = headers
                                 .iter()
-                                .filter(|h| h.name.starts_with(b"x-stress-"))
+                                .filter(|h| h.name().starts_with(b"x-stress-"))
                                 .count();
                             assert_eq!(custom_count, header_count);
 
-                            let response_headers = vec![HeaderField::from_str(":status", "200")];
+                            let response_headers =
+                                vec![HeaderField::new(":status", "200").unwrap()];
                             conn.send_response(stream_id, response_headers, true)
                                 .await
                                 .expect("failed to send response");
@@ -6020,16 +6025,14 @@ mod stress_tests {
         wait_for_http2_settings_ack(&mut client).await;
 
         let mut request_headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":authority", "localhost"),
-            HeaderField::from_str(":path", "/"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":authority", "localhost").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
         ];
         for i in 0..header_count {
-            request_headers.push(HeaderField::from_str(
-                &format!("x-stress-{}", i),
-                &format!("value-{}", i),
-            ));
+            request_headers
+                .push(HeaderField::new(format!("x-stress-{}", i), format!("value-{}", i)).unwrap());
         }
 
         let stream_id = client

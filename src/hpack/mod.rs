@@ -2,6 +2,7 @@
 //!
 //! HTTP/2 で使用される HPACK ヘッダー圧縮のエンコード/デコードを提供する。
 
+pub(crate) mod bytes;
 pub mod decoder;
 pub mod dynamic_table;
 pub mod encoder;

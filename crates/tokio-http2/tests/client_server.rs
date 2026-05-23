@@ -58,19 +58,19 @@ async fn test_basic_request_response() {
                     // :method ヘッダーを確認
                     let method = headers
                         .iter()
-                        .find(|h| h.name == b":method")
+                        .find(|h| h.name() == b":method")
                         .expect("missing :method header");
-                    assert_eq!(method.value, b"GET");
+                    assert_eq!(method.value(), b"GET");
 
                     // :path ヘッダーを確認
                     let path = headers
                         .iter()
-                        .find(|h| h.name == b":path")
+                        .find(|h| h.name() == b":path")
                         .expect("missing :path header");
-                    assert_eq!(path.value, b"/");
+                    assert_eq!(path.value(), b"/");
 
                     // レスポンス送信
-                    let response_headers = vec![HeaderField::from_str(":status", "200")];
+                    let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                     conn.send_response(stream_id, response_headers, true)
                         .await
                         .expect("failed to send response");
@@ -89,10 +89,10 @@ async fn test_basic_request_response() {
 
     // リクエスト送信
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -118,9 +118,9 @@ async fn test_basic_request_response() {
                 // :status ヘッダーを確認
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| h.name() == b":status")
                     .expect("missing :status header");
-                assert_eq!(status.value, b"200");
+                assert_eq!(status.value(), b"200");
 
                 break;
             }
@@ -289,7 +289,7 @@ async fn test_multiple_streams() {
                 }) => {
                     if end_stream {
                         // レスポンス送信
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -324,10 +324,10 @@ async fn test_multiple_streams() {
     let mut stream_ids = Vec::new();
     for i in 0..3 {
         let request_headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", &format!("/path{}", i)),
-            HeaderField::from_str(":authority", "localhost"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", format!("/path{}", i)).unwrap(),
+            HeaderField::new(":authority", "localhost").unwrap(),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -352,9 +352,9 @@ async fn test_multiple_streams() {
 
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status header");
-            assert_eq!(status.value, b"200");
+            assert_eq!(status.value(), b"200");
 
             responses_received += 1;
             if responses_received >= 3 {
@@ -468,10 +468,10 @@ async fn test_rst_stream() {
 
     // リクエスト送信
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -525,7 +525,7 @@ async fn test_many_concurrent_streams() {
                     ..
                 }) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -558,10 +558,10 @@ async fn test_many_concurrent_streams() {
     let mut stream_ids = Vec::new();
     for i in 0..stream_count {
         let request_headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":authority", "localhost"),
-            HeaderField::from_str(":path", &format!("/path/{}", i)),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":authority", "localhost").unwrap(),
+            HeaderField::new(":path", format!("/path/{}", i)).unwrap(),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -649,10 +649,10 @@ async fn test_rapid_rst_stream() {
     let mut stream_ids = Vec::new();
     for _ in 0..rst_count {
         let request_headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":authority", "localhost"),
-            HeaderField::from_str(":path", "/"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":authority", "localhost").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -769,7 +769,7 @@ async fn test_many_small_data_frames() {
                     ..
                 } => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
@@ -802,10 +802,10 @@ async fn test_many_small_data_frames() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":authority", "localhost"),
-        HeaderField::from_str(":path", "/"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
     ];
     client
         .send_request(request_headers, true)
@@ -863,11 +863,11 @@ async fn test_many_headers() {
                     if end_stream {
                         let custom_count = headers
                             .iter()
-                            .filter(|h| h.name.starts_with(b"x-test-"))
+                            .filter(|h| h.name().starts_with(b"x-test-"))
                             .count();
                         assert_eq!(custom_count, header_count);
 
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -893,16 +893,14 @@ async fn test_many_headers() {
     }
 
     let mut request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":authority", "localhost"),
-        HeaderField::from_str(":path", "/"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
     ];
     for i in 0..header_count {
-        request_headers.push(HeaderField::from_str(
-            &format!("x-test-{}", i),
-            &format!("value-{}", i),
-        ));
+        request_headers
+            .push(HeaderField::new(format!("x-test-{}", i), format!("value-{}", i)).unwrap());
     }
 
     let stream_id = client
@@ -964,7 +962,7 @@ async fn test_goaway_then_drain() {
         conn.shutdown().await.expect("failed to send goaway");
 
         // 既存ストリームにはレスポンスを返す
-        let response_headers = vec![HeaderField::from_str(":status", "200")];
+        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
         conn.send_response(stream_id, response_headers, true)
             .await
             .expect("failed to send response");
@@ -983,10 +981,10 @@ async fn test_goaway_then_drain() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":authority", "localhost"),
-        HeaderField::from_str(":path", "/"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -1042,7 +1040,7 @@ async fn test_bidirectional_streaming() {
             match event {
                 Event::HeadersReceived { stream_id: sid, .. } => {
                     stream_id = sid;
-                    let response_headers = vec![HeaderField::from_str(":status", "200")];
+                    let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                     conn.send_response(stream_id, response_headers, false)
                         .await
                         .expect("failed to send response");
@@ -1076,10 +1074,10 @@ async fn test_bidirectional_streaming() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "POST"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":authority", "localhost"),
-        HeaderField::from_str(":path", "/echo"),
+        HeaderField::new(":method", "POST").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":path", "/echo").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -1145,7 +1143,7 @@ async fn test_interleaved_streams() {
                     ..
                 }) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
@@ -1184,10 +1182,10 @@ async fn test_interleaved_streams() {
 
     for _ in 0..5 {
         let request_headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":authority", "localhost"),
-            HeaderField::from_str(":path", "/"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":authority", "localhost").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
         ];
         client
             .send_request(request_headers, true)
@@ -1240,7 +1238,7 @@ async fn test_response_with_data() {
                     ..
                 } => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
@@ -1272,10 +1270,10 @@ async fn test_response_with_data() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":authority", "localhost"),
-        HeaderField::from_str(":path", "/"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
     ];
     client
         .send_request(request_headers, true)
@@ -1338,9 +1336,9 @@ async fn test_post_request_with_body() {
                     assert!(!end_stream, "POST should not have end_stream on headers");
                     let method = headers
                         .iter()
-                        .find(|h| h.name == b":method")
+                        .find(|h| h.name() == b":method")
                         .expect("missing :method");
-                    assert_eq!(method.value, b"POST");
+                    assert_eq!(method.value(), b"POST");
                     stream_id = sid;
                 }
                 Event::DataReceived {
@@ -1350,11 +1348,9 @@ async fn test_post_request_with_body() {
                     if end_stream {
                         // エコーレスポンス
                         let response_headers = vec![
-                            HeaderField::from_str(":status", "200"),
-                            HeaderField::from_str(
-                                "content-length",
-                                &request_body.len().to_string(),
-                            ),
+                            HeaderField::new(":status", "200").unwrap(),
+                            HeaderField::new("content-length", request_body.len().to_string())
+                                .unwrap(),
                         ];
                         conn.send_response(stream_id, response_headers, false)
                             .await
@@ -1383,11 +1379,11 @@ async fn test_post_request_with_body() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "POST"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/api/data"),
-        HeaderField::from_str(":authority", "localhost"),
-        HeaderField::from_str("content-type", "application/json"),
+        HeaderField::new(":method", "POST").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/api/data").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new("content-type", "application/json").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -1415,9 +1411,9 @@ async fn test_post_request_with_body() {
             Event::HeadersReceived { headers, .. } => {
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| h.name() == b":status")
                     .expect("missing :status");
-                assert_eq!(status.value, b"200");
+                assert_eq!(status.value(), b"200");
             }
             _ => {}
         }
@@ -1463,7 +1459,7 @@ async fn test_large_body() {
             }
         };
 
-        let response_headers = vec![HeaderField::from_str(":status", "200")];
+        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
         conn.send_response(stream_id, response_headers, false)
             .await
             .expect("failed to send response");
@@ -1492,10 +1488,10 @@ async fn test_large_body() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/large"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/large").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     client
         .send_request(request_headers, true)
@@ -1555,8 +1551,8 @@ async fn test_status_codes() {
                     if end_stream {
                         let path = headers
                             .iter()
-                            .find(|h| h.name == b":path")
-                            .map(|h| &h.value[..])
+                            .find(|h| h.name() == b":path")
+                            .map(|h| h.value())
                             .unwrap_or(b"/");
 
                         let status = match path {
@@ -1566,7 +1562,7 @@ async fn test_status_codes() {
                             _ => "200",
                         };
 
-                        let response_headers = vec![HeaderField::from_str(":status", status)];
+                        let response_headers = vec![HeaderField::new(":status", status).unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -1600,10 +1596,10 @@ async fn test_status_codes() {
     let mut stream_ids = Vec::new();
     for path in &paths {
         let request_headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", path),
-            HeaderField::from_str(":authority", "localhost"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", path).unwrap(),
+            HeaderField::new(":authority", "localhost").unwrap(),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -1621,9 +1617,9 @@ async fn test_status_codes() {
         {
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status");
-            received_statuses.push((stream_id, status.value.clone()));
+            received_statuses.push((stream_id, status.value().to_vec()));
             if received_statuses.len() >= 3 {
                 break;
             }
@@ -1674,7 +1670,7 @@ async fn test_stream_closed_event() {
                     ..
                 } => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -1706,10 +1702,10 @@ async fn test_stream_closed_event() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -1835,7 +1831,7 @@ async fn test_multiple_clients() {
                         }) => {
                             if end_stream {
                                 let response_headers =
-                                    vec![HeaderField::from_str(":status", "200")];
+                                    vec![HeaderField::new(":status", "200").unwrap()];
                                 conn.send_response(stream_id, response_headers, true)
                                     .await
                                     .expect("failed to send response");
@@ -1867,10 +1863,10 @@ async fn test_multiple_clients() {
             }
 
             let request_headers = vec![
-                HeaderField::from_str(":method", "GET"),
-                HeaderField::from_str(":scheme", "https"),
-                HeaderField::from_str(":path", &format!("/client/{}", client_idx)),
-                HeaderField::from_str(":authority", "localhost"),
+                HeaderField::new(":method", "GET").unwrap(),
+                HeaderField::new(":scheme", "https").unwrap(),
+                HeaderField::new(":path", format!("/client/{}", client_idx)).unwrap(),
+                HeaderField::new(":authority", "localhost").unwrap(),
             ];
             let stream_id = client
                 .send_request(request_headers, true)
@@ -1890,9 +1886,9 @@ async fn test_multiple_clients() {
                     assert!(end_stream);
                     let status = headers
                         .iter()
-                        .find(|h| h.name == b":status")
+                        .find(|h| h.name() == b":status")
                         .expect("missing :status");
-                    assert_eq!(status.value, b"200");
+                    assert_eq!(status.value(), b"200");
                     break;
                 }
             }
@@ -1932,7 +1928,7 @@ async fn test_limits_max_concurrent_streams() {
                     ..
                 }) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -1963,10 +1959,10 @@ async fn test_limits_max_concurrent_streams() {
     // max_concurrent_streams=1 でも逐次リクエストは正常動作すべき
     for i in 0..3 {
         let request_headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", &format!("/seq/{}", i)),
-            HeaderField::from_str(":authority", "localhost"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", format!("/seq/{}", i)).unwrap(),
+            HeaderField::new(":authority", "localhost").unwrap(),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -2015,7 +2011,7 @@ async fn test_window_update_received() {
                     ..
                 }) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -2047,10 +2043,10 @@ async fn test_window_update_received() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     client
         .send_request(request_headers, true)
@@ -2112,11 +2108,9 @@ async fn test_large_request_body() {
                     if end_stream {
                         // 受信サイズをレスポンスで返す
                         let response_headers = vec![
-                            HeaderField::from_str(":status", "200"),
-                            HeaderField::from_str(
-                                "x-received-size",
-                                &received_body.len().to_string(),
-                            ),
+                            HeaderField::new(":status", "200").unwrap(),
+                            HeaderField::new("x-received-size", received_body.len().to_string())
+                                .unwrap(),
                         ];
                         conn.send_response(stream_id, response_headers, true)
                             .await
@@ -2144,10 +2138,10 @@ async fn test_large_request_body() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "POST"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/upload"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "POST").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/upload").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -2178,9 +2172,9 @@ async fn test_large_request_body() {
             assert!(end_stream);
             let received_size = headers
                 .iter()
-                .find(|h| h.name == b"x-received-size")
+                .find(|h| h.name() == b"x-received-size")
                 .expect("missing x-received-size");
-            let size: usize = std::str::from_utf8(&received_size.value)
+            let size: usize = std::str::from_utf8(received_size.value())
                 .unwrap()
                 .parse()
                 .unwrap();
@@ -2217,7 +2211,7 @@ async fn test_poll_event() {
                     ..
                 }) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -2255,10 +2249,10 @@ async fn test_poll_event() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     client
         .send_request(request_headers, true)
@@ -2303,9 +2297,9 @@ async fn test_content_length_response() {
                 }) => {
                     if end_stream {
                         let response_headers = vec![
-                            HeaderField::from_str(":status", "200"),
-                            HeaderField::from_str("content-length", &body.len().to_string()),
-                            HeaderField::from_str("content-type", "text/plain"),
+                            HeaderField::new(":status", "200").unwrap(),
+                            HeaderField::new("content-length", body.len().to_string()).unwrap(),
+                            HeaderField::new("content-type", "text/plain").unwrap(),
                         ];
                         conn.send_response(stream_id, response_headers, false)
                             .await
@@ -2335,10 +2329,10 @@ async fn test_content_length_response() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     client
         .send_request(request_headers, true)
@@ -2351,9 +2345,9 @@ async fn test_content_length_response() {
         let event = client.next_event().await.expect("failed to get event");
         match event {
             Event::HeadersReceived { headers, .. } => {
-                let cl = headers.iter().find(|h| h.name == b"content-length");
+                let cl = headers.iter().find(|h| h.name() == b"content-length");
                 if let Some(cl) = cl {
-                    assert_eq!(cl.value, body.len().to_string().as_bytes());
+                    assert_eq!(cl.value(), body.len().to_string().as_bytes());
                     got_content_length = true;
                 }
             }
@@ -2404,11 +2398,11 @@ async fn test_multiple_streams_with_bodies() {
                     if end_stream {
                         let path = headers
                             .iter()
-                            .find(|h| h.name == b":path")
-                            .map(|h| String::from_utf8_lossy(&h.value).to_string())
+                            .find(|h| h.name() == b":path")
+                            .map(|h| String::from_utf8_lossy(h.value()).to_string())
                             .unwrap_or_default();
 
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
@@ -2443,10 +2437,10 @@ async fn test_multiple_streams_with_bodies() {
     let mut stream_ids = Vec::new();
     for i in 0..stream_count {
         let request_headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", &format!("/item/{}", i)),
-            HeaderField::from_str(":authority", "localhost"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", format!("/item/{}", i)).unwrap(),
+            HeaderField::new(":authority", "localhost").unwrap(),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -2523,7 +2517,8 @@ async fn test_rst_stream_then_continue() {
                                 .expect("failed to send rst_stream");
                         } else {
                             // 2 番目のリクエストは正常レスポンス
-                            let response_headers = vec![HeaderField::from_str(":status", "200")];
+                            let response_headers =
+                                vec![HeaderField::new(":status", "200").unwrap()];
                             conn.send_response(stream_id, response_headers, true)
                                 .await
                                 .expect("failed to send response");
@@ -2551,10 +2546,10 @@ async fn test_rst_stream_then_continue() {
 
     // 最初のリクエスト (拒否される)
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/rejected"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/rejected").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream1 = client
         .send_request(request_headers, true)
@@ -2577,10 +2572,10 @@ async fn test_rst_stream_then_continue() {
 
     // 2 番目のリクエスト (正常)
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/ok"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/ok").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream2 = client
         .send_request(request_headers, true)
@@ -2600,9 +2595,9 @@ async fn test_rst_stream_then_continue() {
             assert!(end_stream);
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status");
-            assert_eq!(status.value, b"200");
+            assert_eq!(status.value(), b"200");
             break;
         }
     }
@@ -2636,14 +2631,14 @@ async fn test_head_request() {
                     if end_stream {
                         let method = headers
                             .iter()
-                            .find(|h| h.name == b":method")
-                            .map(|h| &h.value[..]);
+                            .find(|h| h.name() == b":method")
+                            .map(|h| h.value());
                         assert_eq!(method, Some(b"HEAD" as &[u8]));
 
                         // HEAD レスポンスは content-length 付きでもボディなし
                         let response_headers = vec![
-                            HeaderField::from_str(":status", "200"),
-                            HeaderField::from_str("content-length", "1000"),
+                            HeaderField::new(":status", "200").unwrap(),
+                            HeaderField::new("content-length", "1000").unwrap(),
                         ];
                         conn.send_response(stream_id, response_headers, true)
                             .await
@@ -2670,10 +2665,10 @@ async fn test_head_request() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "HEAD"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "HEAD").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -2693,11 +2688,11 @@ async fn test_head_request() {
             assert!(end_stream);
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status");
-            assert_eq!(status.value, b"200");
+            assert_eq!(status.value(), b"200");
             // content-length はあるがボディはない
-            let cl = headers.iter().find(|h| h.name == b"content-length");
+            let cl = headers.iter().find(|h| h.name() == b"content-length");
             assert!(cl.is_some());
             break;
         }
@@ -2732,11 +2727,11 @@ async fn test_delete_request() {
                     if end_stream {
                         let method = headers
                             .iter()
-                            .find(|h| h.name == b":method")
-                            .map(|h| &h.value[..]);
+                            .find(|h| h.name() == b":method")
+                            .map(|h| h.value());
                         assert_eq!(method, Some(b"DELETE" as &[u8]));
 
-                        let response_headers = vec![HeaderField::from_str(":status", "204")];
+                        let response_headers = vec![HeaderField::new(":status", "204").unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -2762,10 +2757,10 @@ async fn test_delete_request() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "DELETE"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/resource/123"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "DELETE").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/resource/123").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -2785,9 +2780,9 @@ async fn test_delete_request() {
             assert!(end_stream);
             let status = headers
                 .iter()
-                .find(|h| h.name == b":status")
+                .find(|h| h.name() == b":status")
                 .expect("missing :status");
-            assert_eq!(status.value, b"204");
+            assert_eq!(status.value(), b"204");
             break;
         }
     }
@@ -2823,8 +2818,8 @@ async fn test_put_request_with_body() {
                 } => {
                     let method = headers
                         .iter()
-                        .find(|h| h.name == b":method")
-                        .map(|h| &h.value[..]);
+                        .find(|h| h.name() == b":method")
+                        .map(|h| h.value());
                     assert_eq!(method, Some(b"PUT" as &[u8]));
                     stream_id = sid;
                 }
@@ -2833,7 +2828,7 @@ async fn test_put_request_with_body() {
                 } => {
                     request_body.extend_from_slice(&data);
                     if end_stream {
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -2860,10 +2855,10 @@ async fn test_put_request_with_body() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "PUT"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/resource/456"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "PUT").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/resource/456").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -2918,7 +2913,7 @@ async fn test_drive() {
                     ..
                 }) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
@@ -2956,10 +2951,10 @@ async fn test_drive() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     client
         .send_request(request_headers, true)
@@ -3036,10 +3031,10 @@ async fn test_send_data_after_reset() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "POST"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "POST").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -3101,7 +3096,7 @@ async fn test_custom_initial_window_size() {
                     ..
                 }) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::from_str(":status", "200")];
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
@@ -3139,10 +3134,10 @@ async fn test_custom_initial_window_size() {
     }
 
     let request_headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
     ];
     client
         .send_request(request_headers, true)

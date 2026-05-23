@@ -14,6 +14,7 @@ arbitrary = { version = "1", features = ["derive"] }
 
 [dependencies.shiguredo_http2]
 path = ".."
+features = ["__test_helpers"]
 
 [[bin]]
 name = "fuzz_frame_decoder"

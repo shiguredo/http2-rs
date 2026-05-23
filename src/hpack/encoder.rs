@@ -45,11 +45,11 @@ impl Encoder {
     /// 機密ヘッダー（`sensitive` フラグが true）は Never Indexed としてエンコードされる。
     pub fn encode(&mut self, buf: &mut Vec<u8>, headers: &[HeaderField]) {
         for header in headers {
-            if header.sensitive {
+            if header.sensitive() {
                 // Never Indexed (Section 6.2.3)
-                self.encode_header_sensitive(buf, &header.name, &header.value);
+                self.encode_header_sensitive(buf, header.name(), header.value());
             } else {
-                self.encode_header(buf, &header.name, &header.value, true);
+                self.encode_header(buf, header.name(), header.value(), true);
             }
         }
     }
@@ -69,7 +69,8 @@ impl Encoder {
             if indexing {
                 // Literal Header Field with Incremental Indexing (Section 6.2.1)
                 self.encode_literal_indexed(buf, index, value);
-                self.dynamic_table.insert(name.to_vec(), value.to_vec());
+                self.dynamic_table
+                    .insert_validated(name.to_vec(), value.to_vec());
             } else {
                 // Literal Header Field without Indexing (Section 6.2.2)
                 self.encode_literal_without_indexing_indexed(buf, index, value);
@@ -77,7 +78,8 @@ impl Encoder {
         } else if indexing {
             // Literal Header Field with Incremental Indexing (Section 6.2.1)
             self.encode_literal_new(buf, name, value);
-            self.dynamic_table.insert(name.to_vec(), value.to_vec());
+            self.dynamic_table
+                .insert_validated(name.to_vec(), value.to_vec());
         } else {
             // Literal Header Field without Indexing (Section 6.2.2)
             self.encode_literal_without_indexing_new(buf, name, value);
@@ -269,8 +271,8 @@ mod tests {
         let mut buf = Vec::new();
 
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":path", "/"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
         ];
 
         encoder.encode(&mut buf, &headers);
@@ -311,8 +313,8 @@ mod tests {
         let mut buf = Vec::new();
 
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::sensitive("authorization", "Bearer token"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new_with_sensitive("authorization", "Bearer token", true).unwrap(),
         ];
 
         encoder.encode(&mut buf, &headers);

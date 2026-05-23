@@ -16,11 +16,11 @@ use tokio_http2::{Client, Event, HeaderField, Limits, Server, TlsServerConfig, W
 /// テストで繰り返し使う CONNECT 要求ヘッダー
 fn connect_request() -> Vec<HeaderField> {
     vec![
-        HeaderField::from_str(":method", "CONNECT"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
-        HeaderField::from_str(":protocol", "webtransport"),
+        HeaderField::new(":method", "CONNECT").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":protocol", "webtransport").unwrap(),
     ]
 }
 
@@ -155,11 +155,11 @@ async fn test_wt_bidi_echo() {
 
     // Extended CONNECT
     let request = vec![
-        HeaderField::from_str(":method", "CONNECT"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
-        HeaderField::from_str(":protocol", "webtransport"),
+        HeaderField::new(":method", "CONNECT").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":protocol", "webtransport").unwrap(),
     ];
     let connect_stream = client
         .send_request(request, false)
@@ -264,11 +264,11 @@ async fn test_wt_reject() {
     }
 
     let request = vec![
-        HeaderField::from_str(":method", "CONNECT"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "localhost"),
-        HeaderField::from_str(":protocol", "webtransport"),
+        HeaderField::new(":method", "CONNECT").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":protocol", "webtransport").unwrap(),
     ];
     let connect_stream = client
         .send_request(request, false)
@@ -288,10 +288,10 @@ async fn test_wt_reject() {
             if stream_id == connect_stream {
                 let status = headers
                     .iter()
-                    .find(|h| h.name == b":status")
+                    .find(|h| h.name() == b":status")
                     .expect("status header")
-                    .value
-                    .clone();
+                    .value()
+                    .to_vec();
                 assert_eq!(status.as_slice(), b"404");
                 got_404 = true;
                 break;

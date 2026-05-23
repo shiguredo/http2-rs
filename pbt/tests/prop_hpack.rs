@@ -16,9 +16,20 @@ fn valid_header_name() -> impl Strategy<Value = Vec<u8>> {
     )
 }
 
-/// 有効なヘッダー値を生成する（印字可能 ASCII）
+/// 有効なヘッダー値を生成する (visible ASCII + 内部 SP/HTAB 許容、両端 SP/HTAB は除去)
+///
+/// RFC 9113 §8.2.1: field-value は内部 SP/HTAB を含んでよいが、両端は不可。
+/// NUL/CR/LF は構築時検査で禁止される。
 fn valid_header_value() -> impl Strategy<Value = Vec<u8>> {
-    prop::collection::vec(0x20u8..=0x7Eu8, 0..=64)
+    prop::collection::vec(0x20u8..=0x7Eu8, 0..=64).prop_map(|v| {
+        v.iter()
+            .position(|&b| b != 0x20 && b != 0x09)
+            .map(|start| {
+                let end = v.iter().rposition(|&b| b != 0x20 && b != 0x09).unwrap();
+                v[start..=end].to_vec()
+            })
+            .unwrap_or_default()
+    })
 }
 
 /// 任意のバイト列を生成する
@@ -37,7 +48,7 @@ proptest! {
     ) {
         let headers: Vec<HeaderField> = headers
             .into_iter()
-            .map(|(name, value)| HeaderField::new(name, value))
+            .map(|(name, value)| HeaderField::new(name, value).unwrap())
             .collect();
 
         let mut encoder = HpackEncoder::new(4096);
@@ -50,8 +61,8 @@ proptest! {
 
         prop_assert_eq!(decoded.len(), headers.len());
         for (original, decoded) in headers.iter().zip(decoded.iter()) {
-            prop_assert_eq!(&original.name, &decoded.name);
-            prop_assert_eq!(&original.value, &decoded.value);
+            prop_assert_eq!(original.name(), decoded.name());
+            prop_assert_eq!(original.value(), decoded.value());
         }
     }
 
@@ -110,7 +121,7 @@ proptest! {
     ) {
         let headers: Vec<HeaderField> = headers
             .into_iter()
-            .map(|(name, value)| HeaderField::new(name, value))
+            .map(|(name, value)| HeaderField::new(name, value).unwrap())
             .collect();
 
         let mut encoder = HpackEncoder::new(max_size);
@@ -132,7 +143,9 @@ proptest! {
     ) {
         let headers: Vec<HeaderField> = headers
             .into_iter()
-            .map(|(name, value, sensitive)| HeaderField::new_sensitive(name, value, sensitive))
+            .map(|(name, value, sensitive)| {
+                HeaderField::new_with_sensitive(name, value, sensitive).unwrap()
+            })
             .collect();
 
         let mut encoder = HpackEncoder::new(4096);
@@ -145,9 +158,9 @@ proptest! {
 
         prop_assert_eq!(decoded.len(), headers.len());
         for (original, decoded) in headers.iter().zip(decoded.iter()) {
-            prop_assert_eq!(&original.name, &decoded.name);
-            prop_assert_eq!(&original.value, &decoded.value);
-            prop_assert_eq!(original.sensitive, decoded.sensitive);
+            prop_assert_eq!(original.name(), decoded.name());
+            prop_assert_eq!(original.value(), decoded.value());
+            prop_assert_eq!(original.sensitive(), decoded.sensitive());
         }
     }
 
@@ -161,7 +174,12 @@ proptest! {
         let mut decoder = HpackDecoder::new(4096);
 
         // 機密ヘッダーのみをエンコード
-        let headers = vec![HeaderField::new_sensitive(name.clone(), value.clone(), true)];
+        let headers = vec![HeaderField::new_with_sensitive(
+            name.clone(),
+            value.clone(),
+            true,
+        )
+        .unwrap()];
 
         let mut encoded = Vec::new();
         encoder.encode(&mut encoded, &headers);

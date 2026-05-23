@@ -12,6 +12,13 @@ include = ["/src/**", "LICENSE", "README.md"]
 
 [dependencies]
 
+[features]
+# テスト専用ヘルパを公開する (PBT/fuzz 専用、本番利用禁止)
+# 構築時検査をバイパスする HeaderField::from_validated_parts などを
+# 外部 crate から呼び出せるようにする。型不変条件を破壊するため
+# 通常の利用者は有効化してはならない。
+__test_helpers = []
+
 [workspace]
 members = [
     "examples/http2_client",

@@ -36,10 +36,10 @@ fn create_headers_without_end_headers(stream_id: StreamId, fragment: Vec<u8>) ->
 fn encode_valid_request_headers() -> Vec<u8> {
     let mut encoder = HpackEncoder::new(4096);
     let headers = vec![
-        HeaderField::from_str(":method", "GET"),
-        HeaderField::from_str(":scheme", "https"),
-        HeaderField::from_str(":path", "/"),
-        HeaderField::from_str(":authority", "example.com"),
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "example.com").unwrap(),
     ];
     let mut buf = Vec::new();
     encoder.encode(&mut buf, &headers);
@@ -336,10 +336,10 @@ proptest! {
         // GOAWAY 後に新規ストリームを開始しようとする
         use shiguredo_http2::HeaderField;
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":authority", "example.com"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":authority", "example.com").unwrap(),
         ];
         let result = client.start_stream(headers, true);
         prop_assert!(result.is_err());
@@ -396,10 +396,10 @@ proptest! {
         // max_streams 個のストリームを開始（すべて成功するはず）
         for _ in 0..max_streams {
             let headers = vec![
-                HeaderField::from_str(":method", "GET"),
-                HeaderField::from_str(":path", "/"),
-                HeaderField::from_str(":scheme", "https"),
-                HeaderField::from_str(":authority", "example.com"),
+                HeaderField::new(":method", "GET").unwrap(),
+                HeaderField::new(":path", "/").unwrap(),
+                HeaderField::new(":scheme", "https").unwrap(),
+                HeaderField::new(":authority", "example.com").unwrap(),
             ];
             let result = client.start_stream(headers, false);
             prop_assert!(result.is_ok(), "stream should be started successfully");
@@ -407,10 +407,10 @@ proptest! {
 
         // max_streams + 1 個目はエラーになるはず
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":authority", "example.com"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":authority", "example.com").unwrap(),
         ];
         let result = client.start_stream(headers, false);
         prop_assert!(result.is_err(), "exceeding max concurrent streams should fail");
@@ -435,7 +435,7 @@ proptest! {
 
         // 疑似ヘッダーなしのヘッダーブロックを HPACK エンコード
         let headers = vec![
-            HeaderField::from_str("content-type", "text/html"),
+            HeaderField::new("content-type", "text/html").unwrap(),
         ];
         let mut encoder = HpackEncoder::new(4096);
         let mut encoded = Vec::new();
@@ -580,10 +580,10 @@ proptest! {
         server.process().unwrap();
 
         let headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":authority", "example.com"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":authority", "example.com").unwrap(),
         ];
         let result = server.start_stream(headers, true);
         prop_assert!(result.is_err());
@@ -638,10 +638,10 @@ proptest! {
 
         // クライアント: リクエストを送信
         let request_headers = vec![
-            HeaderField::from_str(":method", "GET"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", &path),
-            HeaderField::from_str(":authority", "example.com"),
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", &path).unwrap(),
+            HeaderField::new(":authority", "example.com").unwrap(),
         ];
         let stream_id = client.start_stream(request_headers, true).unwrap();
         prop_assert_eq!(stream_id, 1); // 最初のクライアントストリーム
@@ -679,10 +679,10 @@ proptest! {
         let mut stream_ids = Vec::new();
         for i in 0..count {
             let request_headers = vec![
-                HeaderField::from_str(":method", "GET"),
-                HeaderField::from_str(":scheme", "https"),
-                HeaderField::from_str(":path", &format!("/resource{}", i)),
-                HeaderField::from_str(":authority", "example.com"),
+                HeaderField::new(":method", "GET").unwrap(),
+                HeaderField::new(":scheme", "https").unwrap(),
+                HeaderField::new(":path", format!("/resource{}", i)).unwrap(),
+                HeaderField::new(":authority", "example.com").unwrap(),
             ];
             let stream_id = client.start_stream(request_headers, true).unwrap();
             stream_ids.push(stream_id);
@@ -780,10 +780,10 @@ proptest! {
 
         // クライアント: リクエストを送信 (END_STREAM なし)
         let request_headers = vec![
-            HeaderField::from_str(":method", "POST"),
-            HeaderField::from_str(":scheme", "https"),
-            HeaderField::from_str(":path", "/"),
-            HeaderField::from_str(":authority", "example.com"),
+            HeaderField::new(":method", "POST").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":authority", "example.com").unwrap(),
         ];
         client.start_stream(request_headers, false).unwrap();
         let client_output = client.poll_output().unwrap();
