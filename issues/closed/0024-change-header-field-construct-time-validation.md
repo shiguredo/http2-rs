@@ -1,7 +1,37 @@
 # HeaderField を構築時検査型に変更する
 
 Created: 2026-05-23
+Completed: 2026-05-23
 Model: Opus 4.7
+Branch: feature/change-header-field-construct-time-validation
+
+## 解決方法
+
+`HeaderField` を構築時検査型として再構築した。
+
+- **新規モジュール**: `src/hpack/bytes.rs` に `enum HeaderBytes { Static(&'static [u8]), Owned(Vec<u8>) }` と `const fn` 検査ヘルパ (`check_field_name_const`, `check_field_value_const`, `check_pseudo_header_const`) を追加。`HeaderBytes` は `pub(crate)` で外部非公開、`PartialEq`/`Eq`/`Hash` を `as_slice()` ベースで手動実装し `Static` と `Owned` を同値扱い。
+- **`HeaderField` 構造体**: 全フィールド (`name`, `value`, `sensitive`) を private 化。アクセサ `name() -> &[u8]` / `value() -> &[u8]` / `sensitive() -> bool` / `size() -> usize` を提供。
+- **コンストラクタ**:
+  - `new(impl AsRef<[u8]>, impl AsRef<[u8]>) -> Result<Self, HeaderFieldError>` (検査つき, sensitive: false)
+  - `new_with_sensitive(impl AsRef<[u8]>, impl AsRef<[u8]>, bool) -> Result<Self, HeaderFieldError>` (検査つき, sensitive フラグ指定可能)
+  - `from_static(&'static [u8], &'static [u8]) -> Self` (`const fn`, 不正リテラルは const eval panic でコンパイルエラー)
+  - `from_validated_parts(name: Vec<u8>, value: Vec<u8>, sensitive: bool) -> Self` (`#[doc(hidden)] pub`, HPACK decoder 経路と PBT 用)
+  - 既存 `from_str` / `new(Vec, Vec)` 旧シグネチャ / `new_sensitive` / `sensitive` を削除
+- **検査内容**: RFC 9113 §8.2.1 (field-name lowercase, field-value NUL/CR/LF 禁止, 先頭/末尾 SP/HTAB 禁止) / RFC 9110 §5.6.2 (token = 1*tchar) / RFC 9113 §8.3 + RFC 8441 §4 (疑似ヘッダー名と値構文)
+- **HPACK 周辺**: `decoder.rs` を `from_validated_parts` 経由、`encoder.rs` / `dynamic_table.rs` をアクセサ経由に書き換え。`DynamicTable::insert` を `Result<(), HeaderFieldError>` 化、内部用に `insert_validated` (`pub(crate)`) を追加。`StaticEntry::to_header_field()` は `HeaderBytes::Static` を直接組み立ててゼロアロケーション化。
+- **`validation.rs`**: `ValidationError` のバリアントを整理し、個別フィールド値検査を `HeaderField::new` に集約。`check_field` ヘルパで HPACK decoder 経路の wire データを再検査して `InvalidHeaderField(HeaderFieldError)` でラップ。
+- **`connection/mod.rs`**: `concatenate_cookies` を `from_validated_parts` 経由に、各種 `HeaderField::from_str` 呼び出しを `HeaderField::new(...).unwrap()` に置き換え、フィールドアクセスをアクセサ経由に変更。
+- **`WtServerRequest::reject`**: status コードを `100..=599` (RFC 9110 §15) に制限し、`HeaderField::new` の `expect` で 3DIGIT を保証。
+- **テスト・PBT・fuzz・examples**: 新 API に追従。fuzz は cargo feature `__test_helpers` で `from_validated_parts` を呼ぶ。examples は固定リテラルを `HeaderField::from_static` に置換。`tests/rfc7541.rs::test_multiple_requests_dynamic_table` に動的テーブル活用アサート追加。
+- **const/runtime 検査の同値性 PBT**: `src/__test_helpers.rs` 新設で `check_*_const` (panic 評価) と `validate_*` (Result 評価) を `Result<(), String>` で公開、`pbt/tests/prop_header_field_syntax.rs` 新設で両者の accept/reject を 2048 ケースで検証 (境界値 strategy + ランダム strategy 混合)。
+- **CHANGES.md**: `## develop` に `[ADD]` 群 + `[CHANGE]` 群を追記、`### misc` に `__test_helpers` feature と 0013 pending エントリを追加。
+- **依存**: issue 0013 (Bytes 化) の保留に伴い `enum HeaderBytes` 自作で代替。`Cargo.toml` の依存は追加なし、cargo feature `__test_helpers` のみ追加。
+
+### 確認したコマンド
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace`
 
 ## 概要
 
@@ -311,9 +341,9 @@ pub enum HeaderFieldError {
 - `HeaderField` の全フィールドが private で、アクセサ経由でのみ読み取れる
 - decoder 経路は `from_validated_parts` 経由で構築している
 - `from_validated_parts` が `sensitive` フラグを受け取る
-- `StaticEntry::to_header_field()` が `from_validated_parts` 経由で構築している
-- `DynamicTable::insert()` が `from_validated_parts` 経由で構築している
-- `concatenate_cookies()` が `from_validated_parts` 経由で構築している
+- `StaticEntry::to_header_field()` が `HeaderBytes::Static` を直接組み立ててゼロアロケで構築している (`const fn`)
+- `DynamicTable::insert()` が `HeaderField::new` 経由で構築時検査を行い `Result<(), HeaderFieldError>` を返す。内部経路向けに `DynamicTable::insert_validated` (`pub(crate)`) が `from_validated_parts` 経由で構築する
+- `concatenate_cookies()` が `from_validated_parts` 経由で構築する (空 cookie は除外)
 - `HeaderFieldError` が `Display` + `std::error::Error` を実装している
 - `src/validation.rs` の個別フィールド値検査が `HeaderField::new` に統合され、
   リスト整合性検査のみが残っている
