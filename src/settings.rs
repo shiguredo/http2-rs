@@ -384,6 +384,200 @@ impl std::fmt::Display for SettingsError {
 
 impl std::error::Error for SettingsError {}
 
+// === issue 0026 / 0029: 構築時検査用エラー・補助型 (Phase 1) ===
+//
+// 既存の `SettingsError` は Phase 2 でリネームし、各構築 API と統合される予定。
+// Phase 1 では新型を追加するだけに留め、既存 API は変更しない。
+
+/// SETTINGS 構築時検査エラー (issue 0026 / 0029)
+///
+/// `WindowSize::new` / `MaxFrameSize::new` / 各 `Setting` 値範囲検査で使用される。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SettingError {
+    /// `SETTINGS_ENABLE_PUSH` が 0/1 以外
+    ///
+    /// RFC 9113 §6.5.2: PROTOCOL_ERROR
+    EnablePushNotBoolean {
+        /// 違反した値
+        value: u32,
+    },
+
+    /// `SETTINGS_INITIAL_WINDOW_SIZE` が 2^31-1 を超える
+    ///
+    /// RFC 9113 §6.5.2: FLOW_CONTROL_ERROR
+    InitialWindowSizeOutOfRange {
+        /// 違反した値
+        value: u32,
+        /// 上限
+        max: u32,
+    },
+
+    /// `SETTINGS_MAX_FRAME_SIZE` が範囲外
+    ///
+    /// RFC 9113 §6.5.2: 16384..=16777215, 範囲外は PROTOCOL_ERROR
+    MaxFrameSizeOutOfRange {
+        /// 違反した値
+        value: u32,
+        /// 下限
+        min: u32,
+        /// 上限
+        max: u32,
+    },
+
+    /// `SETTINGS_ENABLE_CONNECT_PROTOCOL` が 0/1 以外
+    ///
+    /// RFC 8441 §3
+    EnableConnectProtocolNotBoolean {
+        /// 違反した値
+        value: u32,
+    },
+
+    /// `SETTINGS_NO_RFC7540_PRIORITIES` が 0/1 以外
+    ///
+    /// RFC 9218 §2.1
+    NoRfc7540PrioritiesNotBoolean {
+        /// 違反した値
+        value: u32,
+    },
+}
+
+impl std::fmt::Display for SettingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EnablePushNotBoolean { value } => {
+                write!(f, "SETTINGS_ENABLE_PUSH must be 0 or 1, got {value}")
+            }
+            Self::InitialWindowSizeOutOfRange { value, max } => write!(
+                f,
+                "SETTINGS_INITIAL_WINDOW_SIZE {value} exceeds maximum {max}"
+            ),
+            Self::MaxFrameSizeOutOfRange { value, min, max } => write!(
+                f,
+                "SETTINGS_MAX_FRAME_SIZE {value} out of range {min}..={max}"
+            ),
+            Self::EnableConnectProtocolNotBoolean { value } => write!(
+                f,
+                "SETTINGS_ENABLE_CONNECT_PROTOCOL must be 0 or 1, got {value}"
+            ),
+            Self::NoRfc7540PrioritiesNotBoolean { value } => write!(
+                f,
+                "SETTINGS_NO_RFC7540_PRIORITIES must be 0 or 1, got {value}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SettingError {}
+
+/// `SETTINGS_INITIAL_WINDOW_SIZE` / `connection_window_size` 用の制約付き型 (0..=2^31-1)
+///
+/// RFC 9113 §6.5.2 / §6.9.1
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WindowSize(u32);
+
+impl WindowSize {
+    /// 許容される最大値 (2^31 - 1)
+    pub const MAX: u32 = MAX_INITIAL_WINDOW_SIZE;
+
+    /// 0 を表す定数
+    pub const ZERO: Self = Self(0);
+
+    /// 構築時検査つきで生成する
+    ///
+    /// # Errors
+    ///
+    /// - `size > Self::MAX` → [`SettingError::InitialWindowSizeOutOfRange`]
+    pub fn new(size: u32) -> Result<Self, SettingError> {
+        if size > Self::MAX {
+            return Err(SettingError::InitialWindowSizeOutOfRange {
+                value: size,
+                max: Self::MAX,
+            });
+        }
+        Ok(Self(size))
+    }
+
+    /// const 文脈で生成する
+    ///
+    /// 不正な値ではコンパイル時 panic (= コンパイルエラー) になる。
+    pub const fn from_static(size: u32) -> Self {
+        assert!(
+            size <= Self::MAX,
+            "WindowSize::from_static: size must be <= 2^31-1 (RFC 9113 §6.5.2)"
+        );
+        Self(size)
+    }
+
+    /// 検証済み値から構築する (crate 内部専用)
+    #[allow(dead_code)] // issue 0030 Phase 2 で decoder から呼ばれる予定
+    pub(crate) const fn from_validated_parts(size: u32) -> Self {
+        debug_assert!(size <= Self::MAX);
+        Self(size)
+    }
+
+    /// 値を取得する
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// `SETTINGS_MAX_FRAME_SIZE` 用の制約付き型 (16384..=16777215)
+///
+/// RFC 9113 §6.5.2
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct MaxFrameSize(u32);
+
+impl MaxFrameSize {
+    /// 許容される最小値 (2^14 = 16384)
+    pub const MIN: u32 = MIN_MAX_FRAME_SIZE;
+    /// 許容される最大値 (2^24 - 1 = 16777215)
+    pub const MAX: u32 = MAX_MAX_FRAME_SIZE;
+
+    /// 構築時検査つきで生成する
+    ///
+    /// # Errors
+    ///
+    /// - 範囲外 → [`SettingError::MaxFrameSizeOutOfRange`]
+    pub fn new(size: u32) -> Result<Self, SettingError> {
+        if !(Self::MIN..=Self::MAX).contains(&size) {
+            return Err(SettingError::MaxFrameSizeOutOfRange {
+                value: size,
+                min: Self::MIN,
+                max: Self::MAX,
+            });
+        }
+        Ok(Self(size))
+    }
+
+    /// const 文脈で生成する
+    ///
+    /// 不正な値ではコンパイル時 panic (= コンパイルエラー) になる。
+    pub const fn from_static(size: u32) -> Self {
+        assert!(
+            size >= Self::MIN,
+            "MaxFrameSize::from_static: size must be >= 16384 (RFC 9113 §6.5.2)"
+        );
+        assert!(
+            size <= Self::MAX,
+            "MaxFrameSize::from_static: size must be <= 16777215 (RFC 9113 §6.5.2)"
+        );
+        Self(size)
+    }
+
+    /// 検証済み値から構築する (crate 内部専用)
+    #[allow(dead_code)] // issue 0030 Phase 2 で decoder から呼ばれる予定
+    pub(crate) const fn from_validated_parts(size: u32) -> Self {
+        debug_assert!(size >= Self::MIN && size <= Self::MAX);
+        Self(size)
+    }
+
+    /// 値を取得する
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
 // === WebTransport SETTINGS 統合 (draft-ietf-webtrans-http2-14 Section 11.2) ===
 
 /// WebTransport 初期設定

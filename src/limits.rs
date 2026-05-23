@@ -185,3 +185,51 @@ mod tests {
         let _ = Limits::new().with_max_frame_size(MAX_MAX_FRAME_SIZE + 1);
     }
 }
+
+// === issue 0028 / 0029: Limits 構築時検査エラー (Phase 1) ===
+//
+// 既存の `with_*` ビルダーは Phase 2 で `LimitsBuilder::build() -> Result` に
+// 置き換えられる予定。Phase 1 では `LimitsError` 型のみ追加する。
+
+/// `Limits` 構築時検査エラー (issue 0028 / 0029)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LimitsError {
+    /// WebTransport 関連設定があるのに `enable_connect_protocol = false`
+    ///
+    /// draft-ietf-webtrans-http2-14 §11.1: WebTransport は Extended CONNECT を必要とする。
+    WebtransportRequiresConnectProtocol,
+}
+
+impl std::fmt::Display for LimitsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WebtransportRequiresConnectProtocol => write!(
+                f,
+                "WebTransport settings require enable_connect_protocol = true"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for LimitsError {}
+
+#[cfg(test)]
+mod limits_error_tests {
+    use super::*;
+
+    #[test]
+    fn display_webtransport_requires_connect_protocol() {
+        assert_eq!(
+            LimitsError::WebtransportRequiresConnectProtocol.to_string(),
+            "WebTransport settings require enable_connect_protocol = true"
+        );
+    }
+
+    #[test]
+    fn copy_and_equality() {
+        let a = LimitsError::WebtransportRequiresConnectProtocol;
+        let b = a;
+        assert_eq!(a, b);
+    }
+}

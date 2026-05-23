@@ -22,30 +22,37 @@
 //! - [`webtransport`] - WebTransport over HTTP/2
 
 pub mod connection;
+pub mod decode_error;
 pub mod error;
 pub mod event;
 pub mod flow_control;
 pub mod frame;
 pub mod hpack;
 pub mod limits;
+pub mod send_error;
 pub mod settings;
 pub mod stream;
+pub mod stream_id;
 pub mod validation;
 pub mod webtransport;
 
 pub use connection::{Connection, ConnectionState, Role};
+pub use decode_error::DecodeError;
 pub use error::{Error, ErrorCode, ErrorKind, Result};
 pub use event::Event;
 pub use flow_control::{FlowControl, MAX_WINDOW_SIZE};
 pub use frame::{
     CONNECTION_STREAM_ID, ContinuationFrame, DataFrame, FRAME_HEADER_SIZE, Frame, FrameDecoder,
-    FrameEncoder, FrameFlags, FrameHeader, FrameType, GoawayFrame, HeadersFrame, PingFrame,
-    PriorityUpdateFrame, RstStreamFrame, SettingsFrame, StreamId, WindowUpdateFrame,
+    FrameEncoder, FrameError, FrameFlags, FrameHeader, FrameType, GoawayFrame, HeadersFrame,
+    LastStreamId, PingFrame, PriorityUpdateFrame, RstStreamFrame, SettingsFrame, StreamId, Weight,
+    WindowIncrement, WindowUpdateFrame,
 };
-pub use hpack::{Decoder as HpackDecoder, Encoder as HpackEncoder, HeaderField};
-pub use limits::Limits;
-pub use settings::{Setting, SettingId, Settings};
+pub use hpack::{Decoder as HpackDecoder, Encoder as HpackEncoder, HeaderField, HeaderFieldError};
+pub use limits::{Limits, LimitsError};
+pub use send_error::SendError;
+pub use settings::{MaxFrameSize, Setting, SettingError, SettingId, Settings, WindowSize};
 pub use stream::{Stream, StreamState};
+pub use stream_id::{ClientStreamId, NonZeroStreamId, Parity, ServerStreamId, StreamIdError};
 
 /// HTTP/2 接続プリフェイス (RFC 9113 Section 3.4)
 pub const CONNECTION_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";

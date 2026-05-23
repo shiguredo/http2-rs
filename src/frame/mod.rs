@@ -4,10 +4,12 @@
 
 pub mod decoder;
 pub mod encoder;
+pub mod error;
 pub mod flags;
 
 pub use decoder::FrameDecoder;
 pub use encoder::FrameEncoder;
+pub use error::{FrameError, LastStreamId, Weight, WindowIncrement};
 pub use flags::FrameFlags;
 
 use crate::settings::Setting;
