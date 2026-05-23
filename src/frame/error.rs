@@ -149,6 +149,22 @@ impl WindowIncrement {
     /// const 文脈で生成する
     ///
     /// 不正な値ではコンパイル時 panic (= コンパイルエラー) になる。
+    ///
+    /// # 不正リテラルの compile-fail 例
+    ///
+    /// 0 は WINDOW_UPDATE に対する PROTOCOL_ERROR (RFC 9113 §6.9):
+    ///
+    /// ```compile_fail
+    /// const _BAD: shiguredo_http2::WindowIncrement =
+    ///     shiguredo_http2::WindowIncrement::from_static(0);
+    /// ```
+    ///
+    /// 2^31 - 1 を超える値も拒否:
+    ///
+    /// ```compile_fail
+    /// const _BAD: shiguredo_http2::WindowIncrement =
+    ///     shiguredo_http2::WindowIncrement::from_static(u32::MAX);
+    /// ```
     pub const fn from_static(increment: u32) -> Self {
         assert!(
             increment <= Self::MAX,
@@ -195,6 +211,15 @@ impl Weight {
     }
 
     /// const 文脈で生成する
+    ///
+    /// # 不正リテラルの compile-fail 例
+    ///
+    /// wire 値の上限 255 (実体 256) を超える値は拒否:
+    ///
+    /// ```compile_fail
+    /// const _BAD: shiguredo_http2::Weight =
+    ///     shiguredo_http2::Weight::from_static(256);
+    /// ```
     pub const fn from_static(wire_value: u16) -> Self {
         assert!(
             wire_value <= 255,
@@ -237,6 +262,15 @@ impl LastStreamId {
     }
 
     /// const 文脈で生成する
+    ///
+    /// # 不正リテラルの compile-fail 例
+    ///
+    /// 2^31 - 1 を超える値は RFC 9113 §6.8 違反:
+    ///
+    /// ```compile_fail
+    /// const _BAD: shiguredo_http2::LastStreamId =
+    ///     shiguredo_http2::LastStreamId::from_static(u32::MAX);
+    /// ```
     pub const fn from_static(id: u32) -> Self {
         assert!(
             id <= Self::MAX,

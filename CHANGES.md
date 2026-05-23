@@ -45,6 +45,8 @@
 
 ### misc
 
+- [ADD] 構築時検査の `*::from_static` API に `compile_fail` doctest を追加し、不正リテラル検出のリグレッションを CI で防止する (issue 0032)
+  - @voluntas
 - [UPDATE] `HeaderField::from_validated_parts` の cfg 排他 2 定義を解消し、テスト向け公開層を `__test_helpers::header_field_from_validated_parts` に集約する (issue 0033)
   - @voluntas
 - [ADD] `tokio-http2` に WebTransport 統合テスト (`tests/test_webtransport.rs`) を追加する

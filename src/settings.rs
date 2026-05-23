@@ -498,6 +498,15 @@ impl WindowSize {
     /// const 文脈で生成する
     ///
     /// 不正な値ではコンパイル時 panic (= コンパイルエラー) になる。
+    ///
+    /// # 不正リテラルの compile-fail 例
+    ///
+    /// 2^31 - 1 を超える値は RFC 9113 §6.5.2 違反:
+    ///
+    /// ```compile_fail
+    /// const _BAD: shiguredo_http2::WindowSize =
+    ///     shiguredo_http2::WindowSize::from_static(u32::MAX);
+    /// ```
     pub const fn from_static(size: u32) -> Self {
         assert!(
             size <= Self::MAX,
@@ -543,6 +552,22 @@ impl MaxFrameSize {
     /// const 文脈で生成する
     ///
     /// 不正な値ではコンパイル時 panic (= コンパイルエラー) になる。
+    ///
+    /// # 不正リテラルの compile-fail 例
+    ///
+    /// 2^14 (16384) 未満は RFC 9113 §6.5.2 違反:
+    ///
+    /// ```compile_fail
+    /// const _BAD: shiguredo_http2::MaxFrameSize =
+    ///     shiguredo_http2::MaxFrameSize::from_static(100);
+    /// ```
+    ///
+    /// 2^24 - 1 (16777215) 超過も拒否:
+    ///
+    /// ```compile_fail
+    /// const _BAD: shiguredo_http2::MaxFrameSize =
+    ///     shiguredo_http2::MaxFrameSize::from_static(u32::MAX);
+    /// ```
     pub const fn from_static(size: u32) -> Self {
         assert!(
             size >= Self::MIN,

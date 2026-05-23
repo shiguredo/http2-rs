@@ -92,6 +92,22 @@ impl ClientStreamId {
     }
 
     /// const 文脈で生成する
+    ///
+    /// # 不正リテラルの compile-fail 例
+    ///
+    /// 0 は接続制御用なのでクライアントストリーム ID には使えない:
+    ///
+    /// ```compile_fail
+    /// const _BAD: shiguredo_http2::ClientStreamId =
+    ///     shiguredo_http2::ClientStreamId::from_static(0);
+    /// ```
+    ///
+    /// 偶数 ID はサーバー開始の領域なのでクライアントには使えない:
+    ///
+    /// ```compile_fail
+    /// const _BAD: shiguredo_http2::ClientStreamId =
+    ///     shiguredo_http2::ClientStreamId::from_static(2);
+    /// ```
     pub const fn from_static(id: u32) -> Self {
         assert!(
             id <= STREAM_ID_MAX,
@@ -158,6 +174,22 @@ impl ServerStreamId {
     }
 
     /// const 文脈で生成する
+    ///
+    /// # 不正リテラルの compile-fail 例
+    ///
+    /// 0 は接続制御用なのでサーバーストリーム ID には使えない:
+    ///
+    /// ```compile_fail
+    /// const _BAD: shiguredo_http2::ServerStreamId =
+    ///     shiguredo_http2::ServerStreamId::from_static(0);
+    /// ```
+    ///
+    /// 奇数 ID はクライアント開始の領域なのでサーバーには使えない:
+    ///
+    /// ```compile_fail
+    /// const _BAD: shiguredo_http2::ServerStreamId =
+    ///     shiguredo_http2::ServerStreamId::from_static(1);
+    /// ```
     pub const fn from_static(id: u32) -> Self {
         assert!(
             id <= STREAM_ID_MAX,
@@ -231,6 +263,15 @@ impl NonZeroStreamId {
     }
 
     /// const 文脈で生成する (奇偶を自動分類)
+    ///
+    /// # 不正リテラルの compile-fail 例
+    ///
+    /// 0 は接続制御用なので `NonZeroStreamId` には使えない:
+    ///
+    /// ```compile_fail
+    /// const _BAD: shiguredo_http2::NonZeroStreamId =
+    ///     shiguredo_http2::NonZeroStreamId::from_static(0);
+    /// ```
     pub const fn from_static(id: u32) -> Self {
         assert!(id != 0, "NonZeroStreamId::from_static: id must not be 0");
         assert!(

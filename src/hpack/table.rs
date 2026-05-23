@@ -72,6 +72,22 @@ impl HeaderField {
     /// 検査内容は [`Self::new`] と等価。
     ///
     /// `sensitive: true` が必要な場合は [`Self::new_with_sensitive`] を使う。
+    ///
+    /// # 不正リテラルの compile-fail 例
+    ///
+    /// 大文字 field-name は RFC 9113 §8.2.1 違反:
+    ///
+    /// ```compile_fail
+    /// const _BAD: shiguredo_http2::HeaderField =
+    ///     shiguredo_http2::HeaderField::from_static(b"Host", b"example.com");
+    /// ```
+    ///
+    /// 値に CR/LF を含む場合も拒否される:
+    ///
+    /// ```compile_fail
+    /// const _BAD: shiguredo_http2::HeaderField =
+    ///     shiguredo_http2::HeaderField::from_static(b"x-foo", b"line1\r\nline2");
+    /// ```
     #[must_use]
     pub const fn from_static(name: &'static [u8], value: &'static [u8]) -> Self {
         check_field_name_const(name);
