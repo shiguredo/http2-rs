@@ -8,6 +8,8 @@
 
 ## develop
 
+- [ADD] 構築時検査リファクタリング (issues 0024-0032) の Phase 1 として、新規エラー型 (`HeaderFieldError`, `FrameError`, `StreamIdError`, `SettingError`, `LimitsError`, `SendError`, `DecodeError`) と補助型 (`Parity`, `WindowSize`, `MaxFrameSize`, `WindowIncrement`, `Weight`, `LastStreamId`, `ClientStreamId`, `ServerStreamId`, `NonZeroStreamId`) を追加する (既存 API は無変更、Phase 2 で統合予定)
+  - @voluntas
 - [ADD] `shiguredo_http2` の `Settings` に WebTransport 関連 SETTINGS (`0x2b61`〜`0x2b66`) を統合する
   - @voluntas
 - [ADD] `shiguredo_http2::Limits` に `with_webtransport` ビルダーを追加する

@@ -4,10 +4,12 @@
 
 pub mod decoder;
 pub mod encoder;
+pub mod error;
 pub mod flags;
 
 pub use decoder::FrameDecoder;
 pub use encoder::FrameEncoder;
+pub use error::{FrameError, LastStreamId, Weight, WindowIncrement};
 pub use flags::FrameFlags;
 
 use crate::settings::Setting;
@@ -65,6 +67,26 @@ pub enum FrameType {
 }
 
 impl FrameType {
+    /// RFC 9113 / RFC 9218 で定義される識別子名を返す
+    ///
+    /// エラーメッセージや診断ログで仕様準拠の表記 (`"DATA"`, `"HEADERS"` 等) を使うためのアクセサ。
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Data => "DATA",
+            Self::Headers => "HEADERS",
+            Self::Priority => "PRIORITY",
+            Self::RstStream => "RST_STREAM",
+            Self::Settings => "SETTINGS",
+            Self::PushPromise => "PUSH_PROMISE",
+            Self::Ping => "PING",
+            Self::Goaway => "GOAWAY",
+            Self::WindowUpdate => "WINDOW_UPDATE",
+            Self::Continuation => "CONTINUATION",
+            Self::PriorityUpdate => "PRIORITY_UPDATE",
+        }
+    }
+
     /// u8 から `FrameType` を生成する
     #[must_use]
     pub const fn from_u8(value: u8) -> Option<Self> {
@@ -88,6 +110,12 @@ impl FrameType {
     #[must_use]
     pub const fn as_u8(self) -> u8 {
         self as u8
+    }
+}
+
+impl std::fmt::Display for FrameType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
     }
 }
 
