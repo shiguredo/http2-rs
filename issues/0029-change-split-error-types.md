@@ -40,10 +40,9 @@ shiguredo_http11 では `EncodeError` を 23 variant に分割し、それぞれ
 
 ### 既存型の責務再定義
 
-`crate::error::Error` (既存) は **接続/ストリームエラー専用**に絞る。
+`crate::error::Error` (既存) は **接続/ストリームエラー専用** に絞る。
 
 ```rust
-// 役割: リモートが起こしたプロトコル違反 + ライブラリ内部の到達不能状態
 pub struct Error {
     pub kind: ErrorKind,
     pub reason: String,
@@ -54,41 +53,81 @@ pub struct Error {
 pub enum ErrorKind {
     ConnectionError(ErrorCode),
     StreamError(ErrorCode),
+    /// HPACK 符号化レベルのエラー (動的テーブルインデックス範囲外、整数オーバーフロー、
+    /// Huffman 復号失敗等)。RFC 7541 由来の構造的エラーであり、構築時検査とは異なる。
+    /// 受信側で検出され COMPRESSION_ERROR (接続エラー) に変換される。
     HpackError,
-    // BufferTooShort / Incomplete / InvalidInput は移譲先のドメインエラーへ
+    // BufferTooShort / Incomplete / InvalidInput は削除 (次節参照)
 }
 ```
 
-### 新規ドメインエラー型
+### `BufferTooShort` / `Incomplete` / `InvalidInput` の移行先
 
-各構築点ごとに `#[non_exhaustive] enum` で定義。すべて `Copy + Clone + PartialEq + Eq` を満たす
-軽量型とし、`Backtrace` は持たない。
+`ErrorKind` から削除する 3 variant の移行先:
+
+| 既存 variant | 移行先 | 根拠 |
+|---|---|---|
+| `BufferTooShort` | `DecodeError::BufferTooShort` (新設) | encoder/decoder/hpack 内部のバッファ操作エラー |
+| `Incomplete` | `DecodeError::Incomplete` (新設) | ストリーミングデコード時の入力不足 |
+| `InvalidInput` | 各ドメインエラー型の対応 variant | 構築時検査の個別エラーに分解 |
+
+`DecodeError` はフレーム decoder / HPACK decoder が共通で使用する内部デコードエラー型:
 
 ```rust
-// src/hpack/error.rs
-#[non_exhaustive]
-pub enum HeaderFieldError {
-    EmptyFieldName,
-    UppercaseFieldName { /* ... */ },
-    InvalidFieldNameByte { /* ... */ },
-    InvalidFieldValueByte { /* ... */ },
-    UnknownPseudoHeader { /* ... */ },
-    InvalidPseudoHeaderValue { /* ... */ },
+// src/decode_error.rs (新規)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecodeError {
+    /// バッファが必要なサイズに満たない
+    BufferTooShort { required: usize, available: usize },
+    /// 入力データが不足している (ストリーミングデコード時)
+    Incomplete,
 }
+```
 
-// src/settings.rs
+既存メソッドの移行:
+- `Error::buffer_too_short()` → `DecodeError::BufferTooShort { ... }` を返す
+- `Error::incomplete()` → `DecodeError::Incomplete` を返す
+- `Error::invalid_input(reason)` → 各構築点のドメインエラー型に置き換え
+- `Error::check_buffer_size(required, buf)` → `DecodeError::check_buffer_size(required, buf)` に移動
+
+`FrameDecoder::decode()` の戻り値型は `Result<Option<Frame>, DecodeError>` に変更する。
+接続エラーへの昇格が必要な場合は `From<DecodeError> for Error` で変換する。
+
+### 新規ドメインエラー型
+
+各構築点ごとに `#[non_exhaustive] enum` で定義。可能な限り `Copy + Clone + PartialEq + Eq` を
+満たす軽量型とし、`Backtrace` は持たない。ただし `HeaderFieldError` のように違反値を
+`Vec<u8>` で保持する型は `Copy` を導出できないため、`Clone + PartialEq + Eq` のみとする。
+
+#### `HeaderFieldError` (issue 0024 で定義)
+
+issue 0024 の設計に準拠する。0029 では定義を重複させず、0024 を参照する。
+variant 一覧: `EmptyFieldName`, `UppercaseFieldName`, `InvalidFieldNameByte`,
+`InvalidFieldValueByte`, `FieldValueLeadingOrTrailingWhitespace`, `UnknownPseudoHeader`,
+`InvalidPseudoHeaderValue` (計 7 variant)。
+
+#### `SettingError` (既存 `SettingsError` をリネーム・再設計)
+
+既存の `SettingsError` (複数形、5 variant) を `SettingError` (単数形) にリネームし、
+issue 0026 の設計に従って再構成する。
+
+```rust
 #[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingError {
     EnablePushNotBoolean { value: u32 },
     InitialWindowSizeOutOfRange { value: u32, max: u32 },
     MaxFrameSizeOutOfRange { value: u32, min: u32, max: u32 },
     EnableConnectProtocolNotBoolean { value: u32 },
     NoRfc7540PrioritiesNotBoolean { value: u32 },
-    // ...
 }
+```
 
-// src/frame/error.rs
+#### `FrameError`
+
+```rust
 #[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameError {
     ZeroStreamIdNotAllowed { frame_type: FrameType },
     NonZeroStreamIdNotAllowed { frame_type: FrameType, stream_id: u32 },
@@ -98,62 +137,119 @@ pub enum FrameError {
     PaddingExceedsPayload { padding: u8, payload_len: usize },
     LastStreamIdOutOfRange { value: u32 },
 }
+```
 
-// src/stream/error.rs (StreamId 系)
+#### `StreamIdError` (issue 0025 で定義)
+
+```rust
 #[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamIdError {
-    Reserved,                          // id = 0
+    Reserved,
     ParityMismatch { expected: Parity, got: u32 },
-    OutOfRange { value: u32 },         // >= 2^31
+    OutOfRange { value: u32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Parity { Odd, Even }
+```
 
-// src/limits.rs
+#### `LimitsError`
+
+```rust
 #[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LimitsError {
     WebtransportRequiresConnectProtocol,
-    ConnectionWindowSmallerThanInitial { connection: u32, initial: u32 },
-    // ...
 }
+```
 
-// src/connection/error.rs (送信 API のエラー)
+注: `ConnectionWindowSmallerThanInitial` は issue 0028 で「許容する (RFC に禁止規定なし)」と
+判断されたため、variant として定義しない。
+
+#### `SendError`
+
+```rust
 #[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendError {
     ConnectionClosed,
     GoawaySent,
     StreamNotOpen { stream_id: u32 },
     FlowControlExhausted,
-    HeaderListTooLarge { actual: usize, limit: u32 },
+    HeaderListTooLarge { actual: usize, limit: usize },
 }
 ```
 
 ### 既存 `Error` への昇格
 
 ドメインエラーは必要に応じて `Error` (接続レベル) に昇格させる `From` 実装を持つ。
-例えば decoder で `FrameError::ZeroStreamIdNotAllowed` が出たら接続エラーに変換する。
 
 ```rust
 impl From<FrameError> for Error {
     fn from(e: FrameError) -> Self {
-        // 接続レベルか否かを variant ごとに判別して変換
+        match e {
+            // stream_id=0 系 → PROTOCOL_ERROR (接続エラー)
+            FrameError::ZeroStreamIdNotAllowed { .. } => {
+                Error::connection_error(ErrorCode::ProtocolError, e.to_string())
+            }
+            // increment=0 → PROTOCOL_ERROR (接続レベル or ストリームレベル、呼び出し元で判別)
+            FrameError::ZeroWindowIncrement => {
+                Error::connection_error(ErrorCode::ProtocolError, e.to_string())
+            }
+            // ...
+        }
+    }
+}
+
+impl From<DecodeError> for Error {
+    fn from(e: DecodeError) -> Self {
+        match e {
+            DecodeError::BufferTooShort { .. } => {
+                Error::connection_error(ErrorCode::FrameSizeError, e.to_string())
+            }
+            DecodeError::Incomplete => {
+                Error::connection_error(ErrorCode::FrameSizeError, "incomplete frame")
+            }
+        }
     }
 }
 ```
 
 ### `Backtrace` の opt-in 化
 
-既存 `Error::backtrace` は常時取得する設計だが、`#[cfg(feature = "backtrace")]` で
-opt-in に変更する。デバッグビルドのみ取得するのも選択肢。
+本 issue のスコープから除外し、別 issue で扱う。理由: feature flag 設計 (名前、default on/off、
+Cargo.toml 変更、Error 構造体の条件付きフィールド定義) は独立した設計判断であり、
+エラー型分割とは直交する。
+
+### `ValidationError` の扱い
+
+`src/validation.rs` の `ValidationError` は維持する。issue 0024 で定義された移行表に従い、
+個別フィールド値検査に対応する variant (`InvalidHeaderName`, `InvalidHeaderValue`,
+`InvalidMethodValue` 等) は `HeaderFieldError` に移行し、リスト整合性検査に対応する
+variant は `ValidationError` に残す。`ValidationError` 自体は `Error` に変換する経路
+(`malformed_error()`) を維持する。
 
 ## 影響範囲
 
-- `src/error.rs`: `ErrorKind` から `BufferTooShort` / `Incomplete` / `InvalidInput` を削除
-- 新規ファイル: `src/hpack/error.rs` (`HeaderFieldError`), `src/frame/error.rs` (`FrameError`),
-  `src/stream/error.rs` (`StreamIdError`)
-- 既存ファイルへの追加: `src/settings.rs` (`SettingError`), `src/limits.rs` (`LimitsError`)
+- `src/error.rs`: `ErrorKind` から `BufferTooShort` / `Incomplete` / `InvalidInput` を削除。
+  `Error::buffer_too_short()` / `Error::incomplete()` / `Error::invalid_input()` /
+  `Error::check_buffer_size()` を削除
+- `src/decode_error.rs` (新規): `DecodeError` 定義
+- `src/hpack/error.rs` (新規): `HeaderFieldError` 定義 (issue 0024 と連携)
+- `src/frame/error.rs` (新規): `FrameError` 定義
+- `src/settings.rs`: `SettingsError` → `SettingError` にリネーム、variant 再構成
+- `src/limits.rs`: `LimitsError` 追加
 - `src/connection/`: `SendError` 追加
+- `src/frame/decoder.rs`: `Error::buffer_too_short()` → `DecodeError::BufferTooShort`、
+  `Error::incomplete()` → `DecodeError::Incomplete` に置き換え。
+  `FrameDecoder::decode()` の戻り値型を変更
+- `src/hpack/decoder.rs`: HPACK デコードエラーの移行
+- `src/hpack/huffman.rs`: `Error::buffer_too_short()` → `DecodeError::BufferTooShort` に置き換え
+- `src/hpack/integer.rs`: `Error::buffer_too_short()` → `DecodeError::BufferTooShort` に置き換え
+- `src/frame/encoder.rs`: `Error::check_buffer_size()` → `DecodeError::check_buffer_size()` に移行
+- `src/validation.rs`: 移行対象 variant の削除 (0024 と連携)
+- `src/lib.rs`: 新規ドメインエラー型の `pub use` 追加
 - 全テスト・PBT・fuzz: 新エラー型でのアサーション書き換え
 
 ## CHANGES.md エントリ
@@ -162,22 +258,30 @@ opt-in に変更する。デバッグビルドのみ取得するのも選択肢�
 - [CHANGE] 構築時エラーを `HeaderFieldError` / `SettingError` / `FrameError` /
   `StreamIdError` / `LimitsError` / `SendError` に分割し、各 variant が違反値を
   構造化フィールドで保持するように変更する
-- [CHANGE] `Error::ErrorKind::InvalidInput` / `BufferTooShort` / `Incomplete` を削除し、
-  対応する箇所をドメインエラー型に置き換える
+  - @担当者
+- [CHANGE] `ErrorKind::InvalidInput` / `BufferTooShort` / `Incomplete` を削除し、
+  `DecodeError` 型および各ドメインエラー型に置き換える
+  - @担当者
+- [CHANGE] `SettingsError` を `SettingError` にリネームする
+  - @担当者
 ```
 
 ## 受け入れ条件
 
 - 各ドメインエラー型が `#[non_exhaustive]` で定義され、各 variant が違反値を保持している
+- `DecodeError` が定義され、`BufferTooShort` / `Incomplete` の移行先として機能している
 - 既存 `Error` の責務が「接続/ストリームエラー」「HPACK エラー」に絞られている
-- `From<DomainError> for Error` が必要箇所で実装されている
+- `ErrorKind::BufferTooShort` / `Incomplete` / `InvalidInput` が削除されている
+- `SettingsError` が `SettingError` にリネームされている
+- `From<DomainError> for Error` / `From<DecodeError> for Error` が必要箇所で実装されている
 - 上位アプリが文字列マッチではなく `match e` で失敗種別を分岐できる
+- `src/lib.rs` で全ドメインエラー型が re-export されている
 - 既存の全テスト・PBT・fuzz が通る
 
 ## 関連
 
-- [[0024-change-header-field-construct-time-validation]]
-- [[0025-change-stream-id-newtype]]
-- [[0026-change-setting-construct-time-validation]]
-- [[0027-change-frame-construct-time-validation]]
-- [[0028-change-limits-builder-result]]
+- [[0024-change-header-field-construct-time-validation]] (`HeaderFieldError` 定義)
+- [[0025-change-stream-id-newtype]] (`StreamIdError` 定義)
+- [[0026-change-setting-construct-time-validation]] (`SettingError` 定義)
+- [[0027-change-frame-construct-time-validation]] (`FrameError` 定義)
+- [[0028-change-limits-builder-result]] (`LimitsError` 定義)

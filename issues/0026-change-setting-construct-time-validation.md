@@ -6,24 +6,25 @@ Model: Opus 4.7
 ## 概要
 
 `Setting` (1 つのパラメータ) と `SettingsFrame` (パラメータの集合) を構築時検査型に作り直す。
-現状は `Setting { id: u16, value: u32 }` の単純な構造体で、不正値 (範囲外) を持った
-`Setting` を構築できる。検査は送信時の `Connection::handle_settings` や
-`Connection::send_frame` で事後実施されている。
+現状は `Setting { id: u16, value: u32 }` の構造体で、不正値 (範囲外) を持った
+`Setting` を構築できる。検査は `Settings::apply()` や `Connection::handle_settings` で
+事後実施されている。
 
-`Setting::new` / `SettingsFrame::add_setting` を `Result` 化し、リテラル定数向けの
-`Setting::from_static` (`const fn`) を提供する。
+`Setting` を既知パラメータの enum に変更し、値範囲を型で制約する。リテラル定数向けの
+`const fn from_static` を各制約型に提供する。
 
 ## 背景
 
 現状の問題:
 
-- `SettingsFrame::add_setting(Setting { id: 0x4, value: u32::MAX })` のように
-  `INITIAL_WINDOW_SIZE > 2^31 - 1` (RFC 9113 §6.5.2 FLOW_CONTROL_ERROR) を構築可能
-- `Setting { id: 0x5, value: 100 }` のように `MAX_FRAME_SIZE < 16384` (PROTOCOL_ERROR) を構築可能
-- `Setting { id: 0x2, value: 2 }` のように `ENABLE_PUSH` が 0/1 以外 (PROTOCOL_ERROR) を構築可能
-- `Setting { id: 0x8, value: 2 }` のように `SETTINGS_ENABLE_CONNECT_PROTOCOL` (RFC 8441) が
-  0/1 以外を構築可能
-- 不正値が `Connection::send_settings` まで到達した時点で初めて検出される
+- `Setting::new(0x04, u32::MAX)` のように `INITIAL_WINDOW_SIZE > 2^31 - 1`
+  (RFC 9113 §6.5.2 FLOW_CONTROL_ERROR) を構築可能
+- `Setting::new(0x05, 100)` のように `MAX_FRAME_SIZE < 16384` (PROTOCOL_ERROR) を構築可能
+- `Setting::new(0x02, 2)` のように `ENABLE_PUSH` が 0/1 以外 (PROTOCOL_ERROR) を構築可能
+- `Setting::new(0x08, 2)` のように `ENABLE_CONNECT_PROTOCOL` が 0/1 以外を構築可能
+- 不正値が `Connection::handle_settings` まで到達した時点で初めて検出される
+- `SettingId` enum (src/settings.rs:69-107) が既に ID 解決を担っているが、
+  `Setting` 構造体はそれを活用せず `id: u16` のままである
 
 ## 根拠
 
@@ -36,14 +37,16 @@ RFC 9113 §6.5.2 と関連仕様:
 - `SETTINGS_MAX_FRAME_SIZE (0x05)`: 2^14 (16384) 以上 2^24 - 1 (16777215) 以下、
   範囲外は PROTOCOL_ERROR
 - `SETTINGS_MAX_HEADER_LIST_SIZE (0x06)`: 制約なし
-- `SETTINGS_ENABLE_CONNECT_PROTOCOL (0x08)`: RFC 8441 §3、0 または 1 のみ、サーバーから 1 受信後
-  クライアントが 0 を送信すると PROTOCOL_ERROR
+- `SETTINGS_ENABLE_CONNECT_PROTOCOL (0x08)`: RFC 8441 §3、0 または 1 のみ
 - `SETTINGS_NO_RFC7540_PRIORITIES (0x09)`: RFC 9218 §2.1、0 または 1 のみ
-- WebTransport SETTINGS (0x2b61 - 0x2b66): draft-ietf-webtrans-http2-14 §11.2
+- WebTransport SETTINGS (0x2b61-0x2b66): draft-ietf-webtrans-http2-14 §11.2、全て u32 値
 
 ## 設計
 
-### 型定義
+### `Setting` enum (既存の `Setting` 構造体と `SettingId` enum を統合)
+
+既存の `SettingId` enum は `Setting` enum に統合され、不要になるため削除する。
+`Setting` enum の各 variant が ID と型安全な値を持つ。
 
 ```rust
 /// 既知の SETTINGS パラメータ
@@ -53,28 +56,42 @@ pub enum Setting {
     HeaderTableSize(u32),
     EnablePush(bool),
     MaxConcurrentStreams(u32),
-    InitialWindowSize(WindowSize),       // 範囲を型で制約
-    MaxFrameSize(MaxFrameSize),          // 範囲を型で制約
+    InitialWindowSize(WindowSize),
+    MaxFrameSize(MaxFrameSize),
     MaxHeaderListSize(u32),
-    EnableConnectProtocol(bool),         // RFC 8441
-    NoRfc7540Priorities(bool),           // RFC 9218
-    WtMaxSessions(u32),                  // WebTransport
-    WtInitialMaxData(u64),
-    WtInitialMaxStreamsBidi(u64),
-    WtInitialMaxStreamsUni(u64),
-    WtInitialMaxStreamDataBidi(u64),
-    WtInitialMaxStreamDataUni(u64),
-    /// 未知の SETTINGS パラメータ (RFC 9113 §6.5.2: 無視する)
+    EnableConnectProtocol(bool),
+    NoRfc7540Priorities(bool),
+    WtInitialMaxData(u32),
+    WtInitialMaxStreamDataUni(u32),
+    WtInitialMaxStreamDataBidiLocal(u32),
+    WtInitialMaxStreamsUni(u32),
+    WtInitialMaxStreamsBidi(u32),
+    WtInitialMaxStreamDataBidiRemote(u32),
+    /// 未知の SETTINGS パラメータ (RFC 9113 §6.5.2: MUST ignore)
     Unknown { id: u16, value: u32 },
 }
 
 impl Setting {
+    /// wire 上の (id, value) ペアから構築する。
+    /// 既知パラメータの値が範囲外の場合は Err(SettingError) を返す。
+    /// 未知の ID の場合は Ok(Setting::Unknown { id, value }) を返す
+    /// (RFC 9113 §6.5.2: 未知パラメータは無視 MUST)。
     pub fn from_wire(id: u16, value: u32) -> Result<Self, SettingError>;
+
+    /// wire 上の (id, value) ペアに変換する
     pub const fn as_wire(self) -> (u16, u32);
 }
+```
 
-/// SETTINGS_INITIAL_WINDOW_SIZE 用の制約付き型
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+WebTransport variant 名は既存の `SettingId` enum と完全に一致させる。
+wire 上の値は全て `u32` (RFC 9113 §6.5.1) であるため、`u64` は使用しない。
+
+### 制約付き型
+
+```rust
+/// SETTINGS_INITIAL_WINDOW_SIZE 用の制約付き型 (0..=2^31-1)
+/// connection_window_size にも流用する (issue 0028)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WindowSize(u32);
 
 impl WindowSize {
@@ -84,8 +101,8 @@ impl WindowSize {
     pub const fn get(self) -> u32;
 }
 
-/// SETTINGS_MAX_FRAME_SIZE 用の制約付き型
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// SETTINGS_MAX_FRAME_SIZE 用の制約付き型 (16384..=16777215)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MaxFrameSize(u32);
 
 impl MaxFrameSize {
@@ -97,66 +114,140 @@ impl MaxFrameSize {
 }
 ```
 
-### コンパイル時検査の例
+### `SettingError` (issue 0029 の設計に準拠)
+
+`SettingError` の variant 定義は issue 0029 に従う。本 issue では `from_wire` / `WindowSize::new` /
+`MaxFrameSize::new` が返すエラーとして使用する。
+
+既存の `SettingsError` (複数形、src/settings.rs:337-349) は `SettingError` (単数形) に
+リネームして統合する。
+
+### `Settings` struct の WtInitialSettings 展開
+
+`WtInitialSettings` 構造体を削除し、`Settings` struct に個別フィールドとして展開する:
 
 ```rust
-// OK
-const WINDOW: WindowSize = WindowSize::from_static(65535);
-const FRAME: MaxFrameSize = MaxFrameSize::from_static(16384);
-const SETTING: Setting = Setting::InitialWindowSize(WINDOW);
-
-// NG: コンパイル時に "window size exceeds 2^31 - 1" で fail
-const BAD_WINDOW: WindowSize = WindowSize::from_static(u32::MAX);
-
-// NG: コンパイル時に "max frame size must be 16384..=16777215" で fail
-const BAD_FRAME: MaxFrameSize = MaxFrameSize::from_static(1024);
+pub struct Settings {
+    pub header_table_size: u32,
+    pub enable_push: bool,
+    pub max_concurrent_streams: Option<u32>,
+    pub initial_window_size: u32,
+    pub max_frame_size: u32,
+    pub max_header_list_size: Option<u32>,
+    pub enable_connect_protocol: bool,
+    pub no_rfc7540_priorities: bool,
+    // WtInitialSettings から展開
+    pub wt_initial_max_data: Option<u32>,
+    pub wt_initial_max_stream_data_uni: Option<u32>,
+    pub wt_initial_max_stream_data_bidi_local: Option<u32>,
+    pub wt_initial_max_streams_uni: Option<u32>,
+    pub wt_initial_max_streams_bidi: Option<u32>,
+    pub wt_initial_max_stream_data_bidi_remote: Option<u32>,
+}
 ```
 
-### `SettingsFrame::add_setting` の扱い
+`Settings::apply()` は `Setting` が検証済み (`from_wire` 済み) のため `-> ()` に変更する。
+ただし以下の接続状態依存チェックは `apply()` の責務外であり、`Connection::handle_settings`
+に残す:
+
+- `ENABLE_PUSH=1` のサーバー → クライアント禁止 (RFC 9113 §8.4, role 依存)
+- `NO_RFC7540_PRIORITIES` 変更不可 (RFC 9218 §2.1, 初回受信値依存)
+
+`Settings::to_settings_list()` は `Setting` enum の各 variant を返すように全面書き換え。
+`Connection::initiate()` 内の `SettingId` ベースのフィルタは `matches!(setting, Setting::EnablePush(_))`
+に変更する。
+
+### decoder のエラー変換
+
+decoder で `Setting::from_wire(id, value)` が `Err(SettingError)` を返した場合、
+直接 `Error` に変換する (`From<SettingError> for Error` を実装):
+
+- `SettingError::InitialWindowSizeOutOfRange` → `FLOW_CONTROL_ERROR`
+- その他 → `PROTOCOL_ERROR`
+
+この変換は issue 0029 の `DecodeError` 導入前でも動作する。0029 実装後も変更不要。
+
+未知 ID は `Ok(Setting::Unknown { id, value })` を返すため、decoder はエラーにしない。
+`Connection::handle_settings` で `Setting::Unknown` を無視する。
+
+### `SettingsFrame` の変更
 
 ```rust
 impl SettingsFrame {
     pub fn new() -> Self;
-    pub fn add(&mut self, setting: Setting);  // 既に検証済みなので無検査
+    pub fn ack() -> Self;
+    pub fn add(&mut self, setting: Setting);  // Setting が検証済みなので無検査
     pub fn from_settings(settings: impl IntoIterator<Item = Setting>) -> Self;
+    pub fn settings(&self) -> &[Setting];
+    pub fn is_ack(&self) -> bool;
+    // 全フィールドを private 化
 }
 ```
 
-`Setting` 自体が検証済みなので、`SettingsFrame::add` は値検査不要。
-ただし、`SettingsFrame` 全体としての制約 (例: ENABLE_CONNECT_PROTOCOL を一度 1 にした後で
+`SettingsFrame` の `settings` フィールドと `ack` フィールドを private 化し、アクセサを提供する。
+`Setting` 自体が検証済みなので、`add` は `Result` を返さない (概要の「Result 化し」は誤り)。
+
+`SettingsFrame` 全体としての制約 (例: ENABLE_CONNECT_PROTOCOL を一度 1 にした後で
 0 に下げる禁止) は接続状態に依存するため、`Connection::send_settings` で検査する。
 
 ## 影響範囲
 
-- `src/settings.rs`: 型定義の全面書き換え
-- `src/frame/mod.rs`: `SettingsFrame` API 変更
-- `src/frame/decoder.rs`: `Setting::from_wire` 経由でパース
+- `src/settings.rs`: `Setting` 構造体 → enum に全面書き換え。`SettingId` enum を削除。
+  `SettingsError` を `SettingError` にリネーム・統合。`WindowSize` / `MaxFrameSize` 型を追加。
+  `WtInitialSettings` 構造体を削除し、WT 関連値は `Settings` の個別フィールドに展開する。
+  `Settings::apply()` は `Setting` が検証済み (from_wire 済み) のため `-> ()` に変更する
+- `src/frame/mod.rs`: `SettingsFrame` のフィールド private 化、API 変更
+- `src/frame/decoder.rs`: `Setting::from_wire` 経由でパース、エラーを接続エラーに変換
 - `src/frame/encoder.rs`: `Setting::as_wire` 経由でエンコード
-- `src/connection/mod.rs`: SETTINGS 受信処理の値検査を `Setting::from_wire` に統合
-- `src/limits.rs`: `Limits::with_initial_window_size` 等が `WindowSize` / `MaxFrameSize` を直接受ける
-- `tests/`, `pbt/`, `fuzz/`, `examples/`: API 追従
+- `src/connection/mod.rs`: `handle_settings` の値検査を `Setting::from_wire` に統合。
+  `Setting::Unknown` の無視処理
+- `src/limits.rs`: `with_initial_window_size` 等が `WindowSize` / `MaxFrameSize` を直接受ける
+  (panic → 型安全に移行)。詳細は issue 0028 で扱う
+- `src/lib.rs`: `SettingId` の re-export を削除、`WindowSize` / `MaxFrameSize` / `SettingError`
+  の re-export を追加
+- `pbt/tests/prop_settings.rs`: `Setting::new(id, value)` → `Setting::from_wire(id, value)` への
+  書き換え。strategy を新 enum に合わせて変更
+- `pbt/tests/prop_frame.rs`: SETTINGS フレームの PBT を新 API に追従
+- `pbt/tests/prop_connection.rs`: SETTINGS 受信テストを新 API に追従
+- `tests/`, `fuzz/`, `examples/`: API 追従
 
 ## CHANGES.md エントリ
 
 ```
+- [ADD] `Setting` 系の `const fn from_static` で不正リテラルをコンパイル時に検出可能にする
+  - @担当者
 - [CHANGE] `Setting` を `{ id: u16, value: u32 }` 構造体から既知パラメータの enum に変更し、
   値範囲を型で制約する
-- [CHANGE] `WindowSize` / `MaxFrameSize` 型を新設し、RFC 9113 §6.5.2 の値範囲制約を構築時に強制する
-- [ADD] `Setting` 系の `const fn from_static` で不正リテラルをコンパイル時に検出可能にする
+  - @担当者
+- [CHANGE] `WindowSize` / `MaxFrameSize` 型を新設し、RFC 9113 §6.5.2 の値範囲制約を
+  構築時に強制する
+  - @担当者
+- [CHANGE] `SettingId` enum を `Setting` enum に統合し削除する
+  - @担当者
 ```
 
 ## 受け入れ条件
 
 - `Setting` が既知パラメータの enum で定義され、各 variant のペイロード型が値範囲を表現している
+- `SettingId` enum が削除されている
+- `SettingsError` が `SettingError` にリネームされている
+- WebTransport variant の型が全て `u32` である (wire フォーマットと一致)
+- WebTransport variant 名が既存の `SettingId` と一致している
 - `WindowSize::new` / `MaxFrameSize::new` が `Result<Self, SettingError>` を返す
 - `*::from_static` が `const fn` で実装され、不正リテラルでコンパイルエラーになる
+- `Setting::from_wire` が未知 ID を `Ok(Setting::Unknown { id, value })` で返す
 - decoder は `Setting::from_wire` 経由で組み立て、不正値は接続エラーに変換される
+- `SettingsFrame` のフィールドが private 化されている
 - `Connection::handle_settings` の値検査ロジックが `Setting::from_wire` に統合されている
 - 既存の全テスト・PBT・fuzz が通る
+
+## 依存
+
+- [[0029-change-split-error-types]] (`SettingError` の設計方針)
 
 ## 関連
 
 - [[0024-change-header-field-construct-time-validation]]
 - [[0027-change-frame-construct-time-validation]]
-- [[0028-change-limits-builder-result]]
-- [[0029-change-split-error-types]]
+- [[0028-change-limits-builder-result]] (`WindowSize` / `MaxFrameSize` を利用)
+- [[0032-add-trybuild-compile-fail-tests]] (`from_static` の compile_fail テスト)

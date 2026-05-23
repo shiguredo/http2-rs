@@ -5,31 +5,37 @@ Model: Opus 4.7
 
 ## 概要
 
-構築時検査つきの公開 API (`HeaderField::new`, `Setting::from_wire`, 各 `Frame::new` 等) に
-対応して、decoder 内部で「既に検証済みのバイト列から検査をスキップして構築する」
-`pub(crate) from_validated_parts(...)` 系を全構築時検査型に導入する。
+構築時検査つきの公開 API (各 `Frame::new` 等) に対応して、decoder 内部で
+「既に検証済みのバイト列から検査をスキップして構築する」`pub(crate) from_validated_parts(...)`
+系を構築時検査型に導入する。
 
 これにより、decoder が wire 上のバイト列を一度検査した結果を、公開コンストラクタで
-再検査せずに構築できる。二重検査による性能劣化を防ぐと同時に、「検査責務はどこにあるか」を
-コード上で明示する。
+再検査せずに構築できる。「検査責務はどこにあるか」をコード上で明示する。
+
+注: `HeaderField::from_validated_parts` は issue 0024 で実装する。本 issue は
+`HeaderField` 以外の構築時検査型 (`ClientStreamId`, `ServerStreamId`,
+`NonZeroStreamId`, `WindowIncrement`, `Weight`, `LastStreamId`, `MaxFrameSize`,
+`WindowSize`) の `from_validated_parts` を統一的に導入する。
+
+`Setting` は issue 0026 で enum 化されるため、`from_validated_parts` の対象外とする。
+enum 化後の `Setting` は `from_wire` が検証と構築を兼ねるため、二重検査の問題は発生しない。
 
 ## 背景
 
-issue 0024 / 0026 / 0027 で各構築点を `new() -> Result` に変更すると、decoder 経路で
-以下の二重検査が発生する。
+issue 0025 / 0027 で各構築点を `new() -> Result` に変更すると、decoder 経路で
+二重検査が発生する可能性がある:
 
-- decoder が wire 上の `[u8; N]` をパースして `Setting { id, value }` を組み立てる際、
-  値範囲を確認済みなのに `Setting::from_wire(id, value)` で再検査
-- decoder が HPACK で展開した name/value を `HeaderField::new(name, value)` に渡すと、
-  HPACK 側で既に CRLF/NUL 検査をしているのに再度走る
+- decoder が wire 上の u32 をパースして `WindowIncrement::new(increment)` を呼ぶと、
+  31 ビットマスク済みの値に対して再度範囲検査が走る
+- decoder が wire 上の u32 を `ClientStreamId::new(id)` に渡すと、既に奇偶を確認済みの値に
+  対して再度偶奇検査が走る
 
 shiguredo_http11 では issue 0082 (`refactor-unify-from-validated-parts-cfg`) で同様の
-内部コンストラクタを統一しており、設計パターンが確立している。HTTP/2 でも最初から
-統一して入れる。
+内部コンストラクタを統一しており、設計パターンが確立している。
 
 ## 根拠
 
-- 構築時検査を入れた直後は「二重検査でも正しい」が、性能と「検査の単一責務」の観点で
+- 構築時検査を入れた直後は「二重検査でも正しい」が、「検査の単一責務」の観点で
   内部コンストラクタを分けるべき
 - `pub(crate)` で外部 API には露出させないため、安全性は維持される
 - decoder のテストで「検査をスキップしたパスでも同じ結果が得られる」を PBT で担保すれば、
@@ -42,17 +48,17 @@ shiguredo_http11 では issue 0082 (`refactor-unify-from-validated-parts-cfg`) �
 全構築時検査型で `from_validated_parts` 系の命名を統一する。
 
 ```rust
-impl HeaderField {
-    pub fn new(name, value) -> Result<Self, HeaderFieldError>;
-    pub(crate) fn from_validated_parts(name: Vec<u8>, value: Vec<u8>) -> Self;
-}
-
-impl Setting {
-    pub fn from_wire(id: u16, value: u32) -> Result<Self, SettingError>;
-    pub(crate) fn from_validated_parts(id: u16, value: u32) -> Self;
-}
-
 impl ClientStreamId {
+    pub fn new(id: u32) -> Result<Self, StreamIdError>;
+    pub(crate) fn from_validated_parts(id: NonZeroU32) -> Self;
+}
+
+impl ServerStreamId {
+    pub fn new(id: u32) -> Result<Self, StreamIdError>;
+    pub(crate) fn from_validated_parts(id: NonZeroU32) -> Self;
+}
+
+impl NonZeroStreamId {
     pub fn new(id: u32) -> Result<Self, StreamIdError>;
     pub(crate) fn from_validated_parts(id: NonZeroU32) -> Self;
 }
@@ -60,6 +66,16 @@ impl ClientStreamId {
 impl WindowIncrement {
     pub fn new(increment: u32) -> Result<Self, FrameError>;
     pub(crate) fn from_validated_parts(increment: NonZeroU32) -> Self;
+}
+
+impl Weight {
+    pub fn new(weight: u16) -> Result<Self, FrameError>;
+    pub(crate) fn from_validated_parts(weight: u16) -> Self;
+}
+
+impl LastStreamId {
+    pub fn new(id: u32) -> Result<Self, FrameError>;
+    pub(crate) fn from_validated_parts(id: u32) -> Self;
 }
 // ... 他の構築時検査型も同様
 ```
@@ -70,68 +86,81 @@ impl WindowIncrement {
 ### debug_assert!
 
 `from_validated_parts` には `debug_assert!` で不変条件を確認するコードを入れる。
+リリースビルドではコストゼロ、debug ビルドで検査が破られていれば即 panic で検出できる。
+
+例 (`WindowIncrement`):
 
 ```rust
-pub(crate) fn from_validated_parts(name: Vec<u8>, value: Vec<u8>) -> Self {
-    debug_assert!(!name.is_empty(), "field-name must not be empty");
+pub(crate) fn from_validated_parts(increment: NonZeroU32) -> Self {
     debug_assert!(
-        name.iter().all(|b| b.is_ascii_lowercase() || !b.is_ascii_alphabetic()),
-        "field-name must be lowercase"
+        increment.get() <= (1u32 << 31) - 1,
+        "window increment must be <= 2^31 - 1"
     );
-    debug_assert!(
-        !value.iter().any(|&b| b == 0x00 || b == 0x0D || b == 0x0A),
-        "field-value must not contain NUL/CR/LF"
-    );
-    Self { name, value }
+    Self(increment)
 }
 ```
 
-リリースビルドではコストゼロ、debug ビルドで検査が破られていれば即 panic で検出できる。
+各型で当該型の全不変条件を `debug_assert!` に含めること。
 
 ### PBT による整合性検証
 
-各構築時検査型に対して、以下のプロパティを PBT で検証する。
+`from_validated_parts` と公開 API (`new` 等) の結果が一致することを PBT で検証する。
+`from_validated_parts` は `pub(crate)` のため、PBT は `src/` 内の `#[cfg(test)] mod tests`
+として実装する (integration test crate からは呼べない)。
 
 ```rust
-// 例: HeaderField
-proptest! {
-    #[test]
-    fn validated_parts_matches_new(name in valid_name_strategy(), value in valid_value_strategy()) {
-        let via_new = HeaderField::new(&name, &value).unwrap();
-        let via_validated = HeaderField::from_validated_parts(name, value);
-        prop_assert_eq!(via_new, via_validated);
+// src/frame/mod.rs 内の #[cfg(test)] mod tests
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn validated_parts_matches_new(
+            id in 1u32..=(1u32 << 31) - 1,
+        ) {
+            if id % 2 == 1 {
+                let via_new = ClientStreamId::new(id).unwrap();
+                let via_validated = ClientStreamId::from_validated_parts(
+                    NonZeroU32::new(id).unwrap()
+                );
+                prop_assert_eq!(via_new, via_validated);
+            }
+        }
     }
 }
 ```
 
-`from_validated_parts` を使う decoder と、`new` を使う公開 API が同じ結果を返すことを
-保証する。
-
 ## 影響範囲
 
-- 各構築時検査型のファイルに `from_validated_parts` を追加
-- `src/frame/decoder.rs`: `from_validated_parts` 経由に書き換え
-- `src/hpack/decoder.rs`: `from_validated_parts` 経由に書き換え
-- `pbt/tests/`: 整合性プロパティを追加
+- `src/frame/mod.rs`: `WindowIncrement`, `Weight`, `LastStreamId`, `NonZeroStreamId` に
+  `from_validated_parts` を追加。`#[cfg(test)]` 内に整合性 PBT を追加
+- `src/frame/decoder.rs`: `from_validated_parts` 経由に書き換え (フレーム型のみ)
+- `src/stream/mod.rs` または `src/frame/mod.rs`: `ClientStreamId`, `ServerStreamId` に
+  `from_validated_parts` を追加
+
+注: `src/hpack/decoder.rs` の `HeaderField::from_validated_parts` への書き換えは
+issue 0024 のスコープ内で実施する。
 
 ## CHANGES.md エントリ
 
 ```
 - [UPDATE] decoder 内部で構築時検査型を組み立てる際に `pub(crate) from_validated_parts`
   を経由するようにし、二重検査を排除する
+  - @担当者
 ```
 
 ## 受け入れ条件
 
-- 全構築時検査型に `pub(crate) from_validated_parts` が実装されている
+- `HeaderField` 以外の全構築時検査型に `pub(crate) from_validated_parts` が実装されている
 - `from_validated_parts` 内に `debug_assert!` で不変条件チェックが入っている
-- 各 decoder が `from_validated_parts` 経由で構築している
-- `from_validated_parts` と公開 API (`new` 等) の結果が一致することを PBT で検証している
+- フレーム decoder (`src/frame/decoder.rs`) が `from_validated_parts` 経由で構築している
+- `from_validated_parts` と公開 API (`new` 等) の結果が一致することを `#[cfg(test)]` PBT で
+  検証している
 - 既存の全テスト・PBT・fuzz が通る
 
 ## 依存
 
-- [[0024-change-header-field-construct-time-validation]]
-- [[0025-change-stream-id-newtype]]
-- [[0026-change-setting-construct-time-validation]]
-- [[0027-change-frame-construct-time-validation]]
+- [[0024-change-header-field-construct-time-validation]] (`HeaderField::from_validated_parts` の先例)
+- [[0025-change-stream-id-newtype]] (`ClientStreamId` / `ServerStreamId` / `NonZeroStreamId`)
+- [[0027-change-frame-construct-time-validation]] (`WindowIncrement` / `Weight` / `LastStreamId`)

@@ -32,23 +32,27 @@ issue 0024 / 0025 / 0026 / 0027 / 0028 で導入する構築時検査につい�
 - shiguredo_http11 は decoder/encoder のラウンドトリップ PBT (`pbt/tests/prop_decoder/`,
   `prop_encoder.rs`) で同様の不変性を担保している
 - HTTP/2 は HPACK 経由でヘッダーが圧縮されるため、ラウンドトリップの中間表現
-  (wire bytes ↔ HPACK encoded ↔ HeaderField) すべてで整合性を保つ必要がある
+  (wire bytes → HPACK encoded → HeaderField) すべてで整合性を保つ必要がある
 
 ## 検証する不変性
+
+注: 以下のコードは検証対象のプロパティを示す **疑似コード** であり、実際の API 名とは
+異なる場合がある。実装時は実際の `Encoder::encode` / `Decoder::decode` 等のシグネチャに
+合わせること。
 
 ### 1. 完全性 (`new` と decoder が同じ入力集合を受理)
 
 ```rust
-// HeaderField
+// 疑似コード: HeaderField
+// 実際の Encoder::encode は &mut Vec<u8> と &[HeaderField] を取る
+// 実際の Decoder::decode は &[u8] を取り Result<Vec<HeaderField>> を返す
 proptest! {
     #[test]
     fn new_accepts_iff_decoder_accepts(name in any_bytes(), value in any_bytes()) {
         let via_new = HeaderField::new(&name, &value).is_ok();
-        let mut encoder = HpackEncoder::new();
-        let wire = encoder.encode_literal(&name, &value);
-        let mut decoder = HpackDecoder::new();
-        let via_decoder = decoder.decode(&wire).is_ok();
-        prop_assert_eq!(via_new, via_decoder, "new and decoder must agree on validity");
+        // encoder/decoder を使ってワイヤ表現経由で検査
+        // (具体的な呼び出し方は実装時に Encoder/Decoder API に合わせる)
+        // via_new と via_decoder が一致することを検証
     }
 }
 ```
@@ -56,19 +60,7 @@ proptest! {
 ### 2. 健全性 (ラウンドトリップ)
 
 ```rust
-// HeaderField
-proptest! {
-    #[test]
-    fn header_field_roundtrip(field in valid_header_field_strategy()) {
-        let mut encoder = HpackEncoder::new();
-        let wire = encoder.encode_field(&field);
-        let mut decoder = HpackDecoder::new();
-        let decoded = decoder.decode_one(&wire).unwrap();
-        prop_assert_eq!(field, decoded);
-    }
-}
-
-// Setting
+// 疑似コード: Setting
 proptest! {
     #[test]
     fn setting_roundtrip(setting in valid_setting_strategy()) {
@@ -78,17 +70,13 @@ proptest! {
     }
 }
 
-// 各 Frame
+// 疑似コード: 各 Frame (実装時は FrameEncoder/FrameDecoder の実 API に合わせる)
 proptest! {
     #[test]
     fn data_frame_roundtrip(frame in valid_data_frame_strategy()) {
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&Frame::Data(frame.clone())).unwrap();
-        let wire = encoder.take_buffer();
-        let mut decoder = FrameDecoder::new();
-        decoder.feed(&wire);
-        let decoded = decoder.decode().unwrap().unwrap();
-        prop_assert!(matches!(decoded, Frame::Data(d) if d == frame));
+        // FrameEncoder::encode で wire bytes に変換
+        // FrameDecoder::new(max_frame_size).decode() で復元
+        // 同値であることを検証
     }
 }
 ```
@@ -96,35 +84,30 @@ proptest! {
 ### 3. `from_static` と `new` の一貫性
 
 `const fn` で書かれた `from_static` の検査ロジックと、ランタイム検査の `new` が
-同じ判定をすることを担保する。リテラルではない値で両方を呼び比較する。
+同じ判定をすることを担保する。
 
 ```rust
+// 疑似コード
 proptest! {
     #[test]
-    fn header_field_static_matches_new(name in valid_name(), value in valid_value()) {
-        // 注: from_static は &'static [u8] を要求するため、Box::leak で擬似的に静的化
-        let name_static: &'static [u8] = Box::leak(name.clone().into_boxed_slice());
-        let value_static: &'static [u8] = Box::leak(value.clone().into_boxed_slice());
-
-        let via_new = HeaderField::new(&name, &value).unwrap();
-        let via_static = HeaderField::from_static(name_static, value_static);
+    fn window_size_static_matches_new(size in 0u32..=WindowSize::MAX) {
+        let via_new = WindowSize::new(size).unwrap();
+        let via_static = WindowSize::from_static(size);
         prop_assert_eq!(via_new, via_static);
     }
 }
 ```
 
+注: HeaderField の `from_static` テストは `&'static [u8]` を要求するため `Box::leak` で
+擬似的に静的化する必要がある。PBT は数千ケース実行されるため、メモリリークに注意が必要。
+テストケース数を制限するか、`from_static` の一貫性テストは `from_static` と `new` の
+検査ロジックが共通関数を呼ぶことをコードレビューで確認する運用に代替することも検討する。
+
 ### 4. `from_validated_parts` の整合性 (issue 0030 と統合)
 
-```rust
-proptest! {
-    #[test]
-    fn validated_parts_matches_new(name in valid_name(), value in valid_value()) {
-        let via_new = HeaderField::new(&name, &value).unwrap();
-        let via_validated = HeaderField::from_validated_parts(name, value);
-        prop_assert_eq!(via_new, via_validated);
-    }
-}
-```
+`from_validated_parts` は `pub(crate)` のため、この検証は `src/` 内の `#[cfg(test)] mod tests`
+として実装する (integration test crate の `pbt/tests/` からは呼べない)。
+詳細は issue 0030 を参照。
 
 ## 戦略 (Strategy) 設計
 
@@ -142,19 +125,26 @@ pub mod strategies {
     }
 
     pub fn valid_field_value() -> impl Strategy<Value = Vec<u8>> {
-        // CR/LF/NUL を除く field-vchar / OWS
+        // CR/LF/NUL を除く field-vchar、先頭/末尾に SP/HTAB なし
     }
 
     pub fn valid_pseudo_header_name() -> impl Strategy<Value = Vec<u8>> {
         prop_oneof![
             Just(b":method".to_vec()),
             Just(b":scheme".to_vec()),
-            // ...
+            Just(b":authority".to_vec()),
+            Just(b":path".to_vec()),
+            Just(b":status".to_vec()),
+            Just(b":protocol".to_vec()),
         ]
     }
 
     pub fn valid_window_size() -> impl Strategy<Value = WindowSize> {
         (0u32..=WindowSize::MAX).prop_map(|s| WindowSize::new(s).unwrap())
+    }
+
+    pub fn valid_max_frame_size() -> impl Strategy<Value = MaxFrameSize> {
+        (MaxFrameSize::MIN..=MaxFrameSize::MAX).prop_map(|s| MaxFrameSize::new(s).unwrap())
     }
 
     // ... 各構築時検査型ごとに戦略を提供
@@ -163,18 +153,18 @@ pub mod strategies {
 
 ## 影響範囲
 
-- `pbt/src/lib.rs`: 戦略集約モジュール追加
-- `pbt/tests/prop_header_field.rs` (新規): HeaderField の PBT
-- `pbt/tests/prop_setting.rs` (新規): Setting の PBT
-- `pbt/tests/prop_stream_id.rs` (新規): StreamId の PBT
-- `pbt/tests/prop_frame.rs` (既存): 各フレームの構築時検査プロパティを追加
-- `pbt/tests/prop_limits.rs` (新規): Limits の PBT
+- `pbt/src/lib.rs`: 戦略集約モジュール (`strategies`) を追加
+- `pbt/tests/prop_hpack.rs` (既存に追記): HeaderField の完全性・健全性・from_static 一貫性 PBT
+- `pbt/tests/prop_settings.rs` (既存に追記): Setting のラウンドトリップ・from_static 一貫性 PBT
+- `pbt/tests/prop_frame.rs` (既存に追記): 各フレーム型・StreamId 型の PBT
+- `pbt/tests/prop_limits.rs` (新規): Limits の `build()` 複合制約検査の PBT
+  (有効な `LimitsBuilder` 設定のラウンドトリップ、無効な設定の `Err` 検証)
 
 ## CHANGES.md エントリ
 
 ```
-- [ADD] 構築時検査の完全性 / 健全性 / `from_static` 一貫性 / `from_validated_parts` 整合性を
-  検証する PBT を整備する
+- [ADD] 構築時検査の完全性・健全性・from_static 一貫性・from_validated_parts 整合性を検証する PBT を整備する
+  - @担当者
 ```
 
 ## 受け入れ条件
@@ -183,7 +173,7 @@ pub mod strategies {
 - 「`new` と decoder が同じ入力集合を受理する」プロパティが全構築時検査型で実装されている
 - ラウンドトリップ (encoder → decoder → 同値) プロパティが全構築時検査型で実装されている
 - `from_static` と `new` の一貫性プロパティが実装されている
-- `from_validated_parts` と `new` の整合性プロパティが実装されている
+- `from_validated_parts` と `new` の整合性プロパティが `#[cfg(test)]` 内で実装されている
 - 既存の全テスト・PBT・fuzz が通る
 
 ## 依存

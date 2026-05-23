@@ -169,10 +169,40 @@ impl PriorityUpdateFrame {
 }
 ```
 
+### PriorityFrame (RFC 9113 §6.3 deprecated)
+
+公開コンストラクタは提供しない (送信非対応)。decoder が受信したフレームを構築するために
+`pub(crate)` のコンストラクタを用意する。`Frame::Priority` variant は維持する。
+
+### PushPromise (RFC 9113 §6.6)
+
+本ライブラリでは送信非対応。公開コンストラクタは提供しない。decoder が受信したフレームを
+構築するために `pub(crate)` のコンストラクタを用意する。
+
+### HeadersFrame のパディング
+
+現行の `HeadersFrame` は `pad_length: Option<u8>` を持つ (RFC 9113 §6.2 PADDED フラグ)。
+新設計でも維持する。`DataFrame` と同様に `with_padding` メソッドを提供する:
+
+```rust
+impl HeadersFrame {
+    pub fn with_padding(
+        stream_id: NonZeroStreamId,
+        headers: Vec<HeaderField>,
+        padding: u8,
+    ) -> Result<Self, FrameError>;
+}
+```
+
+### SettingsFrame / PingFrame / GoawayFrame
+
+これらのフレームは stream_id が 0 固定のため、コンストラクタから stream_id 引数を除去する。
+`SettingsFrame` のフィールド private 化は issue 0026 で扱う。
+
 ## 影響範囲
 
 - `src/frame/mod.rs`: 各フレーム型の API 変更、補助型 (`Weight`, `WindowIncrement`,
-  `LastStreamId`, `NonZeroStreamId`) 追加
+  `LastStreamId`) 追加。`NonZeroStreamId` は issue 0025 で定義済み
 - `src/frame/decoder.rs`: 補助型経由で構築、不正値は接続/ストリームエラーに変換
 - `src/frame/encoder.rs`: API 追従
 - `src/connection/mod.rs`: 送信側の事後検査ロジックを削減
@@ -181,12 +211,16 @@ impl PriorityUpdateFrame {
 ## CHANGES.md エントリ
 
 ```
-- [CHANGE] `DataFrame` / `HeadersFrame` / `RstStreamFrame` / `WindowUpdateFrame` /
-  `ContinuationFrame` / `PriorityUpdateFrame` の構築 API を構築時検査つきに変更する
-- [ADD] `Weight` / `WindowIncrement` / `LastStreamId` / `NonZeroStreamId` の補助型を追加し、
+- [ADD] `Weight` / `WindowIncrement` / `LastStreamId` の補助型を追加し、
   RFC 9113 の値範囲制約を型で表現する
+  - @担当者
 - [ADD] フレーム構築の `const fn from_static` 系を追加し、不正リテラルをコンパイル時に
   検出可能にする
+  - @担当者
+- [CHANGE] `DataFrame` / `HeadersFrame` / `RstStreamFrame` / `WindowUpdateFrame` /
+  `PingFrame` / `GoawayFrame` / `ContinuationFrame` / `PriorityUpdateFrame` の構築 API を
+  構築時検査つきに変更する
+  - @担当者
 ```
 
 ## 受け入れ条件
@@ -196,6 +230,7 @@ impl PriorityUpdateFrame {
 - SETTINGS / PING / GOAWAY が stream_id 引数を取らない (内部で Connection 固定)
 - `WindowIncrement` / `Weight` / `LastStreamId` が範囲制約を型で表現している
 - 各補助型に `from_static` (`const fn`) が実装され、不正リテラルでコンパイルエラーになる
+- PriorityFrame / PushPromise は公開コンストラクタを提供せず、`pub(crate)` のみ
 - decoder で構築する経路は不正値を接続エラー or ストリームエラーに変換している
 - `Connection::send_*` 経路の事後値検査が削減されている
 - 既存の全テスト・PBT・fuzz が通る
