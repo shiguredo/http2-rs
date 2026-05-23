@@ -7,7 +7,7 @@
 //! Phase 2 で `Connection` 経由の送信 API と統合される予定。
 
 /// HTTP/2 送信エラー
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SendError {
     /// 接続が既にクローズされている
@@ -26,11 +26,13 @@ pub enum SendError {
     FlowControlExhausted,
 
     /// ヘッダーリストサイズが受信側の `MAX_HEADER_LIST_SIZE` を超える
+    ///
+    /// RFC 9113 §6.5.2: `SETTINGS_MAX_HEADER_LIST_SIZE` は `u32`。
     HeaderListTooLarge {
         /// 実際のサイズ
-        actual: usize,
+        actual: u32,
         /// 上限
-        limit: usize,
+        limit: u32,
     },
 }
 
@@ -98,12 +100,5 @@ mod tests {
             err.to_string(),
             "header list size 16385 exceeds limit 16384"
         );
-    }
-
-    #[test]
-    fn clone_and_equality() {
-        let a = SendError::StreamNotOpen { stream_id: 3 };
-        let b = a.clone();
-        assert_eq!(a, b);
     }
 }

@@ -12,7 +12,7 @@
 /// フレーム decoder / HPACK decoder の内部で発生するバッファ不足や
 /// 入力不足を表現する。接続エラーへの昇格は [`From<DecodeError> for crate::error::Error`]
 /// で行う (Phase 2 で実装予定)。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum DecodeError {
     /// バッファが必要なサイズに満たない

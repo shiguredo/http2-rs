@@ -12,7 +12,7 @@
 /// 疑似ヘッダーの構文制約を、構築点で検出した結果を表現する。
 ///
 /// `Vec<u8>` フィールドを持つため [`Copy`] は導出不可能。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum HeaderFieldError {
     /// field-name が空
@@ -195,14 +195,5 @@ mod tests {
             err.to_string(),
             "invalid value for pseudo-header :status: abc"
         );
-    }
-
-    #[test]
-    fn clone_and_equality() {
-        let err = HeaderFieldError::UppercaseFieldName {
-            name: b"Content-Type".to_vec(),
-        };
-        let cloned = err.clone();
-        assert_eq!(err, cloned);
     }
 }

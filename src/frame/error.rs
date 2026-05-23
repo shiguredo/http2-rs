@@ -12,14 +12,13 @@ use crate::frame::FrameType;
 ///
 /// RFC 9113 §6 各フレーム定義における stream_id / payload / window-increment 等の
 /// 制約を構築点で検出した結果を表現する。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum FrameError {
     /// stream_id = 0 を許可しないフレーム種別で 0 が指定された
     ///
     /// RFC 9113 §6.1 DATA / §6.2 HEADERS / §6.3 PRIORITY / §6.4 RST_STREAM /
-    /// §6.6 PUSH_PROMISE / §6.10 CONTINUATION / RFC 9218 §7.1 PRIORITY_UPDATE
-    /// は stream_id 0 を許可しない。
+    /// §6.6 PUSH_PROMISE / §6.10 CONTINUATION は stream_id 0 を許可しない。
     ZeroStreamIdNotAllowed {
         /// 違反したフレーム種別
         frame_type: FrameType,
@@ -27,8 +26,8 @@ pub enum FrameError {
 
     /// stream_id != 0 を許可しないフレーム種別で非 0 が指定された
     ///
-    /// RFC 9113 §6.5 SETTINGS / §6.7 PING / §6.8 GOAWAY は
-    /// stream_id 0 でなければならない。
+    /// RFC 9113 §6.5 SETTINGS / §6.7 PING / §6.8 GOAWAY、および
+    /// RFC 9218 §7.1 PRIORITY_UPDATE はフレームヘッダの stream_id 0 でなければならない。
     NonZeroStreamIdNotAllowed {
         /// 違反したフレーム種別
         frame_type: FrameType,
@@ -38,12 +37,12 @@ pub enum FrameError {
 
     /// WINDOW_UPDATE の increment が 0
     ///
-    /// RFC 9113 §6.9.1: window-increment は 1..=2^31-1
+    /// RFC 9113 §6.9: window-increment は 1..=2^31-1
     ZeroWindowIncrement,
 
     /// WINDOW_UPDATE の increment が 2^31-1 を超える
     ///
-    /// RFC 9113 §6.9.1 / §6.9.2: 最大値 2^31-1
+    /// RFC 9113 §6.9 / §6.9.1: 最大値 2^31-1
     WindowIncrementOutOfRange {
         /// 違反した値
         value: u32,
@@ -51,7 +50,9 @@ pub enum FrameError {
 
     /// PRIORITY の weight が範囲外
     ///
-    /// RFC 9113 §6.3 (RFC 7540 互換): wire 上 0..=255 (実体 1..=256)
+    /// RFC 9113 §6.3 はフィールド型 (unsigned 8-bit integer) を定義する。
+    /// 「wire 0..=255 / 実体 1..=256」の意味付けは RFC 7540 §5.3.2 由来
+    /// (RFC 9113 §5.3.1 で deprecated だが受信処理用に維持)。
     InvalidWeight {
         /// 違反した weight (wire 表現で 0..=255 を超えた値)
         value: u16,
@@ -80,14 +81,14 @@ impl std::fmt::Display for FrameError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ZeroStreamIdNotAllowed { frame_type } => {
-                write!(f, "{frame_type:?} frame must not use stream ID 0")
+                write!(f, "{frame_type} frame must not use stream ID 0")
             }
             Self::NonZeroStreamIdNotAllowed {
                 frame_type,
                 stream_id,
             } => write!(
                 f,
-                "{frame_type:?} frame requires stream ID 0 but got {stream_id}"
+                "{frame_type} frame requires stream ID 0 but got {stream_id}"
             ),
             Self::ZeroWindowIncrement => write!(f, "WINDOW_UPDATE increment must not be 0"),
             Self::WindowIncrementOutOfRange { value } => write!(
@@ -118,7 +119,7 @@ impl std::error::Error for FrameError {}
 
 /// WINDOW_UPDATE 増分 (1..=2^31-1)
 ///
-/// RFC 9113 §6.9.1 で定義される値範囲を型レベルで強制する。
+/// RFC 9113 §6.9 で定義される値範囲を型レベルで強制する。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WindowIncrement(core::num::NonZeroU32);
 
@@ -150,27 +151,14 @@ impl WindowIncrement {
     /// 不正な値ではコンパイル時 panic (= コンパイルエラー) になる。
     pub const fn from_static(increment: u32) -> Self {
         assert!(
-            increment > 0,
-            "WindowIncrement::from_static: increment must not be 0 (RFC 9113 §6.9.1)"
-        );
-        assert!(
             increment <= Self::MAX,
-            "WindowIncrement::from_static: increment must be <= 2^31-1 (RFC 9113 §6.9.1)"
+            "WindowIncrement::from_static: increment must be <= 2^31-1 (RFC 9113 §6.9)"
         );
+        // NonZeroU32::new(0) で None になるため 0 もこの match で弾く
         match core::num::NonZeroU32::new(increment) {
             Some(v) => Self(v),
-            None => panic!("WindowIncrement::from_static: increment must not be 0"),
+            None => panic!("WindowIncrement::from_static: increment must not be 0 (RFC 9113 §6.9)"),
         }
-    }
-
-    /// 検証済み値から構築する (crate 内部専用)
-    #[allow(dead_code)] // issue 0030 Phase 2 で decoder から呼ばれる予定
-    pub(crate) fn from_validated_parts(increment: core::num::NonZeroU32) -> Self {
-        debug_assert!(
-            increment.get() <= Self::MAX,
-            "WindowIncrement::from_validated_parts: increment must be <= 2^31-1"
-        );
-        Self(increment)
     }
 
     /// 値を取得する
@@ -215,12 +203,6 @@ impl Weight {
         Self(wire_value as u8)
     }
 
-    /// 検証済み値から構築する (crate 内部専用)
-    #[allow(dead_code)] // issue 0030 Phase 2 で decoder から呼ばれる予定
-    pub(crate) const fn from_validated_parts(wire_value: u8) -> Self {
-        Self(wire_value)
-    }
-
     /// wire 表現 (0..=255) を取得する
     pub const fn as_wire(self) -> u8 {
         self.0
@@ -241,9 +223,6 @@ pub struct LastStreamId(u32);
 impl LastStreamId {
     /// 許容される最大値 (2^31 - 1)
     pub const MAX: u32 = (1u32 << 31) - 1;
-
-    /// 0 を表す定数
-    pub const ZERO: Self = Self(0);
 
     /// 構築時検査つきで生成する
     ///
@@ -266,20 +245,8 @@ impl LastStreamId {
         Self(id)
     }
 
-    /// 検証済み値から構築する (crate 内部専用)
-    #[allow(dead_code)] // issue 0030 Phase 2 で decoder から呼ばれる予定
-    pub(crate) const fn from_validated_parts(id: u32) -> Self {
-        debug_assert!(id <= Self::MAX);
-        Self(id)
-    }
-
     /// 値を取得する
     pub const fn get(self) -> u32 {
-        self.0
-    }
-
-    /// u32 として取得する (`get` のエイリアス)
-    pub const fn as_u32(self) -> u32 {
         self.0
     }
 }
@@ -321,10 +288,15 @@ mod tests {
     }
 
     #[test]
-    fn window_increment_from_validated_parts() {
-        let raw = core::num::NonZeroU32::new(100).unwrap();
-        let w = WindowIncrement::from_validated_parts(raw);
-        assert_eq!(w.as_u32(), 100);
+    #[should_panic(expected = "increment must not be 0")]
+    fn window_increment_from_static_zero_panics() {
+        let _ = WindowIncrement::from_static(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "must be <= 2^31-1")]
+    fn window_increment_from_static_overflow_panics() {
+        let _ = WindowIncrement::from_static(WindowIncrement::MAX + 1);
     }
 
     #[test]
@@ -354,17 +326,11 @@ mod tests {
     }
 
     #[test]
-    fn weight_from_validated_parts() {
-        let w = Weight::from_validated_parts(42);
-        assert_eq!(w.as_wire(), 42);
-    }
-
-    #[test]
     fn last_stream_id_new_ok() {
         let id = LastStreamId::new(0).unwrap();
-        assert_eq!(id.as_u32(), 0);
+        assert_eq!(id.get(), 0);
         let id = LastStreamId::new(LastStreamId::MAX).unwrap();
-        assert_eq!(id.as_u32(), LastStreamId::MAX);
+        assert_eq!(id.get(), LastStreamId::MAX);
     }
 
     #[test]
@@ -380,12 +346,7 @@ mod tests {
     #[test]
     fn last_stream_id_from_static_ok() {
         const ID: LastStreamId = LastStreamId::from_static(42);
-        assert_eq!(ID.as_u32(), 42);
-    }
-
-    #[test]
-    fn last_stream_id_zero_constant() {
-        assert_eq!(LastStreamId::ZERO.as_u32(), 0);
+        assert_eq!(ID.get(), 42);
     }
 
     #[test]
@@ -393,7 +354,7 @@ mod tests {
         let err = FrameError::ZeroStreamIdNotAllowed {
             frame_type: FrameType::Data,
         };
-        assert_eq!(err.to_string(), "Data frame must not use stream ID 0");
+        assert_eq!(err.to_string(), "DATA frame must not use stream ID 0");
     }
 
     #[test]
@@ -404,7 +365,7 @@ mod tests {
         };
         assert_eq!(
             err.to_string(),
-            "Settings frame requires stream ID 0 but got 5"
+            "SETTINGS frame requires stream ID 0 but got 5"
         );
     }
 

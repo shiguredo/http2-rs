@@ -392,7 +392,7 @@ impl std::error::Error for SettingsError {}
 /// SETTINGS 構築時検査エラー (issue 0026 / 0029)
 ///
 /// `WindowSize::new` / `MaxFrameSize::new` / 各 `Setting` 値範囲検査で使用される。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SettingError {
     /// `SETTINGS_ENABLE_PUSH` が 0/1 以外
@@ -480,9 +480,6 @@ impl WindowSize {
     /// 許容される最大値 (2^31 - 1)
     pub const MAX: u32 = MAX_INITIAL_WINDOW_SIZE;
 
-    /// 0 を表す定数
-    pub const ZERO: Self = Self(0);
-
     /// 構築時検査つきで生成する
     ///
     /// # Errors
@@ -506,13 +503,6 @@ impl WindowSize {
             size <= Self::MAX,
             "WindowSize::from_static: size must be <= 2^31-1 (RFC 9113 §6.5.2)"
         );
-        Self(size)
-    }
-
-    /// 検証済み値から構築する (crate 内部専用)
-    #[allow(dead_code)] // issue 0030 Phase 2 で decoder から呼ばれる予定
-    pub(crate) const fn from_validated_parts(size: u32) -> Self {
-        debug_assert!(size <= Self::MAX);
         Self(size)
     }
 
@@ -562,13 +552,6 @@ impl MaxFrameSize {
             size <= Self::MAX,
             "MaxFrameSize::from_static: size must be <= 16777215 (RFC 9113 §6.5.2)"
         );
-        Self(size)
-    }
-
-    /// 検証済み値から構築する (crate 内部専用)
-    #[allow(dead_code)] // issue 0030 Phase 2 で decoder から呼ばれる予定
-    pub(crate) const fn from_validated_parts(size: u32) -> Self {
-        debug_assert!(size >= Self::MIN && size <= Self::MAX);
         Self(size)
     }
 

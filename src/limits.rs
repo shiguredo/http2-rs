@@ -192,12 +192,19 @@ mod tests {
 // 置き換えられる予定。Phase 1 では `LimitsError` 型のみ追加する。
 
 /// `Limits` 構築時検査エラー (issue 0028 / 0029)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// 注: Phase 2 で `Limits::with_initial_window_size` 等の `assert!` 経路を
+/// `LimitsBuilder::build() -> Result<Limits, LimitsError>` に置き換える際、
+/// `InitialWindowSizeOutOfRange` / `MaxFrameSizeOutOfRange` /
+/// `ConnectionWindowSizeOutOfRange` などの variant を追加する予定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum LimitsError {
     /// WebTransport 関連設定があるのに `enable_connect_protocol = false`
     ///
-    /// draft-ietf-webtrans-http2-14 §11.1: WebTransport は Extended CONNECT を必要とする。
+    /// draft-ietf-webtrans-http2-14 §3.1: サーバーは WebTransport 対応を示すために
+    /// `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` を SETTINGS フレームで MUST 送信する。
+    /// SETTINGS の定義は §11.2 (将来変更される可能性がある)。
     WebtransportRequiresConnectProtocol,
 }
 
@@ -215,7 +222,7 @@ impl std::fmt::Display for LimitsError {
 impl std::error::Error for LimitsError {}
 
 #[cfg(test)]
-mod limits_error_tests {
+mod error_tests {
     use super::*;
 
     #[test]
@@ -224,12 +231,5 @@ mod limits_error_tests {
             LimitsError::WebtransportRequiresConnectProtocol.to_string(),
             "WebTransport settings require enable_connect_protocol = true"
         );
-    }
-
-    #[test]
-    fn copy_and_equality() {
-        let a = LimitsError::WebtransportRequiresConnectProtocol;
-        let b = a;
-        assert_eq!(a, b);
     }
 }

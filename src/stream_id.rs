@@ -22,7 +22,7 @@ pub enum Parity {
 ///
 /// RFC 9113 §5.1.1: stream identifier は unsigned 31-bit integer、
 /// クライアント開始は奇数、サーバー開始は偶数、0 は接続制御用。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum StreamIdError {
     /// 0 が指定された (本来許可しない構築点で)
@@ -93,7 +93,6 @@ impl ClientStreamId {
 
     /// const 文脈で生成する
     pub const fn from_static(id: u32) -> Self {
-        assert!(id != 0, "ClientStreamId::from_static: id must not be 0");
         assert!(
             id <= STREAM_ID_MAX,
             "ClientStreamId::from_static: id must be <= 2^31-1"
@@ -102,9 +101,10 @@ impl ClientStreamId {
             !id.is_multiple_of(2),
             "ClientStreamId::from_static: id must be odd (RFC 9113 §5.1.1)"
         );
+        // NonZeroU32::new(0) で None になるため 0 もこの match で弾く
         match NonZeroU32::new(id) {
             Some(v) => Self(v),
-            None => panic!("ClientStreamId::from_static: id must not be 0"),
+            None => panic!("ClientStreamId::from_static: id must not be 0 (RFC 9113 §5.1.1)"),
         }
     }
 
@@ -159,7 +159,6 @@ impl ServerStreamId {
 
     /// const 文脈で生成する
     pub const fn from_static(id: u32) -> Self {
-        assert!(id != 0, "ServerStreamId::from_static: id must not be 0");
         assert!(
             id <= STREAM_ID_MAX,
             "ServerStreamId::from_static: id must be <= 2^31-1"
@@ -168,9 +167,10 @@ impl ServerStreamId {
             id.is_multiple_of(2),
             "ServerStreamId::from_static: id must be even (RFC 9113 §5.1.1)"
         );
+        // NonZeroU32::new(0) で None になるため 0 もこの match で弾く
         match NonZeroU32::new(id) {
             Some(v) => Self(v),
-            None => panic!("ServerStreamId::from_static: id must not be 0"),
+            None => panic!("ServerStreamId::from_static: id must not be 0 (RFC 9113 §5.1.1)"),
         }
     }
 
@@ -241,17 +241,6 @@ impl NonZeroStreamId {
             Self::Server(ServerStreamId::from_static(id))
         } else {
             Self::Client(ClientStreamId::from_static(id))
-        }
-    }
-
-    /// 検証済み値から構築する (crate 内部専用)
-    #[allow(dead_code)] // issue 0030 Phase 2 で decoder から呼ばれる予定
-    pub(crate) fn from_validated_parts(id: NonZeroU32) -> Self {
-        debug_assert!(id.get() <= STREAM_ID_MAX);
-        if id.get().is_multiple_of(2) {
-            Self::Server(ServerStreamId::from_validated_parts(id))
-        } else {
-            Self::Client(ClientStreamId::from_validated_parts(id))
         }
     }
 
@@ -461,13 +450,5 @@ mod tests {
         let raw = NonZeroU32::new(6).unwrap();
         let id = ServerStreamId::from_validated_parts(raw);
         assert_eq!(id.as_u32(), 6);
-    }
-
-    #[test]
-    fn non_zero_stream_id_from_validated_parts() {
-        let raw = NonZeroU32::new(7).unwrap();
-        let id = NonZeroStreamId::from_validated_parts(raw);
-        assert!(matches!(id, NonZeroStreamId::Client(_)));
-        assert_eq!(id.as_u32(), 7);
     }
 }
