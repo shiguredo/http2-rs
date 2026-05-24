@@ -581,4 +581,32 @@ mod tests {
         ];
         assert!(validate_request_headers(&headers).is_err());
     }
+
+    #[test]
+    fn test_empty_path_http_scheme_rejected() {
+        // RFC 9113 §8.3.1: http スキームでは :path 空は malformed
+        let headers = vec![h(":method", "GET"), h(":scheme", "http"), h(":path", "")];
+        assert!(validate_request_headers(&headers).is_err());
+    }
+
+    #[test]
+    fn test_empty_path_https_scheme_rejected() {
+        // RFC 9113 §8.3.1: https スキームでは :path 空は malformed
+        let headers = vec![h(":method", "GET"), h(":scheme", "https"), h(":path", "")];
+        assert!(validate_request_headers(&headers).is_err());
+    }
+
+    #[test]
+    fn test_empty_path_http_uppercase_rejected() {
+        // eq_ignore_ascii_case で大文字 HTTP も拒否される
+        let headers = vec![h(":method", "GET"), h(":scheme", "HTTP"), h(":path", "")];
+        assert!(validate_request_headers(&headers).is_err());
+    }
+
+    #[test]
+    fn test_empty_path_non_http_scheme_accepted() {
+        // http/https 以外のスキームでは :path 空は許容
+        let headers = vec![h(":method", "GET"), h(":scheme", "ftp"), h(":path", "")];
+        assert!(validate_request_headers(&headers).is_ok());
+    }
 }
