@@ -6,23 +6,30 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-shiguredo_http2 = { path = "../.." }
-tokio = { version = "1.52", features = [
-    "net",
-    "io-util",
-    "time",
-    "rt",
-    "macros",
-    "sync",
-] }
-tokio-rustls = "0.26"
-rustls = { version = "0.23", default-features = false, features = [
+rustls = {
+  version = "0.23",
+  default-features = false,
+  features = [
+    "aws_lc_rs",
     "std",
     "tls12",
-    "aws_lc_rs",
-] }
+  ]
+}
 rustls-pki-types = { version = "1.14", features = ["std"] }
 rustls-platform-verifier = "0.6"
+shiguredo_http2 = { path = "../.." }
+tokio = {
+  version = "1.52",
+  features = [
+    "io-util",
+    "macros",
+    "net",
+    "rt",
+    "sync",
+    "time",
+  ]
+}
+tokio-rustls = "0.26"
 
 [dev-dependencies]
 rcgen = "0.14"

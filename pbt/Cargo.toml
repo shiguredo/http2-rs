@@ -6,7 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-proptest = "1.9"
+proptest = "1.11"
 
 [dev-dependencies]
 shiguredo_http2 = { path = "../", features = ["__test_helpers"] }
