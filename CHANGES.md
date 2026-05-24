@@ -129,5 +129,7 @@
   - @voluntas
 - [UPDATE] `HeaderField` の内部表現を自前 enum `HeaderBytes` から `std::borrow::Cow<'static, [u8]>` に置換し、`src/hpack/bytes.rs` を削除する (issue 0035)
   - @voluntas
+- [UPDATE] `src/<module>` 内の `#[cfg(test)] mod tests` ブロックを `tests/test_<module>.rs` (および `tests/test_<module>/main.rs`) に分離する (issue 0036)
+  - @voluntas
 - [FIX] `examples/http2_client` と `examples/http2_server` で DATA 受信時に接続・ストリームレベルの WINDOW_UPDATE を送信するように修正する (issue 0041)
   - @voluntas
