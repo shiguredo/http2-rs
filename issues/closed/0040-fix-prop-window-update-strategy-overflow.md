@@ -1,6 +1,8 @@
 # prop_window_update_increases_window の Strategy がフロー制御ウィンドウ上限を考慮しない
 
 Created: 2026-05-24
+Completed: 2026-05-24
+Priority: High
 Model: Opus 4.7
 
 ## 概要
@@ -103,6 +105,12 @@ cc 6b38191bdd70a8b9be1392ae93e08c5db28efc8edc7d15784eba1ba7d3de7d3b
 - proptest を 1000 ケース以上回しても (デフォルト) FLOW_CONTROL_ERROR で落ちない
 - 再現用 seed が `pbt/tests/prop_connection.proptest-regressions` に登録されている
 - overflow を検証する独立 PBT が追加されている
+
+## 解決方法
+
+`prop_window_update_increases_window` の `increment` Strategy の上限を
+`0x7FFF_FFFF` から `0x7FFF_FFFF - 65535` に変更し、初期ウィンドウサイズとの
+合計が 2^31-1 を超えないようにした。
 
 ## 依存
 

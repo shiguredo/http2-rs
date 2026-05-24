@@ -737,7 +737,11 @@ proptest! {
     ///
     /// RFC 9113 Section 6.9: WINDOW_UPDATE でフロー制御ウィンドウを増加させる
     #[test]
-    fn prop_window_update_increases_window(increment in 1u32..=0x7FFF_FFFF) {
+    fn prop_window_update_increases_window(
+        // 初期ウィンドウサイズ (65535) との合計が 2^31-1 を超えないよう上限を制限する
+        // (RFC 9113 §6.9.1: 上限超過は FLOW_CONTROL_ERROR)
+        increment in 1u32..=(0x7FFF_FFFFu32 - 65535),
+    ) {
         let (_client, mut server) = setup_client_server();
 
         // クライアント: 接続レベルの WINDOW_UPDATE を送信
