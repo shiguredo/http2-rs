@@ -36,12 +36,12 @@ Rust で実装された依存 0 かつ Sans I/O な HTTP/2 と WebTransport over
 ### クライアント (リクエスト送信、レスポンス受信)
 
 ```rust
-use shiguredo_http2::{Connection, HeaderField, Limits, Role};
+use shiguredo_http2::{Connection, HeaderField, Limits};
 
 // クライアント接続を生成
-let limits = Limits::default()
-    .with_max_concurrent_streams(Some(100))
-    .with_initial_window_size(65535);
+let limits = Limits::builder()
+    .max_concurrent_streams(Some(100))
+    .build()?;
 let mut conn = Connection::client(limits);
 
 // 接続を開始 (プリフェイスと SETTINGS を送信)
@@ -53,10 +53,10 @@ conn.initiate()?;
 
 // リクエストを送信
 let headers = vec![
-    HeaderField::from_str(":method", "GET"),
-    HeaderField::from_str(":path", "/"),
-    HeaderField::from_str(":scheme", "https"),
-    HeaderField::from_str(":authority", "example.com"),
+    HeaderField::new(":method", "GET")?,
+    HeaderField::new(":path", "/")?,
+    HeaderField::new(":scheme", "https")?,
+    HeaderField::new(":authority", "example.com")?,
 ];
 let stream_id = conn.start_stream(headers, true)?;
 
@@ -69,7 +69,7 @@ let stream_id = conn.start_stream(headers, true)?;
 ### サーバー (リクエスト受信、レスポンス送信)
 
 ```rust
-use shiguredo_http2::{Connection, HeaderField, Limits, Role};
+use shiguredo_http2::{Connection, Event, HeaderField, Limits};
 
 // サーバー接続を生成
 let limits = Limits::default();
@@ -87,8 +87,8 @@ conn.initiate()?;
 //     match event {
 //         Event::HeadersReceived { stream_id, headers, end_stream, .. } => {
 //             let response_headers = vec![
-//                 HeaderField::from_str(":status", "200"),
-//                 HeaderField::from_str("content-type", "text/plain"),
+//                 HeaderField::new(":status", "200")?,
+//                 HeaderField::new("content-type", "text/plain")?,
 //             ];
 //             conn.send_response(stream_id, response_headers, false)?;
 //             conn.send_data(stream_id, b"Hello, HTTP/2!".to_vec(), true)?;
@@ -106,8 +106,8 @@ use shiguredo_http2::{HpackEncoder, HpackDecoder, HeaderField};
 // エンコード
 let mut encoder = HpackEncoder::new(4096);
 let headers = vec![
-    HeaderField::from_str(":status", "200"),
-    HeaderField::from_str("content-type", "text/plain"),
+    HeaderField::new(":status", "200")?,
+    HeaderField::new("content-type", "text/plain")?,
 ];
 let mut encoded = Vec::new();
 encoder.encode(&mut encoded, &headers);
@@ -120,7 +120,7 @@ let decoded = decoder.decode(&encoded)?;
 ### WebTransport over HTTP/2
 
 ```rust
-use shiguredo_http2::webtransport::{WtSession, WtConfig, WtEvent};
+use shiguredo_http2::webtransport::{WtSession, WtConfig};
 
 // クライアントセッションを生成
 let mut session = WtSession::client(WtConfig::default());
@@ -168,6 +168,12 @@ session.send_datagram(b"Datagram")?;
 - SETTINGS_MAX_HEADER_LIST_SIZE (0x06)
 - SETTINGS_ENABLE_CONNECT_PROTOCOL (0x08) - RFC 8441
 - SETTINGS_NO_RFC7540_PRIORITIES (0x09) - RFC 9218
+- SETTINGS_WT_INITIAL_MAX_DATA (0x2b61) - draft-ietf-webtrans-http2
+- SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62) - draft-ietf-webtrans-http2
+- SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63) - draft-ietf-webtrans-http2
+- SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64) - draft-ietf-webtrans-http2
+- SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65) - draft-ietf-webtrans-http2
+- SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66) - draft-ietf-webtrans-http2
 
 ### HPACK (RFC 7541)
 
@@ -216,17 +222,20 @@ draft-ietf-webtrans-http2 で定義される WebTransport をサポートしま�
 - DATAGRAM
 - PADDING
 
-### WebTransport Capsule
+### WebTransport Capsule (draft-ietf-webtrans-http2 Section 6)
 
-- WT_STREAM
 - WT_RESET_STREAM
 - WT_STOP_SENDING
+- WT_STREAM (FIN=0)
+- WT_STREAM (FIN=1)
 - WT_MAX_DATA
 - WT_MAX_STREAM_DATA
-- WT_MAX_STREAMS
+- WT_MAX_STREAMS (bidirectional)
+- WT_MAX_STREAMS (unidirectional)
 - WT_DATA_BLOCKED
 - WT_STREAM_DATA_BLOCKED
-- WT_STREAMS_BLOCKED
+- WT_STREAMS_BLOCKED (bidirectional)
+- WT_STREAMS_BLOCKED (unidirectional)
 - WT_CLOSE_SESSION
 - WT_DRAIN_SESSION
 
@@ -240,7 +249,7 @@ draft-ietf-webtrans-http2 で定義される WebTransport をサポートしま�
 - 最大ヘッダーリストサイズ: 16384 バイト
 - HPACK 動的テーブルサイズ: 4096 バイト
 
-`Limits` で各制限値をカスタマイズ可能です。
+`Limits::builder()` で各制限値をカスタマイズ可能です。
 
 ## クレート構成
 
@@ -308,7 +317,7 @@ curl -k --http2 https://localhost:8443/
 
 ### wt_server
 
-WebTransport over HTTP/2 (draft-ietf-webtrans-http2-14) エコーサーバーの例です。自己署名証明書を自動生成します。
+WebTransport over HTTP/2 (draft-ietf-webtrans-http2) エコーサーバーの例です。自己署名証明書を自動生成します。
 
 ```bash
 cargo run -p wt_server
@@ -322,6 +331,8 @@ cargo run -p wt_server
 
 - RFC 7541 - HPACK: Header Compression for HTTP/2
   - <https://datatracker.ietf.org/doc/html/rfc7541>
+- RFC 8441 - Bootstrapping WebSockets with HTTP/2 (Extended CONNECT)
+  - <https://datatracker.ietf.org/doc/html/rfc8441>
 - RFC 9113 - HTTP/2
   - <https://datatracker.ietf.org/doc/html/rfc9113>
 - RFC 9218 - Extensible Prioritization Scheme for HTTP
