@@ -1,14 +1,31 @@
 [package]
 name = "shiguredo_http2"
 version = "2026.1.0-canary.2"
-edition = "2024"
-rust-version = "1.88"
-license = "Apache-2.0"
+edition.workspace = true
+rust-version.workspace = true
 description = "Sans I/O HTTP/2 Library"
+readme = "README.md"
 homepage = "https://github.com/shiguredo/http2-rs"
 repository = "https://github.com/shiguredo/http2-rs"
-readme = "README.md"
+license = "Apache-2.0"
 include = ["/src/**", "LICENSE", "README.md"]
+
+[workspace]
+members = [
+  "crates/nghttp2-sys",
+  "crates/shiguredo_nghttp2",
+  "crates/tokio-http2",
+  "crates/tokio-nghttp2",
+  "examples/http2_client",
+  "examples/http2_server",
+  "examples/wt_server",
+  "pbt",
+]
+exclude = ["fuzz"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.88"
 
 [dependencies]
 
@@ -22,16 +39,3 @@ proptest = "1.6"
 # 外部 crate から呼び出せるようにする。型不変条件を破壊するため
 # 通常の利用者は有効化してはならない。
 __test_helpers = []
-
-[workspace]
-members = [
-    "examples/http2_client",
-    "examples/http2_server",
-    "examples/wt_server",
-    "pbt",
-    "crates/nghttp2-sys",
-    "crates/shiguredo_nghttp2",
-    "crates/tokio-nghttp2",
-    "crates/tokio-http2",
-]
-exclude = ["fuzz"]
