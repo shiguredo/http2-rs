@@ -2,10 +2,11 @@
 
 use crate::decode_error::DecodeError;
 use crate::error::{Error, ErrorCode, Result};
+use crate::frame::error::{LastStreamId, Weight, WindowIncrement};
 use crate::frame::{
     ContinuationFrame, DataFrame, FRAME_HEADER_SIZE, Frame, FrameFlags, FrameHeader, FrameType,
-    GoawayFrame, HeadersFrame, PingFrame, PriorityFields, PriorityFrame, PriorityUpdateFrame,
-    RstStreamFrame, SettingsFrame, StreamId, WindowUpdateFrame,
+    GoawayFrame, HeadersFrame, NonZeroStreamId, PingFrame, PriorityFields, PriorityFrame,
+    PriorityUpdateFrame, RstStreamFrame, SettingsFrame, StreamId, WindowUpdateFrame,
 };
 use crate::settings::Setting;
 
@@ -178,10 +179,8 @@ fn decode_frame(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 
 /// DATA フレームをデコードする
 fn decode_data(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
-    // DATA フレームはストリーム ID が 0 であってはならない
-    if header.stream_id == 0 {
-        return Err(Error::protocol_error("DATA frame with stream ID 0"));
-    }
+    // RFC 9113 §6.1: DATA フレームはストリーム ID が 0 であってはならない
+    let stream_id = require_non_zero_stream_id(header.stream_id, "DATA")?;
 
     let end_stream = header.flags.is_end_stream();
     let padded = header.flags.is_padded();
@@ -207,7 +206,7 @@ fn decode_data(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     };
 
     Ok(Frame::Data(DataFrame {
-        stream_id: StreamId::from_wire(header.stream_id),
+        stream_id,
         end_stream,
         data,
         pad_length,
@@ -216,10 +215,8 @@ fn decode_data(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 
 /// HEADERS フレームをデコードする
 fn decode_headers(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
-    // HEADERS フレームはストリーム ID が 0 であってはならない
-    if header.stream_id == 0 {
-        return Err(Error::protocol_error("HEADERS frame with stream ID 0"));
-    }
+    // RFC 9113 §6.2: HEADERS フレームはストリーム ID が 0 であってはならない
+    let stream_id = require_non_zero_stream_id(header.stream_id, "HEADERS")?;
 
     let end_stream = header.flags.is_end_stream();
     let end_headers = header.flags.is_end_headers();
@@ -248,7 +245,7 @@ fn decode_headers(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     }
 
     // PRIORITY フラグが設定されている場合、5 バイトの優先度フィールドをパース
-    // RFC 9113 Section 6.2: 非推奨だが相互運用性のため処理する
+    // RFC 9113 §6.2: 非推奨だが相互運用性のため処理する
     let priority_fields = if priority {
         if data_end - offset < 5 {
             return Err(Error::frame_size_error(
@@ -260,7 +257,9 @@ fn decode_headers(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
             | (u32::from(payload[offset + 1]) << 16)
             | (u32::from(payload[offset + 2]) << 8)
             | u32::from(payload[offset + 3]);
-        let weight = payload[offset + 4];
+        // u8 は Weight の有効範囲 (0..=255) に常に収まる
+        let weight =
+            Weight::new(u16::from(payload[offset + 4])).expect("u8 is always valid for Weight");
         offset += 5;
         Some(PriorityFields {
             exclusive,
@@ -274,7 +273,7 @@ fn decode_headers(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     let header_block_fragment = payload[offset..data_end].to_vec();
 
     Ok(Frame::Headers(HeadersFrame {
-        stream_id: StreamId::from_wire(header.stream_id),
+        stream_id,
         end_stream,
         end_headers,
         priority_fields,
@@ -290,12 +289,10 @@ fn decode_headers(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 /// RFC 9113 で優先度シグナリングは非推奨となった。
 /// 相互運用性のため受信は処理するが、優先度制御には使用しない。
 fn decode_priority(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
-    // PRIORITY フレームはストリーム ID が 0 であってはならない
-    if header.stream_id == 0 {
-        return Err(Error::protocol_error("PRIORITY frame with stream ID 0"));
-    }
+    // RFC 9113 §6.3: PRIORITY フレームはストリーム ID が 0 であってはならない
+    let stream_id = require_non_zero_stream_id(header.stream_id, "PRIORITY")?;
 
-    // RFC 9113 Section 6.3: PRIORITY フレームは常に 5 バイト。
+    // RFC 9113 §6.3: PRIORITY フレームは常に 5 バイト。
     // 長さが異なる場合はストリームエラーの FRAME_SIZE_ERROR として扱う。
     if payload.len() != 5 {
         return Err(Error::stream_error(
@@ -309,10 +306,11 @@ fn decode_priority(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
         | (u32::from(payload[1]) << 16)
         | (u32::from(payload[2]) << 8)
         | u32::from(payload[3]);
-    let weight = payload[4];
+    // u8 は Weight の有効範囲 (0..=255) に常に収まる
+    let weight = Weight::new(u16::from(payload[4])).expect("u8 is always valid for Weight");
 
     Ok(Frame::Priority(PriorityFrame {
-        stream_id: StreamId::from_wire(header.stream_id),
+        stream_id,
         exclusive,
         stream_dependency: StreamId::from_wire(stream_dependency),
         weight,
@@ -321,10 +319,8 @@ fn decode_priority(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 
 /// RST_STREAM フレームをデコードする
 fn decode_rst_stream(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
-    // RST_STREAM フレームはストリーム ID が 0 であってはならない
-    if header.stream_id == 0 {
-        return Err(Error::protocol_error("RST_STREAM frame with stream ID 0"));
-    }
+    // RFC 9113 §6.4: RST_STREAM フレームはストリーム ID が 0 であってはならない
+    let stream_id = require_non_zero_stream_id(header.stream_id, "RST_STREAM")?;
 
     // RST_STREAM フレームは常に 4 バイト
     if payload.len() != 4 {
@@ -334,7 +330,7 @@ fn decode_rst_stream(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     let error_code = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
 
     Ok(Frame::RstStream(RstStreamFrame {
-        stream_id: StreamId::from_wire(header.stream_id),
+        stream_id,
         error_code,
     }))
 }
@@ -407,7 +403,7 @@ fn decode_ping(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 
 /// GOAWAY フレームをデコードする
 fn decode_goaway(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
-    // GOAWAY フレームはストリーム ID が 0 でなければならない
+    // RFC 9113 §6.8: GOAWAY フレームはストリーム ID が 0 でなければならない
     if header.stream_id != 0 {
         return Err(Error::protocol_error(
             "GOAWAY frame with non-zero stream ID",
@@ -421,10 +417,13 @@ fn decode_goaway(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
         ));
     }
 
-    let last_stream_id = ((u32::from(payload[0]) & 0x7f) << 24)
+    let last_stream_id_raw = ((u32::from(payload[0]) & 0x7f) << 24)
         | (u32::from(payload[1]) << 16)
         | (u32::from(payload[2]) << 8)
         | u32::from(payload[3]);
+    // wire 上は 31-bit マスク済みなので LastStreamId の範囲 (0..=2^31-1) に必ず収まる
+    let last_stream_id = LastStreamId::new(last_stream_id_raw)
+        .expect("31-bit wire value is always valid for LastStreamId");
 
     let error_code = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
 
@@ -435,7 +434,7 @@ fn decode_goaway(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     };
 
     Ok(Frame::Goaway(GoawayFrame {
-        last_stream_id: StreamId::from_wire(last_stream_id),
+        last_stream_id,
         error_code,
         debug_data,
     }))
@@ -450,13 +449,13 @@ fn decode_window_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
         ));
     }
 
-    let window_size_increment = ((u32::from(payload[0]) & 0x7f) << 24)
+    let raw_increment = ((u32::from(payload[0]) & 0x7f) << 24)
         | (u32::from(payload[1]) << 16)
         | (u32::from(payload[2]) << 8)
         | u32::from(payload[3]);
 
-    // window_size_increment が 0 は無効
-    if window_size_increment == 0 {
+    // RFC 9113 §6.9: increment = 0 は接続 / ストリームでエラー種別が異なる
+    if raw_increment == 0 {
         if header.stream_id == 0 {
             return Err(Error::connection_error(
                 ErrorCode::ProtocolError,
@@ -469,6 +468,10 @@ fn decode_window_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
         ));
     }
 
+    // 非ゼロかつ 31-bit マスク済みなので WindowIncrement の範囲に必ず収まる
+    let window_size_increment = WindowIncrement::new(raw_increment)
+        .expect("non-zero 31-bit wire value is always valid for WindowIncrement");
+
     Ok(Frame::WindowUpdate(WindowUpdateFrame {
         stream_id: StreamId::from_wire(header.stream_id),
         window_size_increment,
@@ -477,22 +480,20 @@ fn decode_window_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 
 /// CONTINUATION フレームをデコードする
 fn decode_continuation(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
-    // CONTINUATION フレームはストリーム ID が 0 であってはならない
-    if header.stream_id == 0 {
-        return Err(Error::protocol_error("CONTINUATION frame with stream ID 0"));
-    }
+    // RFC 9113 §6.10: CONTINUATION フレームはストリーム ID が 0 であってはならない
+    let stream_id = require_non_zero_stream_id(header.stream_id, "CONTINUATION")?;
 
     let end_headers = header.flags.is_end_headers();
     let header_block_fragment = payload.to_vec();
 
     Ok(Frame::Continuation(ContinuationFrame {
-        stream_id: StreamId::from_wire(header.stream_id),
+        stream_id,
         end_headers,
         header_block_fragment,
     }))
 }
 
-/// PUSH_PROMISE フレームをデコードする (RFC 9113 Section 6.6)
+/// PUSH_PROMISE フレームをデコードする (RFC 9113 §6.6)
 ///
 /// # 非サポート
 ///
@@ -500,7 +501,7 @@ fn decode_continuation(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 /// このライブラリでは送信機能を提供しない。
 /// 受信時はストリーム ID のみ抽出し、connection モジュールでエラー処理する。
 fn decode_push_promise(header: FrameHeader, _payload: &[u8]) -> Result<Frame> {
-    // PUSH_PROMISE フレームはストリーム ID が 0 であってはならない
+    // RFC 9113 §6.6: PUSH_PROMISE フレームはストリーム ID が 0 であってはならない
     if header.stream_id == 0 {
         return Err(Error::protocol_error("PUSH_PROMISE frame with stream ID 0"));
     }
@@ -511,16 +512,16 @@ fn decode_push_promise(header: FrameHeader, _payload: &[u8]) -> Result<Frame> {
     })
 }
 
-/// PRIORITY_UPDATE フレームをデコードする (RFC 9218 Section 7.1)
+/// PRIORITY_UPDATE フレームをデコードする (RFC 9218 §7.1)
 fn decode_priority_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
-    // RFC 9218 Section 7.1: PRIORITY_UPDATE フレームはストリーム ID が 0 でなければならない
+    // RFC 9218 §7.1: PRIORITY_UPDATE フレームはストリーム ID が 0 でなければならない
     if header.stream_id != 0 {
         return Err(Error::protocol_error(
             "PRIORITY_UPDATE frame with non-zero stream ID",
         ));
     }
 
-    // RFC 9218 Section 7.1: ペイロードは最低 4 バイト (Prioritized Stream ID)
+    // RFC 9218 §7.1: ペイロードは最低 4 バイト (Prioritized Stream ID)
     if payload.len() < 4 {
         return Err(Error::frame_size_error(
             "PRIORITY_UPDATE frame must be at least 4 bytes",
@@ -528,10 +529,14 @@ fn decode_priority_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> 
     }
 
     // Prioritized Element ID (31 bits)
-    let prioritized_element_id = ((u32::from(payload[0]) & 0x7f) << 24)
+    let raw_id = ((u32::from(payload[0]) & 0x7f) << 24)
         | (u32::from(payload[1]) << 16)
         | (u32::from(payload[2]) << 8)
         | u32::from(payload[3]);
+
+    let prioritized_element_id = NonZeroStreamId::new(raw_id).map_err(|_| {
+        Error::protocol_error("PRIORITY_UPDATE prioritized element ID must not be 0")
+    })?;
 
     // Priority Field Value (残りのバイト)
     let priority_field_value = if payload.len() > 4 {
@@ -541,7 +546,13 @@ fn decode_priority_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> 
     };
 
     Ok(Frame::PriorityUpdate(PriorityUpdateFrame {
-        prioritized_element_id: StreamId::from_wire(prioritized_element_id),
+        prioritized_element_id,
         priority_field_value,
     }))
+}
+
+/// stream_id が 0 の場合に PROTOCOL_ERROR を返すヘルパー
+fn require_non_zero_stream_id(raw: u32, frame_name: &str) -> Result<NonZeroStreamId> {
+    NonZeroStreamId::new(raw)
+        .map_err(|_| Error::protocol_error(format!("{frame_name} frame with stream ID 0")))
 }

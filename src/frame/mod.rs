@@ -13,7 +13,7 @@ pub use error::{FrameError, LastStreamId, Weight, WindowIncrement};
 pub use flags::FrameFlags;
 
 use crate::settings::Setting;
-pub use crate::stream_id::StreamId;
+pub use crate::stream_id::{NonZeroStreamId, StreamId};
 
 /// フレームヘッダーサイズ（9 バイト）
 pub const FRAME_HEADER_SIZE: usize = 9;
@@ -153,16 +153,18 @@ impl FrameHeader {
     }
 }
 
-/// DATA フレーム (RFC 9113 Section 6.1)
+/// DATA フレーム (RFC 9113 §6.1)
+///
+/// stream_id は非ゼロでなければならない (RFC 9113 §6.1: stream_id = 0 は PROTOCOL_ERROR)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DataFrame {
-    /// ストリーム ID
-    pub stream_id: StreamId,
+    /// ストリーム ID (非ゼロ)
+    pub stream_id: NonZeroStreamId,
     /// END_STREAM フラグ
     pub end_stream: bool,
     /// データ
     pub data: Vec<u8>,
-    /// パディング長 (RFC 9113 Section 6.1)
+    /// パディング長 (RFC 9113 §6.1)
     ///
     /// Some の場合、PADDED フラグが設定され、指定されたバイト数のパディングが追加される。
     /// パディングはデータ長の曖昧化やトラフィック解析対策に使用される。
@@ -172,7 +174,7 @@ pub struct DataFrame {
 impl DataFrame {
     /// 新しい `DataFrame` を生成する
     #[must_use]
-    pub fn new(stream_id: StreamId, data: Vec<u8>) -> Self {
+    pub fn new(stream_id: NonZeroStreamId, data: Vec<u8>) -> Self {
         Self {
             stream_id,
             end_stream: false,
@@ -200,11 +202,13 @@ impl DataFrame {
     }
 }
 
-/// HEADERS フレーム (RFC 9113 Section 6.2)
+/// HEADERS フレーム (RFC 9113 §6.2)
+///
+/// stream_id は非ゼロでなければならない (RFC 9113 §6.2: stream_id = 0 は PROTOCOL_ERROR)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeadersFrame {
-    /// ストリーム ID
-    pub stream_id: StreamId,
+    /// ストリーム ID (非ゼロ)
+    pub stream_id: NonZeroStreamId,
     /// END_STREAM フラグ
     pub end_stream: bool,
     /// END_HEADERS フラグ
@@ -217,7 +221,7 @@ pub struct HeadersFrame {
     pub priority_fields: Option<PriorityFields>,
     /// ヘッダーブロックフラグメント（HPACK エンコード済み）
     pub header_block_fragment: Vec<u8>,
-    /// パディング長 (RFC 9113 Section 6.2)
+    /// パディング長 (RFC 9113 §6.2)
     ///
     /// Some の場合、PADDED フラグが設定され、指定されたバイト数のパディングが追加される。
     pub pad_length: Option<u8>,
@@ -226,7 +230,7 @@ pub struct HeadersFrame {
 impl HeadersFrame {
     /// 新しい `HeadersFrame` を生成する
     #[must_use]
-    pub fn new(stream_id: StreamId, header_block_fragment: Vec<u8>) -> Self {
+    pub fn new(stream_id: NonZeroStreamId, header_block_fragment: Vec<u8>) -> Self {
         Self {
             stream_id,
             end_stream: false,
@@ -259,7 +263,7 @@ impl HeadersFrame {
     }
 }
 
-/// HEADERS フレーム内の優先度フィールド (RFC 9113 Section 6.2)
+/// HEADERS フレーム内の優先度フィールド (RFC 9113 §6.2)
 ///
 /// # 非推奨 (Deprecated)
 ///
@@ -270,33 +274,36 @@ pub struct PriorityFields {
     pub exclusive: bool,
     /// 依存するストリーム ID
     pub stream_dependency: StreamId,
-    /// 重み (1-256、ワイヤーフォーマットでは 0-255)
-    pub weight: u8,
+    /// 重み (wire 上 0..=255、実体 1..=256)
+    pub weight: Weight,
 }
 
-/// PRIORITY フレーム (RFC 9113 Section 6.3)
+/// PRIORITY フレーム (RFC 9113 §6.3)
 ///
 /// # 非推奨 (Deprecated)
 ///
 /// RFC 9113 で優先度シグナリングは非推奨となった。
 /// 相互運用性のため受信は処理するが、送信は行わない。
+/// 公開コンストラクタは提供しない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PriorityFrame {
-    /// ストリーム ID
-    pub stream_id: StreamId,
+    /// ストリーム ID (非ゼロ)
+    pub stream_id: NonZeroStreamId,
     /// Exclusive フラグ
     pub exclusive: bool,
     /// 依存するストリーム ID
     pub stream_dependency: StreamId,
-    /// 重み (1-256、ワイヤーフォーマットでは 0-255)
-    pub weight: u8,
+    /// 重み (wire 上 0..=255、実体 1..=256)
+    pub weight: Weight,
 }
 
-/// RST_STREAM フレーム (RFC 9113 Section 6.4)
+/// RST_STREAM フレーム (RFC 9113 §6.4)
+///
+/// stream_id は非ゼロでなければならない (RFC 9113 §6.4: stream_id = 0 は PROTOCOL_ERROR)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RstStreamFrame {
-    /// ストリーム ID
-    pub stream_id: StreamId,
+    /// ストリーム ID (非ゼロ)
+    pub stream_id: NonZeroStreamId,
     /// エラーコード
     pub error_code: u32,
 }
@@ -304,7 +311,7 @@ pub struct RstStreamFrame {
 impl RstStreamFrame {
     /// 新しい `RstStreamFrame` を生成する
     #[must_use]
-    pub const fn new(stream_id: StreamId, error_code: u32) -> Self {
+    pub const fn new(stream_id: NonZeroStreamId, error_code: u32) -> Self {
         Self {
             stream_id,
             error_code,
@@ -399,11 +406,13 @@ impl PingFrame {
     }
 }
 
-/// GOAWAY フレーム (RFC 9113 Section 6.8)
+/// GOAWAY フレーム (RFC 9113 §6.8)
+///
+/// stream_id は常に 0 (接続レベル)。last_stream_id は 31-bit 範囲 (0..=2^31-1)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoawayFrame {
-    /// 最後に処理したストリーム ID
-    pub last_stream_id: StreamId,
+    /// 最後に処理したストリーム ID (0..=2^31-1)
+    pub last_stream_id: LastStreamId,
     /// エラーコード
     pub error_code: u32,
     /// 追加のデバッグデータ
@@ -413,7 +422,7 @@ pub struct GoawayFrame {
 impl GoawayFrame {
     /// 新しい `GoawayFrame` を生成する
     #[must_use]
-    pub fn new(last_stream_id: StreamId, error_code: u32) -> Self {
+    pub fn new(last_stream_id: LastStreamId, error_code: u32) -> Self {
         Self {
             last_stream_id,
             error_code,
@@ -429,31 +438,45 @@ impl GoawayFrame {
     }
 }
 
-/// WINDOW_UPDATE フレーム (RFC 9113 Section 6.9)
+/// WINDOW_UPDATE フレーム (RFC 9113 §6.9)
+///
+/// increment は 1..=2^31-1 の範囲 (RFC 9113 §6.9: 0 は PROTOCOL_ERROR)。
+/// stream_id = 0 は接続レベル、非ゼロはストリームレベル。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowUpdateFrame {
     /// ストリーム ID（0 の場合は接続レベル）
     pub stream_id: StreamId,
-    /// ウィンドウサイズ増分（31 ビット）
-    pub window_size_increment: u32,
+    /// ウィンドウサイズ増分 (1..=2^31-1)
+    pub window_size_increment: WindowIncrement,
 }
 
 impl WindowUpdateFrame {
-    /// 新しい `WindowUpdateFrame` を生成する
+    /// 接続レベルの WINDOW_UPDATE を生成する
     #[must_use]
-    pub const fn new(stream_id: StreamId, window_size_increment: u32) -> Self {
+    pub const fn for_connection(increment: WindowIncrement) -> Self {
         Self {
-            stream_id,
-            window_size_increment,
+            stream_id: StreamId::Connection,
+            window_size_increment: increment,
+        }
+    }
+
+    /// ストリームレベルの WINDOW_UPDATE を生成する
+    #[must_use]
+    pub fn for_stream(stream_id: NonZeroStreamId, increment: WindowIncrement) -> Self {
+        Self {
+            stream_id: StreamId::from(stream_id),
+            window_size_increment: increment,
         }
     }
 }
 
-/// CONTINUATION フレーム (RFC 9113 Section 6.10)
+/// CONTINUATION フレーム (RFC 9113 §6.10)
+///
+/// stream_id は非ゼロでなければならない (RFC 9113 §6.10: stream_id = 0 は PROTOCOL_ERROR)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContinuationFrame {
-    /// ストリーム ID
-    pub stream_id: StreamId,
+    /// ストリーム ID (非ゼロ)
+    pub stream_id: NonZeroStreamId,
     /// END_HEADERS フラグ
     pub end_headers: bool,
     /// ヘッダーブロックフラグメント
@@ -463,7 +486,7 @@ pub struct ContinuationFrame {
 impl ContinuationFrame {
     /// 新しい `ContinuationFrame` を生成する
     #[must_use]
-    pub fn new(stream_id: StreamId, header_block_fragment: Vec<u8>) -> Self {
+    pub fn new(stream_id: NonZeroStreamId, header_block_fragment: Vec<u8>) -> Self {
         Self {
             stream_id,
             end_headers: false,
@@ -479,20 +502,21 @@ impl ContinuationFrame {
     }
 }
 
-/// PRIORITY_UPDATE フレーム (RFC 9218 Section 7.1)
+/// PRIORITY_UPDATE フレーム (RFC 9218 §7.1)
 ///
 /// Extensible Priorities で定義される優先度更新フレーム。
 /// クライアントがサーバーに対してストリームの優先度を通知するために使用する。
+/// フレーム自体は stream_id = 0 で送信される。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PriorityUpdateFrame {
-    /// 優先度を更新するストリーム ID
+    /// 優先度を更新するストリーム ID (非ゼロ)
     ///
-    /// RFC 9218 Section 7.1: Prioritized Stream ID
+    /// RFC 9218 §7.1: Prioritized Stream ID
     /// クライアント開始ストリーム (奇数) の ID を指定する。
-    pub prioritized_element_id: StreamId,
+    pub prioritized_element_id: NonZeroStreamId,
     /// Priority Field Value
     ///
-    /// RFC 9218 Section 7.1: Structured Fields (RFC 8941) の Dictionary 形式。
+    /// RFC 9218 §7.1: Structured Fields (RFC 8941) の Dictionary 形式。
     /// 空の場合はデフォルト優先度を使用。
     pub priority_field_value: Vec<u8>,
 }
@@ -500,7 +524,7 @@ pub struct PriorityUpdateFrame {
 impl PriorityUpdateFrame {
     /// 新しい `PriorityUpdateFrame` を生成する
     #[must_use]
-    pub fn new(prioritized_element_id: StreamId, priority_field_value: Vec<u8>) -> Self {
+    pub fn new(prioritized_element_id: NonZeroStreamId, priority_field_value: Vec<u8>) -> Self {
         Self {
             prioritized_element_id,
             priority_field_value,
@@ -509,7 +533,7 @@ impl PriorityUpdateFrame {
 
     /// デフォルト優先度の `PriorityUpdateFrame` を生成する
     #[must_use]
-    pub fn default_priority(prioritized_element_id: StreamId) -> Self {
+    pub fn default_priority(prioritized_element_id: NonZeroStreamId) -> Self {
         Self {
             prioritized_element_id,
             priority_field_value: Vec::new(),
@@ -571,17 +595,17 @@ impl Frame {
     #[must_use]
     pub fn stream_id(&self) -> StreamId {
         match self {
-            Self::Data(f) => f.stream_id,
-            Self::Headers(f) => f.stream_id,
-            Self::Priority(f) => f.stream_id,
-            Self::RstStream(f) => f.stream_id,
+            Self::Data(f) => StreamId::from(f.stream_id),
+            Self::Headers(f) => StreamId::from(f.stream_id),
+            Self::Priority(f) => StreamId::from(f.stream_id),
+            Self::RstStream(f) => StreamId::from(f.stream_id),
             Self::Settings(_) => StreamId::Connection,
             Self::PushPromise { stream_id } => *stream_id,
             Self::Ping(_) => StreamId::Connection,
             Self::Goaway(_) => StreamId::Connection,
             Self::WindowUpdate(f) => f.stream_id,
-            Self::Continuation(f) => f.stream_id,
-            // RFC 9218 Section 7.1: PRIORITY_UPDATE は stream identifier 0 で送信される
+            Self::Continuation(f) => StreamId::from(f.stream_id),
+            // RFC 9218 §7.1: PRIORITY_UPDATE は stream identifier 0 で送信される
             Self::PriorityUpdate(_) => StreamId::Connection,
             Self::Unknown { header, .. } => StreamId::from_wire(header.stream_id),
         }

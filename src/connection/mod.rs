@@ -7,9 +7,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::error::{Error, ErrorCode, Result};
 use crate::event::Event;
 use crate::flow_control::{FlowControl, MAX_WINDOW_SIZE};
+use crate::frame::error::{LastStreamId, WindowIncrement};
 use crate::frame::{
     ContinuationFrame, DataFrame, Frame, FrameDecoder, FrameEncoder, GoawayFrame, HeadersFrame,
-    PingFrame, PriorityUpdateFrame, RstStreamFrame, SettingsFrame, StreamId, WindowUpdateFrame,
+    NonZeroStreamId, PingFrame, PriorityUpdateFrame, RstStreamFrame, SettingsFrame, StreamId,
+    WindowUpdateFrame,
 };
 use crate::hpack::{Decoder as HpackDecoder, Encoder as HpackEncoder, HeaderField};
 use crate::limits::Limits;
@@ -460,9 +462,12 @@ impl Connection {
 
         let stream_id_u32 = self.next_stream_id;
         let stream_id = StreamId::from_wire(stream_id_u32);
+        let nz_stream_id = stream_id
+            .non_zero()
+            .expect("next_stream_id is always non-zero");
         self.next_stream_id += 2;
 
-        // RFC 9113 Section 5.2: 送信ウィンドウはリモートの initial_window_size、
+        // RFC 9113 §5.2: 送信ウィンドウはリモートの initial_window_size、
         // 受信ウィンドウはローカルの initial_window_size で初期化する
         let mut stream = Stream::new(
             stream_id,
@@ -494,7 +499,7 @@ impl Connection {
         let mut encoded_headers = Vec::new();
         self.hpack_encoder.encode(&mut encoded_headers, &headers);
 
-        self.send_header_block(stream_id, encoded_headers, end_stream)?;
+        self.send_header_block(nz_stream_id, encoded_headers, end_stream)?;
 
         Ok(stream_id)
     }
@@ -630,7 +635,8 @@ impl Connection {
             }
 
             // DATA フレームを送信
-            let sid = StreamId::from_wire(stream_id);
+            let sid =
+                NonZeroStreamId::new(stream_id).expect("stream IDs in HashMap are always non-zero");
             let data_frame = DataFrame::new(sid, data).with_end_stream(end_stream);
             self.send_frame(&Frame::Data(data_frame))?;
 
@@ -639,14 +645,15 @@ impl Connection {
             }
         }
 
-        // RFC 9113 Section 6.9.1: 空 DATA + END_STREAM を送信する
+        // RFC 9113 §6.9.1: 空 DATA + END_STREAM を送信する
         // ループから break で抜けた場合（buffer_len == 0 && pending_end_stream）
         if let Some(stream) = self.streams.get_mut(&stream_id)
             && stream.pending_end_stream()
             && stream.send_buffer().is_empty()
         {
             stream.set_pending_end_stream(false);
-            let sid = StreamId::from_wire(stream_id);
+            let sid =
+                NonZeroStreamId::new(stream_id).expect("stream IDs in HashMap are always non-zero");
             let data_frame = DataFrame::new(sid, vec![]).with_end_stream(true);
             self.send_frame(&Frame::Data(data_frame))?;
         }
@@ -698,7 +705,10 @@ impl Connection {
             stream.state_machine_mut().send_rst_stream();
         }
 
-        let rst_frame = RstStreamFrame::new(stream_id, error_code.as_u32());
+        let nz_stream_id = stream_id
+            .non_zero()
+            .expect("RST_STREAM requires non-zero stream ID");
+        let rst_frame = RstStreamFrame::new(nz_stream_id, error_code.as_u32());
         self.send_frame(&Frame::RstStream(rst_frame))?;
 
         Ok(())
@@ -713,11 +723,11 @@ impl Connection {
 
     /// GOAWAY を送信する
     pub fn send_goaway(&mut self, error_code: ErrorCode, debug_data: Vec<u8>) -> Result<()> {
-        let goaway_frame = GoawayFrame::new(
-            StreamId::from_wire(self.last_successful_stream_id),
-            error_code.as_u32(),
-        )
-        .with_debug_data(debug_data);
+        // last_successful_stream_id は 31-bit 範囲に必ず収まる
+        let last_stream_id = LastStreamId::new(self.last_successful_stream_id)
+            .expect("last_successful_stream_id is always valid for LastStreamId");
+        let goaway_frame =
+            GoawayFrame::new(last_stream_id, error_code.as_u32()).with_debug_data(debug_data);
         self.send_frame(&Frame::Goaway(goaway_frame))?;
         self.state = ConnectionState::GoawaySent;
         Ok(())
@@ -725,7 +735,7 @@ impl Connection {
 
     /// WINDOW_UPDATE を送信する
     pub fn send_window_update(&mut self, stream_id: StreamId, increment: u32) -> Result<()> {
-        // RFC 9113 Section 6.9: increment は 1 以上 2^31-1 以下でなければならない
+        // RFC 9113 §6.9: increment は 1 以上 2^31-1 以下でなければならない
         if increment == 0 {
             return Err(Error::connection_error(
                 ErrorCode::ProtocolError,
@@ -746,7 +756,13 @@ impl Connection {
             stream.flow_control_mut().add_recv_window(increment)?;
         }
 
-        let window_update_frame = WindowUpdateFrame::new(stream_id, increment);
+        // 事前検査で範囲を保証済み
+        let wi = WindowIncrement::new(increment)
+            .expect("increment validated non-zero and <= MAX_WINDOW_SIZE");
+        let window_update_frame = match stream_id.non_zero() {
+            Some(nz) => WindowUpdateFrame::for_stream(nz, wi),
+            None => WindowUpdateFrame::for_connection(wi),
+        };
         self.send_frame(&Frame::WindowUpdate(window_update_frame))?;
 
         Ok(())
@@ -851,7 +867,10 @@ impl Connection {
         let mut encoded_headers = Vec::new();
         self.hpack_encoder.encode(&mut encoded_headers, &headers);
 
-        self.send_header_block(stream_id, encoded_headers, end_stream)?;
+        let nz_stream_id = stream_id
+            .non_zero()
+            .expect("response stream ID is always non-zero");
+        self.send_header_block(nz_stream_id, encoded_headers, end_stream)?;
 
         // 送信側で end_stream によりストリームが closed になった場合
         if is_closed {
@@ -923,7 +942,10 @@ impl Connection {
         let mut encoded_headers = Vec::new();
         self.hpack_encoder.encode(&mut encoded_headers, &headers);
 
-        self.send_header_block(stream_id, encoded_headers, end_stream)?;
+        let nz_stream_id = stream_id
+            .non_zero()
+            .expect("trailer stream ID is always non-zero");
+        self.send_header_block(nz_stream_id, encoded_headers, end_stream)?;
 
         // 送信側で end_stream によりストリームが closed になった場合
         if is_closed {
@@ -1090,16 +1112,15 @@ impl Connection {
             frame.end_stream && stream.state() == StreamState::Closed
         };
 
+        let stream_id = StreamId::from(frame.stream_id);
         self.events.push_back(Event::DataReceived {
-            stream_id: frame.stream_id,
+            stream_id,
             data: frame.data,
             end_stream: frame.end_stream,
         });
 
         if is_closed {
-            self.events.push_back(Event::StreamClosed {
-                stream_id: frame.stream_id,
-            });
+            self.events.push_back(Event::StreamClosed { stream_id });
             self.closed_streams.insert(sid);
             self.streams.remove(&sid);
         }
@@ -1110,16 +1131,10 @@ impl Connection {
     /// HEADERS フレームを処理する
     fn handle_headers(&mut self, frame: HeadersFrame) -> Result<()> {
         // RFC 9113 §5.1.1: サーバープッシュ非サポートのため偶数ストリーム ID は拒否
-        // stream_id=0 は decoder 側で拒否済みだが防御的に明示する
+        // stream_id = 0 は NonZeroStreamId により構造的に排除済み
         match frame.stream_id {
-            StreamId::Client(_) => {}
-            StreamId::Connection => {
-                return Err(Error::connection_error(
-                    ErrorCode::ProtocolError,
-                    "HEADERS frame with stream ID 0",
-                ));
-            }
-            StreamId::Server(_) => {
+            NonZeroStreamId::Client(_) => {}
+            NonZeroStreamId::Server(_) => {
                 return Err(Error::connection_error(
                     ErrorCode::ProtocolError,
                     format!(
@@ -1199,7 +1214,7 @@ impl Connection {
                 return Ok(());
             }
 
-            self.process_headers(frame.stream_id, headers, frame.end_stream)?;
+            self.process_headers(StreamId::from(frame.stream_id), headers, frame.end_stream)?;
 
             // RFC 9113 Section 5.4.1: ヘッダーの HPACK デコードと検証が
             // 両方成功した場合のみ GOAWAY 用の last_successful_stream_id を更新する
@@ -1501,14 +1516,14 @@ impl Connection {
     fn handle_rst_stream(&mut self, frame: RstStreamFrame) -> Result<()> {
         let sid = frame.stream_id.as_u32();
 
-        // RFC 9113 Section 5.1: アイドルストリームへのフレームは接続エラー
+        // RFC 9113 §5.1: アイドルストリームへのフレームは接続エラー
         self.check_not_idle_stream(sid, "RST_STREAM")?;
 
         match self.streams.get_mut(&sid) {
             Some(stream) => {
                 stream.state_machine_mut().recv_rst_stream();
                 self.events.push_back(Event::StreamReset {
-                    stream_id: frame.stream_id,
+                    stream_id: StreamId::from(frame.stream_id),
                     error_code: ErrorCode::from_u32(frame.error_code),
                 });
                 self.closed_streams.insert(sid);
@@ -1657,7 +1672,7 @@ impl Connection {
         self.state = ConnectionState::GoawayReceived;
 
         self.events.push_back(Event::GoawayReceived {
-            last_stream_id: frame.last_stream_id,
+            last_stream_id: StreamId::from_wire(frame.last_stream_id.get()),
             error_code: ErrorCode::from_u32(frame.error_code),
             debug_data: frame.debug_data,
         });
@@ -1668,28 +1683,25 @@ impl Connection {
     /// WINDOW_UPDATE フレームを処理する
     fn handle_window_update(&mut self, frame: WindowUpdateFrame) -> Result<()> {
         let sid = frame.stream_id.as_u32();
+        let increment_u32 = frame.window_size_increment.as_u32();
 
         if matches!(frame.stream_id, StreamId::Connection) {
-            self.flow_control
-                .recv_window_update(frame.window_size_increment)?;
+            self.flow_control.recv_window_update(increment_u32)?;
             // 接続レベルのウィンドウが増えたので、全ストリームのキューを処理
             self.flush_all_stream_data()?;
         } else {
-            // RFC 9113 Section 5.1: アイドルストリームへのフレームは接続エラー
+            // RFC 9113 §5.1: アイドルストリームへのフレームは接続エラー
             self.check_not_idle_stream(sid, "WINDOW_UPDATE")?;
 
             if let Some(stream) = self.streams.get_mut(&sid) {
-                // RFC 9113 Section 5.1: Closed 状態のストリームへの
+                // RFC 9113 §5.1: Closed 状態のストリームへの
                 // WINDOW_UPDATE は無視する
                 if stream.state() == StreamState::Closed {
                     return Ok(());
                 }
-                // RFC 9113 Section 6.9.1: ストリームレベルのウィンドウオーバーフローは
+                // RFC 9113 §6.9.1: ストリームレベルのウィンドウオーバーフローは
                 // RST_STREAM(FLOW_CONTROL_ERROR) で処理する（接続エラーではない）
-                if let Err(e) = stream
-                    .flow_control_mut()
-                    .recv_window_update(frame.window_size_increment)
-                {
+                if let Err(e) = stream.flow_control_mut().recv_window_update(increment_u32) {
                     if e.is_connection_error() {
                         self.reset_stream(frame.stream_id, ErrorCode::FlowControlError)?;
                         return Ok(());
@@ -1706,7 +1718,7 @@ impl Connection {
 
         self.events.push_back(Event::WindowUpdateReceived {
             stream_id: frame.stream_id,
-            increment: frame.window_size_increment,
+            increment: increment_u32,
         });
 
         Ok(())
@@ -1784,15 +1796,10 @@ impl Connection {
         }
 
         // RFC 9218 §7.1: Prioritized Stream ID はクライアント開始ストリーム (奇数) でなければならない
+        // stream_id = 0 は NonZeroStreamId により構造的に排除済み
         match frame.prioritized_element_id {
-            StreamId::Client(_) => {}
-            StreamId::Connection => {
-                return Err(Error::connection_error(
-                    ErrorCode::ProtocolError,
-                    "PRIORITY_UPDATE with stream ID 0 is not valid",
-                ));
-            }
-            StreamId::Server(_) => {
+            NonZeroStreamId::Client(_) => {}
+            NonZeroStreamId::Server(_) => {
                 return Err(Error::connection_error(
                     ErrorCode::ProtocolError,
                     "PRIORITY_UPDATE for non-client-initiated stream",
@@ -1801,7 +1808,7 @@ impl Connection {
         }
 
         self.events.push_back(Event::PriorityUpdateReceived {
-            stream_id: frame.prioritized_element_id,
+            stream_id: StreamId::from(frame.prioritized_element_id),
             priority_field_value: frame.priority_field_value,
         });
 
@@ -1885,7 +1892,7 @@ impl Connection {
     /// 必要に応じて CONTINUATION フレームを使用する。
     fn send_header_block(
         &mut self,
-        stream_id: StreamId,
+        stream_id: NonZeroStreamId,
         encoded_headers: Vec<u8>,
         end_stream: bool,
     ) -> Result<()> {

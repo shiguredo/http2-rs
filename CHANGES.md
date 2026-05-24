@@ -56,6 +56,14 @@
   - @voluntas
 - [CHANGE] `Setting` を `{ id: u16, value: u32 }` 構造体から既知パラメータの enum に変更し、値範囲を型で制約する (issue 0026)
   - @voluntas
+- [CHANGE] `DataFrame` / `HeadersFrame` / `RstStreamFrame` / `ContinuationFrame` / `PriorityUpdateFrame` / `PriorityFrame` の `stream_id` を `StreamId` から `NonZeroStreamId` に変更し、stream_id = 0 を構造的に排除する (issue 0027)
+  - @voluntas
+- [CHANGE] `WindowUpdateFrame` の `window_size_increment` を `u32` から `WindowIncrement` に変更し、コンストラクタを `for_connection` / `for_stream` に分割する (issue 0027)
+  - @voluntas
+- [CHANGE] `GoawayFrame` の `last_stream_id` を `StreamId` から `LastStreamId` に変更し、31-bit 範囲を型で強制する (issue 0027)
+  - @voluntas
+- [CHANGE] `PriorityFields` / `PriorityFrame` の `weight` を `u8` から `Weight` に変更し、wire 値範囲を型で表現する (issue 0027)
+  - @voluntas
 - [CHANGE] `SettingId` enum を `Setting` enum に統合し削除する (issue 0026)
   - @voluntas
 - [CHANGE] `SettingsFrame` のフィールドを private 化し、`add_setting` を `add` にリネームする (issue 0026)

@@ -237,7 +237,7 @@ impl FrameEncoder {
 
         self.encode_header(&header);
         // Last-Stream-ID (31 bits, R bit is reserved)
-        let last_stream_id = frame.last_stream_id.as_u32();
+        let last_stream_id = frame.last_stream_id.get();
         self.buf.push(((last_stream_id >> 24) & 0x7f) as u8);
         self.buf.push(((last_stream_id >> 16) & 0xff) as u8);
         self.buf.push(((last_stream_id >> 8) & 0xff) as u8);
@@ -260,13 +260,11 @@ impl FrameEncoder {
 
         self.encode_header(&header);
         // Window Size Increment (31 bits, R bit is reserved)
-        self.buf
-            .push(((frame.window_size_increment >> 24) & 0x7f) as u8);
-        self.buf
-            .push(((frame.window_size_increment >> 16) & 0xff) as u8);
-        self.buf
-            .push(((frame.window_size_increment >> 8) & 0xff) as u8);
-        self.buf.push((frame.window_size_increment & 0xff) as u8);
+        let increment = frame.window_size_increment.as_u32();
+        self.buf.push(((increment >> 24) & 0x7f) as u8);
+        self.buf.push(((increment >> 16) & 0xff) as u8);
+        self.buf.push(((increment >> 8) & 0xff) as u8);
+        self.buf.push((increment & 0xff) as u8);
         Ok(())
     }
 

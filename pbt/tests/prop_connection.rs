@@ -4,7 +4,8 @@
 
 use proptest::prelude::*;
 use shiguredo_http2::{
-    Connection, ErrorCode, HeaderField, HpackEncoder, Limits,
+    Connection, ErrorCode, HeaderField, HpackEncoder, LastStreamId, Limits, NonZeroStreamId,
+    WindowIncrement,
     frame::{
         ContinuationFrame, DataFrame, Frame, FrameEncoder, GoawayFrame, HeadersFrame, PingFrame,
         RstStreamFrame, SettingsFrame, StreamId, WindowUpdateFrame,
@@ -13,8 +14,8 @@ use shiguredo_http2::{
 };
 
 /// 有効なストリーム ID を生成する（クライアント開始: 奇数）
-fn client_stream_id() -> impl Strategy<Value = StreamId> {
-    (1u32..=100).prop_map(|n| StreamId::from_wire(n * 2 + 1)) // 1, 3, 5, ...
+fn client_stream_id() -> impl Strategy<Value = NonZeroStreamId> {
+    (1u32..=100).prop_map(|n| NonZeroStreamId::new(n * 2 + 1).expect("odd value is always valid"))
 }
 
 /// フレームをバイト列にエンコードする
@@ -25,7 +26,10 @@ fn encode_frame(frame: &Frame) -> Vec<u8> {
 }
 
 /// HEADERS フレームを作成する（END_HEADERS なし）
-fn create_headers_without_end_headers(stream_id: StreamId, fragment: Vec<u8>) -> HeadersFrame {
+fn create_headers_without_end_headers(
+    stream_id: NonZeroStreamId,
+    fragment: Vec<u8>,
+) -> HeadersFrame {
     HeadersFrame::new(stream_id, fragment)
         .with_end_stream(false)
         .with_end_headers(false)
@@ -48,7 +52,7 @@ fn encode_valid_request_headers() -> Vec<u8> {
 
 /// CONTINUATION フレームを作成する
 fn create_continuation(
-    stream_id: StreamId,
+    stream_id: NonZeroStreamId,
     fragment: Vec<u8>,
     end_headers: bool,
 ) -> ContinuationFrame {
@@ -133,7 +137,8 @@ proptest! {
         server.process().unwrap();
 
         // idle ストリームに RST_STREAM を送信
-        let rst_frame = Frame::RstStream(RstStreamFrame::new(stream_id, ErrorCode::Cancel.as_u32()));
+        let rst_frame =
+            Frame::RstStream(RstStreamFrame::new(stream_id, ErrorCode::Cancel.as_u32()));
         let rst_bytes = encode_frame(&rst_frame);
         server.feed(&rst_bytes).unwrap();
 
@@ -147,7 +152,7 @@ proptest! {
 
     /// サーバーが偶数のストリーム ID を受信した場合、PROTOCOL_ERROR
     #[test]
-    fn prop_server_rejects_even_stream_id(stream_id in (1u32..=100).prop_map(|n| StreamId::from_wire(n * 2))) {
+    fn prop_server_rejects_even_stream_id(stream_id in (1u32..=100).prop_map(|n| NonZeroStreamId::new(n * 2).expect("even non-zero is valid"))) {
         let mut server = Connection::server(Limits::default());
         server.mark_preface_received();
         server.initiate().unwrap();
@@ -199,8 +204,10 @@ proptest! {
     fn prop_non_monotonic_stream_id_is_error(
         first_id_raw in (5u32..=100).prop_map(|n| n * 2 + 1),
     ) {
-        let first_id = StreamId::from_wire(first_id_raw);
-        let second_id = StreamId::from_wire(first_id_raw - 2); // 単調増加していない
+        let first_id = NonZeroStreamId::new(first_id_raw)
+            .expect("odd non-zero is valid");
+        let second_id = NonZeroStreamId::new(first_id_raw - 2)
+            .expect("odd non-zero is valid"); // 単調増加していない
 
         let mut server = Connection::server(Limits::default());
         server.mark_preface_received();
@@ -302,7 +309,10 @@ proptest! {
         server.process().unwrap();
 
         // idle ストリームに WINDOW_UPDATE を送信
-        let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::new(stream_id, 1000));
+        let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::for_stream(
+            stream_id,
+            WindowIncrement::from_static(1000),
+        ));
         let wu_bytes = encode_frame(&wu_frame);
         server.feed(&wu_bytes).unwrap();
 
@@ -329,7 +339,10 @@ proptest! {
         client.process().unwrap();
 
         // サーバーから GOAWAY を受信
-        let goaway_frame = Frame::Goaway(GoawayFrame::new(StreamId::Connection, ErrorCode::NoError.as_u32()));
+        let goaway_frame = Frame::Goaway(GoawayFrame::new(
+            LastStreamId::from_static(0),
+            ErrorCode::NoError.as_u32(),
+        ));
         let goaway_bytes = encode_frame(&goaway_frame);
         client.feed(&goaway_bytes).unwrap();
         client.process().unwrap();
@@ -728,7 +741,8 @@ proptest! {
         let (_client, mut server) = setup_client_server();
 
         // クライアント: 接続レベルの WINDOW_UPDATE を送信
-        let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::new(StreamId::Connection, increment));
+        let wi = WindowIncrement::new(increment).expect("1..=0x7FFF_FFFF is valid");
+        let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::for_connection(wi));
         let wu_bytes = encode_frame(&wu_frame);
         server.feed(&wu_bytes).unwrap();
         server.process().unwrap();
@@ -752,7 +766,10 @@ proptest! {
         let (mut client, _server) = setup_client_server();
 
         // サーバー: GOAWAY を送信
-        let goaway_frame = Frame::Goaway(GoawayFrame::new(StreamId::Connection, ErrorCode::NoError.as_u32()));
+        let goaway_frame = Frame::Goaway(GoawayFrame::new(
+            LastStreamId::from_static(0),
+            ErrorCode::NoError.as_u32(),
+        ));
         let goaway_bytes = encode_frame(&goaway_frame);
         client.feed(&goaway_bytes).unwrap();
         client.process().unwrap();
@@ -790,7 +807,10 @@ proptest! {
         while server.poll_event().is_some() {}
 
         // サーバー: RST_STREAM を送信
-        let rst_frame = Frame::RstStream(RstStreamFrame::new(StreamId::from_wire(1), error_code));
+        let rst_frame = Frame::RstStream(RstStreamFrame::new(
+            NonZeroStreamId::from_static(1),
+            error_code,
+        ));
         let rst_bytes = encode_frame(&rst_frame);
         client.feed(&rst_bytes).unwrap();
         client.process().unwrap();
@@ -824,7 +844,7 @@ mod tests {
         server.process().unwrap();
 
         // HEADERS なしで CONTINUATION を送信
-        let continuation = create_continuation(StreamId::from_wire(1), vec![0x82], true);
+        let continuation = create_continuation(NonZeroStreamId::from_static(1), vec![0x82], true);
         let continuation_bytes = encode_frame(&Frame::Continuation(continuation));
         server.feed(&continuation_bytes).unwrap();
 
@@ -850,7 +870,7 @@ mod tests {
 
         // idle ストリームに RST_STREAM を送信
         let rst_frame = Frame::RstStream(RstStreamFrame::new(
-            StreamId::from_wire(1),
+            NonZeroStreamId::from_static(1),
             ErrorCode::Cancel.as_u32(),
         ));
         let rst_bytes = encode_frame(&rst_frame);
