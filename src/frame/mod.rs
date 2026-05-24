@@ -315,10 +315,8 @@ impl RstStreamFrame {
 /// SETTINGS フレーム (RFC 9113 Section 6.5)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsFrame {
-    /// ACK フラグ
-    pub ack: bool,
-    /// 設定パラメータのリスト
-    pub settings: Vec<Setting>,
+    ack: bool,
+    settings: Vec<Setting>,
 }
 
 impl SettingsFrame {
@@ -340,9 +338,29 @@ impl SettingsFrame {
         }
     }
 
+    /// `Setting` のイテレータから構築する
+    pub fn from_settings(settings: impl IntoIterator<Item = Setting>) -> Self {
+        Self {
+            ack: false,
+            settings: settings.into_iter().collect(),
+        }
+    }
+
     /// 設定を追加する
-    pub fn add_setting(&mut self, setting: Setting) {
+    pub fn add(&mut self, setting: Setting) {
         self.settings.push(setting);
+    }
+
+    /// ACK フラグを返す
+    #[must_use]
+    pub const fn is_ack(&self) -> bool {
+        self.ack
+    }
+
+    /// 設定パラメータのスライスを返す
+    #[must_use]
+    pub fn settings(&self) -> &[Setting] {
+        &self.settings
     }
 }
 

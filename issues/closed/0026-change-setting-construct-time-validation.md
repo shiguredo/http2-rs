@@ -1,7 +1,9 @@
 # Setting / SettingsFrame を構築時検査型に変更する
 
 Created: 2026-05-23
+Completed: 2026-05-24
 Model: Opus 4.7
+Branch: feature/change-phase2-construct-time-validation
 
 ## 概要
 
@@ -251,3 +253,21 @@ impl SettingsFrame {
 - [[0027-change-frame-construct-time-validation]]
 - [[0028-change-limits-builder-result]] (`WindowSize` / `MaxFrameSize` を利用)
 - [[0032-add-trybuild-compile-fail-tests]] (`from_static` の compile_fail テスト)
+
+## 解決方法
+
+以下の変更を実施した:
+
+1. `Setting` を `struct { id: u16, value: u32 }` から既知パラメータの enum に変更。`Setting::from_wire(id, value) -> Result<Self, SettingError>` で wire 値から構築し、値範囲検査を実施。`Setting::as_wire() -> (u16, u32)` で wire 値に戻す
+2. `SettingId` enum を `Setting` enum に統合し削除
+3. `WtInitialSettings` 構造体を削除し、`Settings` / `Limits` の個別フィールド (`wt_initial_max_data` 等) に展開
+4. `SettingsFrame` のフィールド (`ack`, `settings`) を private 化し、アクセサ (`is_ack()`, `settings()`) を追加。`add_setting` を `add` にリネーム。`from_settings` コンストラクタを追加
+5. `Settings::apply()` の戻り値を `Result<(), SettingError>` から `()` に変更。`Setting` が `from_wire` で構築時検査済みのため、apply 時の値検査は不要
+6. decoder (`src/frame/decoder.rs`) で `Setting::from_wire` を呼び出し、`SettingError` を接続エラーに変換 (`InitialWindowSizeOutOfRange` → `FLOW_CONTROL_ERROR`、他 → `PROTOCOL_ERROR`)
+7. `Limits::with_webtransport` の引数を `WtInitialSettings` から個別の `Option<u32>` x 6 に変更
+8. PBT に WebTransport variant を追加し、`prop_settings_roundtrip` を `enable_connect_protocol` / `no_rfc7540_priorities` / WebTransport フィールドを含むように拡充
+
+### 設計上の注意点
+
+- `Settings` 構造体のフィールドは `pub` のまま残している。フィールド直接代入で不正値を設定し `to_settings_list()` で panic する経路が存在するが、`Settings` のフィールド private 化は issue 0028 (Limits ビルダー Result 化) のスコープとして保留
+- `with_webtransport` の 6 引数 `Option<u32>` は型安全性が低い (引数順序の取り違えを検出できない)。個別ビルダーへの分割も issue 0028 のスコープとして保留

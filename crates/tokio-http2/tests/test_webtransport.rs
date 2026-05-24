@@ -6,7 +6,6 @@ use std::time::Duration;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
-use shiguredo_http2::settings::WtInitialSettings;
 use shiguredo_http2::webtransport::{
     WtConfig, WtEvent, WtSession, stream::stream_id as wt_stream_id,
 };
@@ -80,14 +79,14 @@ fn test_tls() -> TlsServerConfig {
 fn server_limits() -> Limits {
     Limits::default()
         .with_enable_connect_protocol(true)
-        .with_webtransport(WtInitialSettings {
-            initial_max_data: Some(1 << 20),
-            initial_max_stream_data_uni: Some(64 * 1024),
-            initial_max_stream_data_bidi_local: Some(64 * 1024),
-            initial_max_stream_data_bidi_remote: Some(64 * 1024),
-            initial_max_streams_uni: Some(10),
-            initial_max_streams_bidi: Some(10),
-        })
+        .with_webtransport(
+            Some(1 << 20),
+            Some(64 * 1024),
+            Some(64 * 1024),
+            Some(10),
+            Some(10),
+            Some(64 * 1024),
+        )
 }
 
 /// draft-ietf-webtrans-http2-14: クライアント → サーバー bidi ストリームへの送信をサーバーがエコーし、

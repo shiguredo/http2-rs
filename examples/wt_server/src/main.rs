@@ -15,7 +15,6 @@ mod tls;
 
 use std::net::SocketAddr;
 
-use shiguredo_http2::settings::WtInitialSettings;
 use shiguredo_http2::webtransport::WtConfig;
 
 use tokio_http2::{
@@ -45,18 +44,17 @@ async fn run_server(listen: &str, reject_connect: bool) -> Result<(), Error> {
 
     let tls_config = tls::generate_tls_server()?;
 
-    let wt_settings = WtInitialSettings {
-        initial_max_data: Some(4 * 1024 * 1024),
-        initial_max_stream_data_uni: Some(512 * 1024),
-        initial_max_stream_data_bidi_local: Some(512 * 1024),
-        initial_max_stream_data_bidi_remote: Some(512 * 1024),
-        initial_max_streams_uni: Some(100),
-        initial_max_streams_bidi: Some(100),
-    };
     let limits = Limits::default()
         .with_max_concurrent_streams(Some(100))
         .with_enable_connect_protocol(true)
-        .with_webtransport(wt_settings);
+        .with_webtransport(
+            Some(4 * 1024 * 1024),
+            Some(512 * 1024),
+            Some(512 * 1024),
+            Some(100),
+            Some(100),
+            Some(512 * 1024),
+        );
 
     let server = Server::bind(addr, tls_config, limits).await?;
     let local_addr = server.local_addr();

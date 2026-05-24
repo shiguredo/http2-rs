@@ -13,7 +13,7 @@ use crate::frame::{
 };
 use crate::hpack::{Decoder as HpackDecoder, Encoder as HpackEncoder, HeaderField};
 use crate::limits::Limits;
-use crate::settings::Settings;
+use crate::settings::{Setting, Settings};
 use crate::stream::{Stream, StreamState};
 use crate::validation;
 
@@ -133,7 +133,14 @@ impl Connection {
         local_settings.max_header_list_size = limits.max_header_list_size;
         local_settings.enable_connect_protocol = limits.enable_connect_protocol;
         local_settings.no_rfc7540_priorities = limits.no_rfc7540_priorities;
-        local_settings.wt_initial = limits.wt_initial.clone();
+        local_settings.wt_initial_max_data = limits.wt_initial_max_data;
+        local_settings.wt_initial_max_stream_data_uni = limits.wt_initial_max_stream_data_uni;
+        local_settings.wt_initial_max_stream_data_bidi_local =
+            limits.wt_initial_max_stream_data_bidi_local;
+        local_settings.wt_initial_max_streams_uni = limits.wt_initial_max_streams_uni;
+        local_settings.wt_initial_max_streams_bidi = limits.wt_initial_max_streams_bidi;
+        local_settings.wt_initial_max_stream_data_bidi_remote =
+            limits.wt_initial_max_stream_data_bidi_remote;
 
         let next_stream_id = match role {
             Role::Client => 1,
@@ -195,8 +202,8 @@ impl Connection {
 
     /// ローカル設定を取得する
     ///
-    /// 送信済みの SETTINGS に対応する設定。WebTransport 初期設定 (`wt_initial`) を
-    /// 含む拡張 SETTINGS もここから参照できる。
+    /// 送信済みの SETTINGS に対応する設定。WebTransport 初期設定
+    /// (`wt_initial_max_*`) を含む拡張 SETTINGS もここから参照できる。
     #[must_use]
     pub const fn local_settings(&self) -> &Settings {
         &self.local_settings
@@ -206,7 +213,7 @@ impl Connection {
     ///
     /// ピアから受信して ACK した SETTINGS に対応する設定。
     /// WebTransport セッションを張る前に `enable_connect_protocol` や
-    /// `wt_initial` を確認する用途で使用する。
+    /// `wt_initial_max_*` を確認する用途で使用する。
     #[must_use]
     pub const fn remote_settings(&self) -> &Settings {
         &self.remote_settings
@@ -229,8 +236,6 @@ impl Connection {
     /// RFC 9113 Section 8.4: サーバーは ENABLE_PUSH を 0 以外に設定できない。
     /// そのため、サーバーの場合は ENABLE_PUSH を送信しない。
     pub fn initiate(&mut self) -> Result<()> {
-        use crate::settings::SettingId;
-
         if self.preface_sent {
             return Ok(());
         }
@@ -244,10 +249,10 @@ impl Connection {
         let mut settings_frame = SettingsFrame::new();
         for setting in self.local_settings.to_settings_list() {
             // RFC 9113 Section 8.4: サーバーは ENABLE_PUSH を 1 に設定できない
-            if self.role == Role::Server && setting.id == SettingId::EnablePush.as_u16() {
+            if self.role == Role::Server && matches!(setting, Setting::EnablePush(_)) {
                 continue;
             }
-            settings_frame.add_setting(setting);
+            settings_frame.add(setting);
         }
         self.send_frame(&Frame::Settings(settings_frame))?;
         self.pending_settings_count += 1;
@@ -316,15 +321,13 @@ impl Connection {
     /// RFC 9113 Section 8.4: サーバーは ENABLE_PUSH を 0 以外に設定できない。
     /// そのため、サーバーの場合は ENABLE_PUSH を送信しない。
     pub fn send_settings(&mut self) -> Result<()> {
-        use crate::settings::SettingId;
-
         let mut settings_frame = SettingsFrame::new();
         for setting in self.local_settings.to_settings_list() {
             // RFC 9113 Section 8.4: サーバーは ENABLE_PUSH を 1 に設定できない
-            if self.role == Role::Server && setting.id == SettingId::EnablePush.as_u16() {
+            if self.role == Role::Server && matches!(setting, Setting::EnablePush(_)) {
                 continue;
             }
-            settings_frame.add_setting(setting);
+            settings_frame.add(setting);
         }
         self.send_frame(&Frame::Settings(settings_frame))?;
         self.pending_settings_count += 1;
@@ -944,7 +947,7 @@ impl Connection {
                 ));
             }
             // 最初のフレームは SETTINGS (ACK なし) でなければならない
-            if !matches!(&frame, Frame::Settings(sf) if !sf.ack) {
+            if !matches!(&frame, Frame::Settings(sf) if !sf.is_ack()) {
                 return Err(Error::connection_error(
                     ErrorCode::ProtocolError,
                     "first frame must be SETTINGS",
@@ -1520,7 +1523,7 @@ impl Connection {
 
     /// SETTINGS フレームを処理する
     fn handle_settings(&mut self, frame: SettingsFrame) -> Result<()> {
-        if frame.ack {
+        if frame.is_ack() {
             // RFC 9113 Section 6.5: 対応する SETTINGS がない ACK は接続エラー
             if self.pending_settings_count == 0 {
                 return Err(Error::connection_error(
@@ -1543,12 +1546,9 @@ impl Connection {
             // HEADER_TABLE_SIZE の変更を追跡
             let old_header_table_size = self.remote_settings.header_table_size;
 
-            for setting in &frame.settings {
+            for setting in frame.settings() {
                 // RFC 9113 Section 8.4: サーバーはクライアントに ENABLE_PUSH=1 を送信できない
-                if self.role == Role::Client
-                    && setting.id == crate::settings::SettingId::EnablePush.as_u16()
-                    && setting.value == 1
-                {
+                if self.role == Role::Client && matches!(setting, Setting::EnablePush(true)) {
                     return Err(Error::connection_error(
                         ErrorCode::ProtocolError,
                         "server sent ENABLE_PUSH=1 to client",
@@ -1556,39 +1556,20 @@ impl Connection {
                 }
 
                 // RFC 9218 Section 2.1: NO_RFC7540_PRIORITIES は接続中に変更できない
-                if setting.id == crate::settings::SettingId::NoRfc7540Priorities.as_u16() {
-                    let new_value = setting.value == 1;
+                if let Setting::NoRfc7540Priorities(new_value) = setting {
                     if let Some(initial_value) = self.initial_no_rfc7540_priorities {
-                        if new_value != initial_value {
+                        if *new_value != initial_value {
                             return Err(Error::connection_error(
                                 ErrorCode::ProtocolError,
                                 "NO_RFC7540_PRIORITIES cannot be changed after initial setting",
                             ));
                         }
                     } else {
-                        self.initial_no_rfc7540_priorities = Some(new_value);
+                        self.initial_no_rfc7540_priorities = Some(*new_value);
                     }
                 }
 
-                self.remote_settings.apply(*setting).map_err(|e| {
-                    // RFC 9113 §6.5.2: 各 SETTINGS パラメータ違反のエラーコード
-                    #[allow(unreachable_patterns)]
-                    let error_code = match e {
-                        crate::settings::SettingError::InitialWindowSizeOutOfRange { .. } => {
-                            ErrorCode::FlowControlError
-                        }
-                        crate::settings::SettingError::EnablePushNotBoolean { .. }
-                        | crate::settings::SettingError::MaxFrameSizeOutOfRange { .. }
-                        | crate::settings::SettingError::EnableConnectProtocolNotBoolean {
-                            ..
-                        }
-                        | crate::settings::SettingError::NoRfc7540PrioritiesNotBoolean { .. } => {
-                            ErrorCode::ProtocolError
-                        }
-                        _ => ErrorCode::ProtocolError,
-                    };
-                    Error::connection_error(error_code, e.to_string())
-                })?;
+                self.remote_settings.apply(*setting);
             }
 
             // RFC 9218 Section 2.1: NO_RFC7540_PRIORITIES は最初の SETTINGS フレームで

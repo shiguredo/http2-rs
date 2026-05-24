@@ -9,7 +9,7 @@ use shiguredo_http2::{
         ContinuationFrame, DataFrame, Frame, FrameEncoder, GoawayFrame, HeadersFrame, PingFrame,
         RstStreamFrame, SettingsFrame, StreamId, WindowUpdateFrame,
     },
-    settings::{MAX_INITIAL_WINDOW_SIZE, Setting, SettingId},
+    settings::{MAX_INITIAL_WINDOW_SIZE, Setting},
 };
 
 /// 有効なストリーム ID を生成する（クライアント開始: 奇数）
@@ -182,7 +182,7 @@ proptest! {
 
         // サーバーから ENABLE_PUSH=1 の SETTINGS を受信
         let mut settings = SettingsFrame::new();
-        settings.add_setting(Setting::new(0x02, 1)); // ENABLE_PUSH=1
+        settings.add(Setting::EnablePush(true));
         let settings_bytes = encode_frame(&Frame::Settings(settings));
         client.feed(&settings_bytes).unwrap();
 
@@ -361,9 +361,13 @@ proptest! {
         client.initiate().unwrap();
 
         // サーバーから無効な INITIAL_WINDOW_SIZE の SETTINGS を受信
-        let mut settings = SettingsFrame::new();
-        settings.add_setting(Setting::from_setting_id(SettingId::InitialWindowSize, invalid_size));
-        let settings_bytes = encode_frame(&Frame::Settings(settings));
+        // decoder が Setting::from_wire で検証するため、raw バイト列を直接構築
+        let mut settings_bytes = Vec::new();
+        // フレームヘッダー: length=6, type=0x04 (SETTINGS), flags=0, stream_id=0
+        settings_bytes.extend_from_slice(&[0x00, 0x00, 0x06, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        // SETTINGS パラメータ: id=0x0004, value=invalid_size
+        settings_bytes.extend_from_slice(&0x0004u16.to_be_bytes());
+        settings_bytes.extend_from_slice(&invalid_size.to_be_bytes());
         client.feed(&settings_bytes).unwrap();
 
         let result = client.process();
@@ -386,10 +390,7 @@ proptest! {
 
         // サーバーから max_concurrent_streams の SETTINGS を受信
         let mut settings = SettingsFrame::new();
-        settings.add_setting(Setting::from_setting_id(
-            SettingId::MaxConcurrentStreams,
-            max_streams,
-        ));
+        settings.add(Setting::MaxConcurrentStreams(max_streams));
         let settings_bytes = encode_frame(&Frame::Settings(settings));
         client.feed(&settings_bytes).unwrap();
         client.process().unwrap();
@@ -467,20 +468,14 @@ proptest! {
 
         // サーバーから NO_RFC7540_PRIORITIES の SETTINGS を受信
         let mut settings1 = SettingsFrame::new();
-        settings1.add_setting(Setting::from_setting_id(
-            SettingId::NoRfc7540Priorities,
-            u32::from(initial_value),
-        ));
+        settings1.add(Setting::NoRfc7540Priorities(initial_value));
         let settings1_bytes = encode_frame(&Frame::Settings(settings1));
         client.feed(&settings1_bytes).unwrap();
         client.process().unwrap();
 
         // サーバーから異なる値の NO_RFC7540_PRIORITIES を受信
         let mut settings2 = SettingsFrame::new();
-        settings2.add_setting(Setting::from_setting_id(
-            SettingId::NoRfc7540Priorities,
-            u32::from(!initial_value),
-        ));
+        settings2.add(Setting::NoRfc7540Priorities(!initial_value));
         let settings2_bytes = encode_frame(&Frame::Settings(settings2));
         client.feed(&settings2_bytes).unwrap();
 
@@ -876,7 +871,7 @@ mod tests {
 
         // サーバーから ENABLE_PUSH=1 の SETTINGS を受信
         let mut settings = SettingsFrame::new();
-        settings.add_setting(Setting::new(0x02, 1)); // ENABLE_PUSH=1
+        settings.add(Setting::EnablePush(true));
         let settings_bytes = encode_frame(&Frame::Settings(settings));
         client.feed(&settings_bytes).unwrap();
 

@@ -4,7 +4,7 @@
 
 use crate::settings::{
     DEFAULT_HEADER_TABLE_SIZE, DEFAULT_INITIAL_WINDOW_SIZE, DEFAULT_MAX_FRAME_SIZE,
-    MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, MIN_MAX_FRAME_SIZE, WtInitialSettings,
+    MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, MIN_MAX_FRAME_SIZE,
 };
 
 /// HTTP/2 接続の制限設定
@@ -26,11 +26,18 @@ pub struct Limits {
     pub enable_connect_protocol: bool,
     /// RFC 9113 Section 5.3.1/5.3.2 で非推奨となった RFC 7540 由来の優先度の無効化 (RFC 9218)
     pub no_rfc7540_priorities: bool,
-    /// WebTransport 初期設定 (draft-ietf-webtrans-http2-14 Section 11.2)
-    ///
-    /// サーバーが `enable_connect_protocol = true` と合わせて設定することで、
-    /// WebTransport セッションの初期フロー制御値を広告する。
-    pub wt_initial: WtInitialSettings,
+    /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61)
+    pub wt_initial_max_data: Option<u32>,
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62)
+    pub wt_initial_max_stream_data_uni: Option<u32>,
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63)
+    pub wt_initial_max_stream_data_bidi_local: Option<u32>,
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64)
+    pub wt_initial_max_streams_uni: Option<u32>,
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65)
+    pub wt_initial_max_streams_bidi: Option<u32>,
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66)
+    pub wt_initial_max_stream_data_bidi_remote: Option<u32>,
 }
 
 impl Default for Limits {
@@ -44,7 +51,12 @@ impl Default for Limits {
             connection_window_size: DEFAULT_INITIAL_WINDOW_SIZE,
             enable_connect_protocol: false,
             no_rfc7540_priorities: false,
-            wt_initial: WtInitialSettings::default(),
+            wt_initial_max_data: None,
+            wt_initial_max_stream_data_uni: None,
+            wt_initial_max_stream_data_bidi_local: None,
+            wt_initial_max_streams_uni: None,
+            wt_initial_max_streams_bidi: None,
+            wt_initial_max_stream_data_bidi_remote: None,
         }
     }
 }
@@ -132,13 +144,26 @@ impl Limits {
         self
     }
 
-    /// WebTransport 初期設定を設定する (draft-ietf-webtrans-http2-14 Section 11.2)
+    /// WebTransport 初期設定を一括設定する (draft-ietf-webtrans-http2-14 Section 11.2)
     ///
     /// WebTransport サーバーを構築する場合、`with_enable_connect_protocol(true)` と
     /// 併用して初期 SETTINGS に WebTransport 関連パラメータを広告する。
     #[must_use]
-    pub fn with_webtransport(mut self, wt_initial: WtInitialSettings) -> Self {
-        self.wt_initial = wt_initial;
+    pub const fn with_webtransport(
+        mut self,
+        max_data: Option<u32>,
+        max_stream_data_uni: Option<u32>,
+        max_stream_data_bidi_local: Option<u32>,
+        max_streams_uni: Option<u32>,
+        max_streams_bidi: Option<u32>,
+        max_stream_data_bidi_remote: Option<u32>,
+    ) -> Self {
+        self.wt_initial_max_data = max_data;
+        self.wt_initial_max_stream_data_uni = max_stream_data_uni;
+        self.wt_initial_max_stream_data_bidi_local = max_stream_data_bidi_local;
+        self.wt_initial_max_streams_uni = max_streams_uni;
+        self.wt_initial_max_streams_bidi = max_streams_bidi;
+        self.wt_initial_max_stream_data_bidi_remote = max_stream_data_bidi_remote;
         self
     }
 }

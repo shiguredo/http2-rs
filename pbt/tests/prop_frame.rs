@@ -4,14 +4,37 @@
 
 use proptest::prelude::*;
 use shiguredo_http2::frame::{ContinuationFrame, FrameFlags, FrameHeader, PriorityUpdateFrame};
+use shiguredo_http2::settings::{MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, MIN_MAX_FRAME_SIZE};
 use shiguredo_http2::{
-    DataFrame, Frame, FrameDecoder, FrameEncoder, GoawayFrame, HeadersFrame, PingFrame,
-    RstStreamFrame, Setting, SettingsFrame, StreamId, WindowUpdateFrame,
+    DataFrame, Frame, FrameDecoder, FrameEncoder, GoawayFrame, HeadersFrame, MaxFrameSize,
+    PingFrame, RstStreamFrame, Setting, SettingsFrame, StreamId, WindowSize, WindowUpdateFrame,
 };
 
 /// 有効なストリーム ID を生成する（0 以外）
 fn valid_stream_id() -> impl Strategy<Value = StreamId> {
     (1..=0x7FFF_FFFFu32).prop_map(StreamId::from_wire)
+}
+
+/// 有効な Setting を生成する
+fn valid_setting() -> impl Strategy<Value = Setting> {
+    prop_oneof![
+        any::<u32>().prop_map(Setting::HeaderTableSize),
+        prop::bool::ANY.prop_map(Setting::EnablePush),
+        any::<u32>().prop_map(Setting::MaxConcurrentStreams),
+        (0..=MAX_INITIAL_WINDOW_SIZE)
+            .prop_map(|v| Setting::InitialWindowSize(WindowSize::new(v).unwrap())),
+        (MIN_MAX_FRAME_SIZE..=MAX_MAX_FRAME_SIZE)
+            .prop_map(|v| Setting::MaxFrameSize(MaxFrameSize::new(v).unwrap())),
+        any::<u32>().prop_map(Setting::MaxHeaderListSize),
+        prop::bool::ANY.prop_map(Setting::EnableConnectProtocol),
+        prop::bool::ANY.prop_map(Setting::NoRfc7540Priorities),
+        any::<u32>().prop_map(Setting::WtInitialMaxData),
+        any::<u32>().prop_map(Setting::WtInitialMaxStreamDataUni),
+        any::<u32>().prop_map(Setting::WtInitialMaxStreamDataBidiLocal),
+        any::<u32>().prop_map(Setting::WtInitialMaxStreamsUni),
+        any::<u32>().prop_map(Setting::WtInitialMaxStreamsBidi),
+        any::<u32>().prop_map(Setting::WtInitialMaxStreamDataBidiRemote),
+    ]
 }
 
 /// 任意のバイト列を生成する
@@ -116,15 +139,14 @@ proptest! {
     /// SETTINGS フレームのエンコード/デコード往復テスト
     #[test]
     fn prop_settings_frame_roundtrip(ack in any::<bool>()) {
-        let frame = Frame::Settings(SettingsFrame {
-            ack,
-            settings: if ack { vec![] } else {
-                vec![
-                    shiguredo_http2::Setting::new(0x01, 4096),
-                    shiguredo_http2::Setting::new(0x04, 65535),
-                ]
-            },
-        });
+        let frame = if ack {
+            Frame::Settings(SettingsFrame::ack())
+        } else {
+            let mut sf = SettingsFrame::new();
+            sf.add(Setting::HeaderTableSize(4096));
+            sf.add(Setting::InitialWindowSize(shiguredo_http2::WindowSize::from_static(65535)));
+            Frame::Settings(sf)
+        };
 
         let mut encoder = FrameEncoder::new();
         encoder.encode(&frame).unwrap();
@@ -135,7 +157,7 @@ proptest! {
         let decoded = decoder.decode().unwrap().unwrap();
 
         if let Frame::Settings(sf) = decoded {
-            prop_assert_eq!(sf.ack, ack);
+            prop_assert_eq!(sf.is_ack(), ack);
         } else {
             panic!("expected SETTINGS frame");
         }
@@ -521,20 +543,9 @@ proptest! {
     /// SETTINGS フレームの設定値エンコード/デコード
     #[test]
     fn prop_settings_frame_values_roundtrip(
-        settings_count in 1..10usize,
-        ids in prop::collection::vec(1..=6u16, 1..10),
-        values in prop::collection::vec(any::<u32>(), 1..10),
+        settings in prop::collection::vec(valid_setting(), 1..10),
     ) {
-        let settings: Vec<Setting> = ids.iter()
-            .zip(values.iter())
-            .take(settings_count)
-            .map(|(&id, &value)| Setting::new(id, value))
-            .collect();
-
-        let frame = Frame::Settings(SettingsFrame {
-            ack: false,
-            settings: settings.clone(),
-        });
+        let frame = Frame::Settings(SettingsFrame::from_settings(settings.clone()));
 
         let mut encoder = FrameEncoder::new();
         encoder.encode(&frame).unwrap();
@@ -545,11 +556,10 @@ proptest! {
         let decoded = decoder.decode().unwrap().unwrap();
 
         if let Frame::Settings(sf) = decoded {
-            prop_assert!(!sf.ack);
-            prop_assert_eq!(sf.settings.len(), settings.len());
-            for (orig, decoded) in settings.iter().zip(sf.settings.iter()) {
-                prop_assert_eq!(orig.id, decoded.id);
-                prop_assert_eq!(orig.value, decoded.value);
+            prop_assert!(!sf.is_ack());
+            prop_assert_eq!(sf.settings().len(), settings.len());
+            for (orig, decoded) in settings.iter().zip(sf.settings().iter()) {
+                prop_assert_eq!(orig.as_wire(), decoded.as_wire());
             }
         } else {
             panic!("expected SETTINGS frame");
@@ -1195,7 +1205,7 @@ proptest! {
             (Frame::Data(DataFrame { stream_id, end_stream: false, data: data.clone(), pad_length: None }), 0x00),
             (Frame::Headers(HeadersFrame { stream_id, end_stream: false, end_headers: true, priority_fields: None, header_block_fragment: data.clone(), pad_length: None }), 0x01),
             (Frame::RstStream(RstStreamFrame { stream_id, error_code: 0 }), 0x03),
-            (Frame::Settings(SettingsFrame { ack: false, settings: vec![] }), 0x04),
+            (Frame::Settings(SettingsFrame::new()), 0x04),
             (Frame::Ping(PingFrame { ack: false, opaque_data: [0; 8] }), 0x06),
             (Frame::Goaway(GoawayFrame { last_stream_id: StreamId::Connection, error_code: 0, debug_data: vec![] }), 0x07),
             (Frame::WindowUpdate(WindowUpdateFrame { stream_id, window_size_increment: 1 }), 0x08),

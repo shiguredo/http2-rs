@@ -367,17 +367,23 @@ fn decode_settings(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
         ));
     }
 
-    let mut settings = Vec::with_capacity(payload.len() / 6);
+    let mut frame = SettingsFrame::new();
     for chunk in payload.chunks(6) {
         let id = u16::from_be_bytes([chunk[0], chunk[1]]);
         let value = u32::from_be_bytes([chunk[2], chunk[3], chunk[4], chunk[5]]);
-        settings.push(Setting::new(id, value));
+        let setting = Setting::from_wire(id, value).map_err(|e| {
+            let error_code = match e {
+                crate::settings::SettingError::InitialWindowSizeOutOfRange { .. } => {
+                    ErrorCode::FlowControlError
+                }
+                _ => ErrorCode::ProtocolError,
+            };
+            Error::connection_error(error_code, e.to_string())
+        })?;
+        frame.add(setting);
     }
 
-    Ok(Frame::Settings(SettingsFrame {
-        ack: false,
-        settings,
-    }))
+    Ok(Frame::Settings(frame))
 }
 
 /// PING フレームをデコードする

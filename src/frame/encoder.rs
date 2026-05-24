@@ -191,24 +191,25 @@ impl FrameEncoder {
     /// SETTINGS フレームをエンコードする
     fn encode_settings(&mut self, frame: &SettingsFrame) -> Result<()> {
         let mut flags = FrameFlags::empty();
-        if frame.ack {
+        if frame.is_ack() {
             flags = flags.set(FrameFlags::ACK);
         }
 
-        let length = if frame.ack {
+        let length = if frame.is_ack() {
             0
         } else {
-            (frame.settings.len() * 6) as u32
+            (frame.settings().len() * 6) as u32
         };
 
         let header = FrameHeader::new(FrameType::Settings, flags, 0).with_length(length);
 
         self.encode_header(&header);
 
-        if !frame.ack {
-            for setting in &frame.settings {
-                self.buf.extend_from_slice(&setting.id.to_be_bytes());
-                self.buf.extend_from_slice(&setting.value.to_be_bytes());
+        if !frame.is_ack() {
+            for setting in frame.settings() {
+                let (id, value) = setting.as_wire();
+                self.buf.extend_from_slice(&id.to_be_bytes());
+                self.buf.extend_from_slice(&value.to_be_bytes());
             }
         }
         Ok(())

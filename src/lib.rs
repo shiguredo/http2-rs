@@ -54,7 +54,7 @@ pub use frame::{
 pub use hpack::{Decoder as HpackDecoder, Encoder as HpackEncoder, HeaderField, HeaderFieldError};
 pub use limits::{Limits, LimitsError};
 pub use send_error::SendError;
-pub use settings::{MaxFrameSize, Setting, SettingError, SettingId, Settings, WindowSize};
+pub use settings::{MaxFrameSize, Setting, SettingError, Settings, WindowSize};
 pub use stream::{Stream, StreamState};
 pub use stream_id::{ClientStreamId, NonZeroStreamId, Parity, ServerStreamId, StreamIdError};
 

@@ -54,6 +54,16 @@
   - @voluntas
 - [CHANGE] `FrameHeader.stream_id` を明示的な `u32` に変更し、wire レベルの raw 値を保持する (issue 0025)
   - @voluntas
+- [CHANGE] `Setting` を `{ id: u16, value: u32 }` 構造体から既知パラメータの enum に変更し、値範囲を型で制約する (issue 0026)
+  - @voluntas
+- [CHANGE] `SettingId` enum を `Setting` enum に統合し削除する (issue 0026)
+  - @voluntas
+- [CHANGE] `SettingsFrame` のフィールドを private 化し、`add_setting` を `add` にリネームする (issue 0026)
+  - @voluntas
+- [CHANGE] `Settings::apply()` の戻り値を `Result<(), SettingError>` から `()` に変更し、値検査を decoder に移動する (issue 0026)
+  - @voluntas
+- [CHANGE] `WtInitialSettings` 構造体を削除し、`Settings` / `Limits` の個別フィールドに展開する (issue 0026)
+  - @voluntas
 
 ### misc
 
