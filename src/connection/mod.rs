@@ -2033,7 +2033,7 @@ impl Connection {
 ///
 /// HPACK 展開後に複数の cookie フィールドが存在する場合、
 /// non-HTTP/2 コンテキストへ渡す前に 1 つのフィールドに連結しなければならない (MUST)。
-fn concatenate_cookies(headers: Vec<HeaderField>) -> Vec<HeaderField> {
+pub(crate) fn concatenate_cookies(headers: Vec<HeaderField>) -> Vec<HeaderField> {
     let cookie_count = headers
         .iter()
         .filter(|h| h.name().eq_ignore_ascii_case(b"cookie"))
@@ -2077,4 +2077,196 @@ fn concatenate_cookies(headers: Vec<HeaderField>) -> Vec<HeaderField> {
     ));
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn concatenate_cookies_returns_input_when_cookie_count_is_zero() {
+        let headers = vec![
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+        ];
+        let input = headers.clone();
+        let output = concatenate_cookies(headers);
+        assert_eq!(output.len(), input.len());
+        for (a, b) in output.iter().zip(input.iter()) {
+            assert_eq!(a.name(), b.name());
+            assert_eq!(a.value(), b.value());
+        }
+    }
+
+    #[test]
+    fn concatenate_cookies_returns_input_when_cookie_count_is_one() {
+        let headers = vec![
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new("cookie", "a=1").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+        ];
+        let input = headers.clone();
+        let output = concatenate_cookies(headers);
+        assert_eq!(output.len(), input.len());
+        for (a, b) in output.iter().zip(input.iter()) {
+            assert_eq!(a.name(), b.name());
+            assert_eq!(a.value(), b.value());
+        }
+    }
+
+    #[test]
+    fn concatenate_cookies_all_empty_cookies_excluded() {
+        // 全 cookie が空の場合、出力に cookie ヘッダーが含まれない
+        let headers = vec![
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new("cookie", "").unwrap(),
+            HeaderField::new("cookie", "").unwrap(),
+            HeaderField::new(":path", "/").unwrap(),
+        ];
+        let output = concatenate_cookies(headers);
+        assert!(
+            !output
+                .iter()
+                .any(|h| h.name().eq_ignore_ascii_case(b"cookie")),
+            "全空 cookie 入力に対し出力に cookie が含まれてはならない"
+        );
+        // 非 cookie のみ残る
+        assert_eq!(output.len(), 2);
+    }
+
+    #[test]
+    fn concatenate_cookies_no_double_separator() {
+        // 空 cookie 混在時に連結結果に "; ;" が含まれないことを確認
+        let headers = vec![
+            HeaderField::new("cookie", "a=1").unwrap(),
+            HeaderField::new("cookie", "").unwrap(),
+            HeaderField::new("cookie", "b=2").unwrap(),
+        ];
+        let output = concatenate_cookies(headers);
+        let cookie = output.last().unwrap();
+        assert_eq!(cookie.name(), b"cookie");
+        assert!(
+            !cookie.value().windows(3).any(|w| w == b"; ;"),
+            "連結結果に二重区切り '; ;' が含まれてはならない"
+        );
+        assert_eq!(cookie.value(), b"a=1; b=2");
+    }
+
+    #[test]
+    fn concatenate_cookies_sensitive_propagation() {
+        // sensitive フラグは cookie 全体の OR
+        let headers = vec![
+            HeaderField::new_with_sensitive("cookie", "a=1", true).unwrap(),
+            HeaderField::new_with_sensitive("cookie", "b=2", false).unwrap(),
+        ];
+        let output = concatenate_cookies(headers);
+        assert!(output.last().unwrap().sensitive());
+
+        // 全て false なら結果も false
+        let headers = vec![
+            HeaderField::new_with_sensitive("cookie", "x=1", false).unwrap(),
+            HeaderField::new_with_sensitive("cookie", "y=2", false).unwrap(),
+        ];
+        let output = concatenate_cookies(headers);
+        assert!(!output.last().unwrap().sensitive());
+    }
+
+    /// cookie 値の Strategy: 空 (1/4 の確率) または 印字可能 ASCII 1..=32 文字
+    /// 0x3B (';') を除外: cookie 値に ';' を含むと連結区切り "; " と合わせて
+    /// "; ;" パターンが正当に出現しうるため、二重区切り不在の検証が偽陽性になる
+    fn cookie_value_strategy() -> impl Strategy<Value = Vec<u8>> {
+        prop_oneof![
+            1 => Just(Vec::new()),
+            3 => prop::collection::vec(
+                (0x21u8..=0x7Eu8).prop_filter("';' を除外する", |b| *b != 0x3B),
+                1..=32,
+            ),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn prop_concatenate_cookies(
+            cookie_count in 0usize..=8,
+            non_cookie_count in 0usize..=4,
+            cookie_values in prop::collection::vec(cookie_value_strategy(), 8),
+            cookie_sensitives in prop::collection::vec(any::<bool>(), 8),
+            non_cookie_values in prop::collection::vec(
+                prop::collection::vec(0x21u8..=0x7Eu8, 1..=16), 4
+            ),
+        ) {
+            // 入力を構築する
+            let mut input = Vec::new();
+            for (i, value) in non_cookie_values.iter().take(non_cookie_count).enumerate() {
+                let name = format!("x-header-{i}");
+                let v = String::from_utf8_lossy(value).to_string();
+                input.push(HeaderField::new(&name, &v).unwrap());
+            }
+            let cookie_input: Vec<_> = cookie_values[..cookie_count]
+                .iter()
+                .zip(&cookie_sensitives[..cookie_count])
+                .collect();
+            for (value, sensitive) in cookie_input {
+                let v = String::from_utf8_lossy(value).to_string();
+                input.push(
+                    HeaderField::new_with_sensitive("cookie", &v, *sensitive).unwrap(),
+                );
+            }
+
+            let output = concatenate_cookies(input.clone());
+
+            if cookie_count <= 1 {
+                // ケース A: 早期 return → 出力 = 入力
+                prop_assert_eq!(output.len(), input.len());
+                for (a, b) in output.iter().zip(input.iter()) {
+                    prop_assert_eq!(a.name(), b.name());
+                    prop_assert_eq!(a.value(), b.value());
+                }
+            } else {
+                // 非空 cookie の抽出
+                let non_empty_cookies: Vec<_> = cookie_values[..cookie_count]
+                    .iter()
+                    .filter(|v| !v.is_empty())
+                    .collect();
+
+                if non_empty_cookies.is_empty() {
+                    // ケース B: 全 cookie 空 → 出力に cookie なし
+                    prop_assert!(
+                        !output.iter().any(|h| h.name().eq_ignore_ascii_case(b"cookie")),
+                        "全空 cookie 入力で出力に cookie が含まれてはならない"
+                    );
+                    prop_assert_eq!(output.len(), non_cookie_count);
+                } else {
+                    // ケース C: 1 件以上非空 cookie → 末尾に連結 cookie
+                    prop_assert_eq!(
+                        output.last().unwrap().name(),
+                        b"cookie",
+                        "連結 cookie は末尾に配置される"
+                    );
+                    // 非 cookie 順序保持
+                    let non_cookie_output: Vec<_> = output[..output.len() - 1].iter().collect();
+                    let non_cookie_input: Vec<_> = input
+                        .iter()
+                        .filter(|h| !h.name().eq_ignore_ascii_case(b"cookie"))
+                        .collect();
+                    prop_assert_eq!(non_cookie_output.len(), non_cookie_input.len());
+                    for (a, b) in non_cookie_output.iter().zip(non_cookie_input.iter()) {
+                        prop_assert_eq!(a.name(), b.name());
+                        prop_assert_eq!(a.value(), b.value());
+                    }
+                    // 二重区切り不在
+                    let cookie_value = output.last().unwrap().value();
+                    prop_assert!(
+                        !cookie_value.windows(3).any(|w| w == b"; ;"),
+                        "連結結果に二重区切り '; ;' が含まれてはならない"
+                    );
+                    // sensitive フラグは全 cookie の OR (空 cookie も含む)
+                    let expected_sensitive =
+                        cookie_sensitives[..cookie_count].iter().any(|s| *s);
+                    prop_assert_eq!(output.last().unwrap().sensitive(), expected_sensitive);
+                }
+            }
+        }
+    }
 }

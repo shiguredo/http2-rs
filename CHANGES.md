@@ -121,6 +121,8 @@
   - @voluntas
 - [ADD] CI に `cargo check --manifest-path fuzz/Cargo.toml` ステップを追加し、ルートクレートの API 変更による fuzz_targets のコンパイル不能 regression を検出する (issue 0037)
   - @voluntas
+- [ADD] `concatenate_cookies` の空 cookie 除外・sensitive 伝播と、`EmptyPath` の scheme 依存判定 (http/https の eq_ignore_ascii_case) を検証する PBT と単体テストを追加する (issue 0038)
+  - @voluntas
 - [UPDATE] cargo feature `__test_helpers` を廃止し、PBT / fuzz は公開 API と HPACK decoder 経路のみで wire 模擬する (issue 0045)
   - @voluntas
 - [UPDATE] `HeaderField::from_validated_parts` の cfg 排他 2 定義を解消し、テスト向け公開層を `__test_helpers::header_field_from_validated_parts` に集約する (issue 0033)

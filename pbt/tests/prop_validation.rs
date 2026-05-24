@@ -743,4 +743,36 @@ proptest! {
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
     }
+
+    /// RFC 9113 §8.3.1: http/https (大文字小文字不問) で :path 空は EmptyPath エラーとなり、
+    /// それ以外のスキームでは :path 空が許容されることを検証する
+    #[test]
+    fn prop_empty_path_scheme_dependent(
+        scheme in prop_oneof![
+            // Strategy A: http/https の大文字小文字異綴
+            "[hH][tT][tT][pP]",
+            "[hH][tT][tT][pP][sS]",
+            // Strategy B: http/https 以外 (長さ 1-3, 6-8 で衝突を回避)
+            "[a-zA-Z]",
+            "[a-zA-Z][a-zA-Z0-9+\\-.]{1}",
+            "[a-zA-Z][a-zA-Z0-9+\\-.]{2}",
+            "[a-zA-Z][a-zA-Z0-9+\\-.]{5}",
+            "[a-zA-Z][a-zA-Z0-9+\\-.]{6}",
+            "[a-zA-Z][a-zA-Z0-9+\\-.]{7}",
+        ],
+    ) {
+        let headers = vec![
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", &scheme).unwrap(),
+            HeaderField::new(":path", "").unwrap(),
+        ];
+        let result = validation::validate_request_headers(&headers);
+        let is_http_or_https = scheme.eq_ignore_ascii_case("http")
+            || scheme.eq_ignore_ascii_case("https");
+        if is_http_or_https {
+            prop_assert!(result.is_err(), "http/https スキームで :path 空は拒否されるべき: scheme={scheme}");
+        } else {
+            prop_assert!(result.is_ok(), "http/https 以外で :path 空は許容されるべき: scheme={scheme}");
+        }
+    }
 }
