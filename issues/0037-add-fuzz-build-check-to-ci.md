@@ -42,11 +42,7 @@ Model: Opus 4.7
 
 ### CI 実行時間
 
-`libfuzzer-sys` の `cc` ビルドとルートクレートの `__test_helpers` feature 経由再 check で、cold cache 時に追加時間が発生する (推定 1-3 分だが実測値は本 issue 実装時の最初の CI 実行で確定し PR 本文に追記する)。現状 `timeout-minutes: 15` のヘッドルームに収まる想定。超過した場合は別 issue で `timeout-minutes` 引き上げを検討する。
-
-### `__test_helpers` feature の自動 ON
-
-`fuzz/Cargo.toml` L17 で `shiguredo_http2 = { path = "..", features = ["__test_helpers"] }` を指定済み。本 step で `cargo check --manifest-path fuzz/Cargo.toml` を実行すると、ルートクレートが `__test_helpers` feature 有効でビルドされる。これは fuzz_targets が `HeaderField::from_validated_parts` 系 API を必要とするため意図された動作。
+`libfuzzer-sys` の `cc` ビルドで cold cache 時に追加時間が発生する (推定 1-3 分だが実測値は本 issue 実装時の最初の CI 実行で確定し PR 本文に追記する)。現状 `timeout-minutes: 15` のヘッドルームに収まる想定。超過した場合は別 issue で `timeout-minutes` 引き上げを検討する。
 
 ## 完了条件
 

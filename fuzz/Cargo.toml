@@ -83,4 +83,3 @@ libfuzzer-sys = "0.4"
 
 [dependencies.shiguredo_http2]
 path = ".."
-features = ["__test_helpers"]

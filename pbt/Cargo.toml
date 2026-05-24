@@ -7,6 +7,6 @@ publish = false
 
 [dependencies]
 proptest = "1.11"
+shiguredo_http2 = { path = "../" }
 
 [dev-dependencies]
-shiguredo_http2 = { path = "../", features = ["__test_helpers"] }

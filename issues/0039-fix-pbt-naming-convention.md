@@ -95,13 +95,9 @@ CLAUDE.md L83 「PBT のファイル名は `pbt/tests/prop_<module>.rs`」は **
 
 ディレクトリ化に伴い既存 PBT 内の `use shiguredo_http2::hpack::DynamicTable;` 等の crate path は変わらない (crate path はファイル位置と無関係)。ファイル移動と `mod` 宣言追加のみで完結し、`use` 文書き換えは原則発生しない。
 
-### `__test_helpers.rs` の扱い
-
-`src/__test_helpers.rs` は `__` 接頭辞付きの内部用モジュールで、対応 PBT (`prop___test_helpers.rs`) は不要。本モジュールは PBT/fuzz の補助ラッパであり、検証対象ではないためスコープ外。
-
 ## 完了条件
 
-- [ ] Phase A: `pbt/tests/prop_header_field_syntax.rs` が `pbt/tests/prop_syntax.rs` に rename されている (内容無変更、0034 完了後)
+- [ ] Phase A: `pbt/tests/prop_header_field_syntax.rs` は 0045 で crate 内 `#[cfg(test)]` に移管済みのため削除されている
 - [ ] Phase B: `pbt/tests/prop_hpack/main.rs` + `pbt/tests/prop_hpack/dynamic_table.rs` 構成になっており、旧 `prop_hpack.rs` と `prop_dynamic_table.rs` は削除されている。`main.rs` 内に `mod dynamic_table;` が宣言されている
 - [ ] Phase C: `pbt/tests/prop_stream/state.rs` (旧 `prop_stream_state.rs` を `git mv` で移動) + `pbt/tests/prop_stream/main.rs` (新規作成、中身は doc コメント + `mod state;` のみのスケルトン) 構成になっている。旧 `prop_stream_state.rs` は移動完了で物理消失
 - [ ] Phase D: `pbt/tests/prop_frame/main.rs`, `pbt/tests/prop_webtransport/main.rs` 構成になっており、旧 single file 版は `git mv` でディレクトリ配下に移されている。本 issue のスコープでは **既存ファイル全体を `main.rs` に rename するのみ** とし、`src/frame/` / `src/webtransport/` 配下のサブモジュール (decoder/encoder/error/flags、stream/capsule/flow_control/varint) ごとの分割は **別 issue** に委ねる
@@ -112,9 +108,9 @@ CLAUDE.md L83 「PBT のファイル名は `pbt/tests/prop_<module>.rs`」は **
 - [ ] `git mv issues/0039-fix-pbt-naming-convention.md issues/0039-refactor-pbt-naming-convention.md` で category を `fix-` から `refactor-` に変更する (CLAUDE.md L41-L45 の category 規約と内容実態 = リファクタリングを整合させる)
 - [ ] `pbt/tests/prop_flow_control.rs` 冒頭 doc コメントに「本 PBT は `src/flow_control.rs` (接続/ストリームレベル) 対応。`src/webtransport/flow_control.rs` 用 PBT は将来 `prop_webtransport/flow_control.rs` に置く」旨が記載されている
 - [ ] `prop_validation.rs`, `prop_settings.rs`, `prop_event.rs`, `prop_error.rs`, `prop_flow_control.rs` の 5 ファイルは無変更
-- [ ] 移行前後で `cargo test --workspace --features __test_helpers` の passed 件数が一致する (`cargo test --workspace --features __test_helpers 2>&1 | grep "^test result:" | awk '{p+=$4} END {print p}'` で集計)
+- [ ] 移行前後で `cargo test --workspace` の passed 件数が一致する (`cargo test --workspace 2>&1 | grep "^test result:" | awk '{p+=$4} END {print p}'` で集計)
 - [ ] `cargo llvm-cov report` の PBT 経路カバレッジが移行前後で同等以上
-- [ ] `cargo build` と `cargo build --features __test_helpers` の両方が通る
+- [ ] `cargo build` が通る
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` が通る
 - [ ] `cargo fmt --all -- --check` が通る
 - [ ] CHANGES.md `### misc` に下記文面を追記
@@ -137,7 +133,7 @@ Phase 別 PR にする場合: `feature/refactor-pbt-naming-phase-{a..d}`
 
 - 既存 PBT の **テストロジック変更** → 本 issue はファイル名と配置の rename のみ。テストロジック・assert・strategy は無変更
 - 新規 PBT の追加 → 別 issue (0038 で `prop_concatenate_cookies` を追加する等)
-- `src/__test_helpers.rs` 対応 PBT → 内部ヘルパで検証対象外
+- `src/__test_helpers.rs` → 0045 で廃止済み
 - `src/webtransport/flow_control.rs` 用 PBT 新規追加 → 将来別 issue (本 issue は配置方針のみ確定)
 - `pbt/Cargo.toml` の `[[test]]` 明示宣言追加 → Cargo auto-discovery で動作するため不要
 - `prop_frame/main.rs` および `prop_webtransport/main.rs` の **中身を `src/frame/` / `src/webtransport/` のサブモジュール単位に分割する作業** → 別 issue。本 issue は dir 化 (1 ファイル分の `main.rs` に rename) のみ実施。CLAUDE.md L88 の「サブモジュール対応で分割」を完全達成するのは中身分割 issue で行う
@@ -147,9 +143,9 @@ Phase 別 PR にする場合: `feature/refactor-pbt-naming-phase-{a..d}`
 
 本 issue はファイル名と配置の rename のみ。テストロジック・strategy・assert は無変更。
 
-- **件数一致**: `cargo test --workspace --features __test_helpers` の合計 passed 件数が移行前後で完全一致。CLAUDE.md L85 で `#[ignore]` 禁止のため `ignored` カウントは常に 0、`passed` だけ比較すれば十分
+- **件数一致**: `cargo test --workspace` の合計 passed 件数が移行前後で完全一致。CLAUDE.md L85 で `#[ignore]` 禁止のため `ignored` カウントは常に 0、`passed` だけ比較すれば十分
 - **カバレッジ低下なし**: `cargo llvm-cov report` で PBT 経路の行カバレッジが同等以上
-- **`pbt/Cargo.toml` 影響確認**: Cargo auto-discovery で `prop_hpack/main.rs` 等が integration test として認識されることを `cargo test --no-run --features __test_helpers` 後の `target/debug/deps/` の test バイナリ列挙で確認
+- **`pbt/Cargo.toml` 影響確認**: Cargo auto-discovery で `prop_hpack/main.rs` 等が integration test として認識されることを `cargo test --no-run` 後の `target/debug/deps/` の test バイナリ列挙で確認
 
 ## RFC 引用
 

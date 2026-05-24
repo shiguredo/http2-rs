@@ -104,9 +104,9 @@ impl HeaderField {
     ///
     /// HPACK decoder 経路 (`Decoder::decode_*`)、静的テーブル展開、
     /// `concatenate_cookies` のような信頼可能な内部構築箇所でのみ使用する。
-    /// crate 外 (PBT / fuzz) から呼び出すには
-    /// `__test_helpers::header_field_from_validated_parts` ラッパを使用する
-    /// (本番利用者はラッパも含めて呼び出してはならない。型不変条件を破壊する)。
+    /// crate 外 (PBT / fuzz) から任意の name/value で `HeaderField` を構築するには、
+    /// HPACK Literal Header Field without Indexing として符号化し `HpackDecoder` で
+    /// デコードする wire 模擬を使用する。
     pub(crate) fn from_validated_parts(name: Vec<u8>, value: Vec<u8>, sensitive: bool) -> Self {
         Self {
             name: HeaderBytes::Owned(name),
@@ -904,5 +904,160 @@ mod tests {
         let h = HeaderField::from_validated_parts(b"X-Test".to_vec(), b"value".to_vec(), false);
         assert_eq!(h.name(), b"X-Test");
         assert_eq!(h.value(), b"value");
+    }
+
+    /// const fn 検査 (`check_*_const`) と runtime 検査 (`validate_*`) の同値性 PBT
+    ///
+    /// 両者は実装が独立しているため、任意バイト列に対する accept/reject 判定が
+    /// 一致することを proptest で検証する。`pub(crate)` 関数を直接叩く必要がある
+    /// ため crate 内 `#[cfg(test)]` に配置する。
+    mod syntax_equivalence {
+        use super::*;
+        use crate::hpack::bytes::{
+            check_field_name_const, check_field_value_const, check_pseudo_header_const,
+        };
+        use proptest::prelude::*;
+        use std::panic;
+
+        fn panic_payload_message(payload: Box<dyn std::any::Any + Send>) -> String {
+            if let Some(s) = payload.downcast_ref::<&'static str>() {
+                (*s).to_string()
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "<non-string panic payload>".to_string()
+            }
+        }
+
+        /// panic hook を一時的に無音化して catch_unwind を実行する
+        fn catch_silent<F: FnOnce() + panic::UnwindSafe>(f: F) -> Result<(), String> {
+            let prev = panic::take_hook();
+            panic::set_hook(Box::new(|_| {}));
+            let result = panic::catch_unwind(f).map_err(panic_payload_message);
+            panic::set_hook(prev);
+            result
+        }
+
+        fn check_field_name_const_result(name: &[u8]) -> Result<(), String> {
+            catch_silent(panic::AssertUnwindSafe(|| {
+                check_field_name_const(name);
+            }))
+        }
+
+        fn validate_field_name_result(name: &[u8]) -> Result<(), String> {
+            validate_field_name(name).map_err(|e| format!("{e}"))
+        }
+
+        fn check_field_value_const_result(value: &[u8]) -> Result<(), String> {
+            catch_silent(panic::AssertUnwindSafe(|| {
+                check_field_value_const(value);
+            }))
+        }
+
+        fn validate_field_value_result(name: &[u8], value: &[u8]) -> Result<(), String> {
+            validate_field_value(name, value).map_err(|e| format!("{e}"))
+        }
+
+        fn check_pseudo_header_const_result(name: &[u8], value: &[u8]) -> Result<(), String> {
+            catch_silent(panic::AssertUnwindSafe(|| {
+                check_pseudo_header_const(name, value);
+            }))
+        }
+
+        fn validate_pseudo_header_result(name: &[u8], value: &[u8]) -> Result<(), String> {
+            validate_pseudo_header(name, value).map_err(|e| format!("{e}"))
+        }
+
+        fn name_strategy() -> impl Strategy<Value = Vec<u8>> {
+            prop_oneof![
+                Just(Vec::<u8>::new()),
+                Just(b":".to_vec()),
+                Just(b":method".to_vec()),
+                Just(b":scheme".to_vec()),
+                Just(b":authority".to_vec()),
+                Just(b":path".to_vec()),
+                Just(b":status".to_vec()),
+                Just(b":protocol".to_vec()),
+                Just(b":unknown".to_vec()),
+                Just(b"Host".to_vec()),
+                Just(b"content-type".to_vec()),
+                Just(b"X-Inject\r\nname".to_vec()),
+                prop::collection::vec(any::<u8>(), 0..=32),
+            ]
+        }
+
+        fn value_strategy() -> impl Strategy<Value = Vec<u8>> {
+            prop_oneof![
+                Just(Vec::<u8>::new()),
+                Just(b" ".to_vec()),
+                Just(b"\t".to_vec()),
+                Just(b" GET".to_vec()),
+                Just(b"GET ".to_vec()),
+                Just(b"GET\r\n".to_vec()),
+                Just(b"\0".to_vec()),
+                Just(b"200".to_vec()),
+                Just(b"199".to_vec()),
+                Just(b"99".to_vec()),
+                Just(b"https".to_vec()),
+                Just(b"/foo".to_vec()),
+                Just(b"*".to_vec()),
+                Just(b"webtransport".to_vec()),
+                prop::collection::vec(any::<u8>(), 0..=48),
+            ]
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig { cases: 2048, ..ProptestConfig::default() })]
+
+            /// field-name の検査結果が const と runtime で一致する
+            #[test]
+            fn prop_check_field_name_equivalence(name in name_strategy()) {
+                let const_r = check_field_name_const_result(&name);
+                let runtime_r = validate_field_name_result(&name);
+                prop_assert_eq!(
+                    const_r.is_err(),
+                    runtime_r.is_err(),
+                    "field-name check mismatch for {:?}: const={:?} runtime={:?}",
+                    name,
+                    const_r,
+                    runtime_r
+                );
+            }
+
+            /// field-value の検査結果が const と runtime で一致する
+            #[test]
+            fn prop_check_field_value_equivalence(value in value_strategy()) {
+                let const_r = check_field_value_const_result(&value);
+                // runtime 版は name 引数を取るがエラー文の組み立てにしか使わないため固定値
+                let runtime_r = validate_field_value_result(b"x-test", &value);
+                prop_assert_eq!(
+                    const_r.is_err(),
+                    runtime_r.is_err(),
+                    "field-value check mismatch for {:?}: const={:?} runtime={:?}",
+                    value,
+                    const_r,
+                    runtime_r
+                );
+            }
+
+            /// pseudo-header の検査結果が const と runtime で一致する
+            #[test]
+            fn prop_check_pseudo_header_equivalence(
+                name in name_strategy(),
+                value in value_strategy(),
+            ) {
+                let const_r = check_pseudo_header_const_result(&name, &value);
+                let runtime_r = validate_pseudo_header_result(&name, &value);
+                prop_assert_eq!(
+                    const_r.is_err(),
+                    runtime_r.is_err(),
+                    "pseudo-header check mismatch for name={:?} value={:?}: const={:?} runtime={:?}",
+                    name,
+                    value,
+                    const_r,
+                    runtime_r
+                );
+            }
+        }
     }
 }
