@@ -10,7 +10,8 @@
 //!
 //! field-name / field-value / 疑似ヘッダーの構文検査は [`crate::syntax`] に集約されている。
 
-use crate::hpack::bytes::HeaderBytes;
+use std::borrow::Cow;
+
 use crate::hpack::error::HeaderFieldError;
 use crate::syntax::{
     check_field_name_const, check_field_value_const, check_pseudo_header_const,
@@ -24,8 +25,8 @@ use crate::syntax::{
 /// [`Self::sensitive`]) 経由でのみ読み取れる。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HeaderField {
-    name: HeaderBytes,
-    value: HeaderBytes,
+    name: Cow<'static, [u8]>,
+    value: Cow<'static, [u8]>,
     sensitive: bool,
 }
 
@@ -63,8 +64,8 @@ impl HeaderField {
         validate_field_value(name, value)?;
         validate_pseudo_header(name, value)?;
         Ok(Self {
-            name: HeaderBytes::Owned(name.to_vec()),
-            value: HeaderBytes::Owned(value.to_vec()),
+            name: Cow::Owned(name.to_vec()),
+            value: Cow::Owned(value.to_vec()),
             sensitive,
         })
     }
@@ -98,8 +99,8 @@ impl HeaderField {
         check_field_value_const(value);
         check_pseudo_header_const(name, value);
         Self {
-            name: HeaderBytes::Static(name),
-            value: HeaderBytes::Static(value),
+            name: Cow::Borrowed(name),
+            value: Cow::Borrowed(value),
             sensitive: false,
         }
     }
@@ -113,8 +114,8 @@ impl HeaderField {
     /// デコードする wire 模擬を使用する。
     pub(crate) fn from_validated_parts(name: Vec<u8>, value: Vec<u8>, sensitive: bool) -> Self {
         Self {
-            name: HeaderBytes::Owned(name),
-            value: HeaderBytes::Owned(value),
+            name: Cow::Owned(name),
+            value: Cow::Owned(value),
             sensitive,
         }
     }
@@ -122,13 +123,13 @@ impl HeaderField {
     /// field-name への参照を返す
     #[must_use]
     pub fn name(&self) -> &[u8] {
-        self.name.as_slice()
+        self.name.as_ref()
     }
 
     /// field-value への参照を返す
     #[must_use]
     pub fn value(&self) -> &[u8] {
-        self.value.as_slice()
+        self.value.as_ref()
     }
 
     /// `sensitive` (Never-Indexed) フラグを返す
@@ -159,12 +160,12 @@ impl StaticEntry {
     /// `HeaderField` に変換する
     ///
     /// 静的テーブルは RFC 7541 Appendix A により定義済みで追加検証は不要なため、
-    /// `HeaderBytes::Static` を直接組み立ててゼロアロケーションで構築する。
+    /// `Cow::Borrowed` を直接組み立ててゼロアロケーションで構築する。
     #[must_use]
     pub const fn to_header_field(&self) -> HeaderField {
         HeaderField {
-            name: HeaderBytes::Static(self.name),
-            value: HeaderBytes::Static(self.value),
+            name: Cow::Borrowed(self.name),
+            value: Cow::Borrowed(self.value),
             sensitive: false,
         }
     }
@@ -747,5 +748,36 @@ mod tests {
         let h = HeaderField::from_validated_parts(b"X-Test".to_vec(), b"value".to_vec(), false);
         assert_eq!(h.name(), b"X-Test");
         assert_eq!(h.value(), b"value");
+    }
+
+    #[test]
+    fn header_field_cross_variant_eq() {
+        // from_static (Cow::Borrowed) と new (Cow::Owned) の PartialEq 一致を検証する
+        const STATIC: HeaderField = HeaderField::from_static(b":method", b"GET");
+        let runtime = HeaderField::new(":method", "GET").expect("valid header field");
+        assert_eq!(STATIC, runtime);
+        assert_eq!(runtime, STATIC);
+    }
+
+    #[test]
+    fn header_field_cross_variant_hash() {
+        // from_static (Cow::Borrowed) と new (Cow::Owned) の Hash 一致を検証する
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        const STATIC: HeaderField = HeaderField::from_static(b"content-type", b"text/html");
+        let runtime = HeaderField::new("content-type", "text/html").expect("valid header field");
+        let mut hs = DefaultHasher::new();
+        STATIC.hash(&mut hs);
+        let mut hr = DefaultHasher::new();
+        runtime.hash(&mut hr);
+        assert_eq!(hs.finish(), hr.finish());
+    }
+
+    #[test]
+    fn header_field_cross_variant_size() {
+        // from_static (Cow::Borrowed) と new (Cow::Owned) の size() 一致を検証する
+        const STATIC: HeaderField = HeaderField::from_static(b":status", b"200");
+        let runtime = HeaderField::new(":status", "200").expect("valid header field");
+        assert_eq!(STATIC.size(), runtime.size());
     }
 }

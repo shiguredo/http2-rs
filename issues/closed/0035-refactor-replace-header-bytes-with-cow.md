@@ -1,7 +1,9 @@
 # `HeaderBytes` を `Cow<'static, [u8]>` に置換する
 
 Created: 2026-05-23
+Completed: 2026-05-24
 Model: Opus 4.7
+Branch: feature/refactor-replace-header-bytes-with-cow
 
 ## 内容
 
@@ -102,3 +104,21 @@ issue 0024 で導入した自前 enum `HeaderBytes { Static(&'static [u8]), Owne
 - 関連: [[0033-refactor-dedupe-from-validated-parts-cfg]] (`mod bytes` 改名スコープを 0033 から本 issue に委ねた経緯。本 issue の `bytes.rs` 削除でその責務を完遂する)
 - 関連: [[0036-refactor-move-mod-tests-to-tests-dir]] (本 issue で `header_bytes_*` テスト群と `bytes.rs` 自体が消えるため、0036 のスコープから当該テストは自動的に除外される)
 - pending 連携: [[0013-refactor-bytes-payloads]] (将来 `bytes` クレート導入時、本 issue の `Cow<'static, [u8]>` を `bytes::Bytes` に再置換する対象)
+
+## 解決方法
+
+以下の手順で `HeaderBytes` を `Cow<'static, [u8]>` に置換した。
+
+### 変更
+
+- `src/hpack/table.rs`: `HeaderField` の `name` / `value` フィールドを `Cow<'static, [u8]>` に変更。`HeaderBytes::Static(s)` → `Cow::Borrowed(s)`、`HeaderBytes::Owned(v)` → `Cow::Owned(v)` の機械置換。アクセサ `name()` / `value()` を `as_ref()` に統一。`StaticEntry::to_header_field` の doc コメントを更新。
+- `src/hpack/mod.rs`: `pub(crate) mod bytes;` を削除。
+
+### 削除
+
+- `src/hpack/bytes.rs`: `HeaderBytes` enum と impl、`header_bytes_*` テスト群を `git rm` で完全削除。`Cow<[u8]>` の `PartialEq` / `Hash` は標準ライブラリが保証するため crate 側のテストは不要。
+
+### テスト追加
+
+- `src/hpack/table.rs` の `mod tests` に `header_field_cross_variant_eq` / `header_field_cross_variant_hash` / `header_field_cross_variant_size` を追加。`from_static` (Cow::Borrowed) と `new` (Cow::Owned) の cross-variant 等価性を検証する。
+- `pbt/tests/prop_hpack.rs` に `prop_header_field_hpack_roundtrip_equivalence` を追加。HPACK encode/decode 往復後の PartialEq / Hash / size() 一致を検証する。
