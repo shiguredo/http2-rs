@@ -9,12 +9,12 @@ publish = false
 shiguredo_http2 = { path = "../.." }
 tokio-http2 = { path = "../../crates/tokio-http2" }
 rustls = "0.23"
-rustls-pki-types = "1"
+rustls-pki-types = "1.14"
 rcgen = "0.14"
-aws-lc-rs = "1"
+aws-lc-rs = "1.17"
 base64 = "0.22"
 time = "0.3"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.52", features = ["full"] }
 noargs = "0.4"
 nojson = "0.3"
 log = "0.4"

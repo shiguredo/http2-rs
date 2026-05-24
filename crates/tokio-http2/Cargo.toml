@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 shiguredo_http2 = { path = "../.." }
-tokio = { version = "1", features = [
+tokio = { version = "1.52", features = [
     "net",
     "io-util",
     "time",
@@ -21,10 +21,10 @@ rustls = { version = "0.23", default-features = false, features = [
     "tls12",
     "aws_lc_rs",
 ] }
-rustls-pki-types = { version = "1", features = ["std"] }
+rustls-pki-types = { version = "1.14", features = ["std"] }
 rustls-platform-verifier = "0.6"
 
 [dev-dependencies]
 rcgen = "0.14"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.52", features = ["full"] }
 tokio-nghttp2 = { path = "../tokio-nghttp2" }

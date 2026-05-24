@@ -7,6 +7,6 @@ publish = false
 
 [dependencies]
 tokio-http2 = { path = "../../crates/tokio-http2" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-rustls-pki-types = "1"
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros"] }
+rustls-pki-types = "1.14"
 rcgen = "0.14"
