@@ -1,6 +1,7 @@
 # 未使用コード・死亡コードを削除する
 
 Created: 2026-05-14
+Priority: Low
 Model: deepseek-v4-pro
 
 ## 内容

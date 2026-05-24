@@ -1,6 +1,7 @@
 # RFC/仕様参照の節番号誤りを修正する
 
 Created: 2026-05-14
+Priority: Low
 Model: deepseek-v4-pro
 
 ## 致命的な誤り

@@ -1,6 +1,7 @@
 # その他改善点を修正する
 
 Created: 2026-05-14
+Priority: Medium
 Model: deepseek-v4-pro
 
 ## 1. FlowControl のエラー型安全性
@@ -133,10 +134,6 @@ RFC 9113 Section 6.9.1 の動作としては正しいが、コメントで意図
 ## 12. `fuzz/` に `fuzz_flow_control.rs` が欠落
 
 FlowControl モジュールに対するファジングターゲットが存在しない。
-
-## 13. `StreamState::is_idle`、`StateMachine::sent_end_stream`/`received_end_stream`、`Event::stream_id`/`is_connection_level` の必要性検討
-
-これらはプロダクションコードから一切呼ばれておらず、テストのみが使用している。削除し、テストコードを修正する。
 
 ## CHANGES.md (実装時に追記)
 

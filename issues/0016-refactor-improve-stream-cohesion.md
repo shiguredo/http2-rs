@@ -1,6 +1,7 @@
 # Stream 構造体の凝集度を改善する
 
 Created: 2026-05-14
+Priority: Low
 Model: deepseek-v4-pro
 
 ## 対象

@@ -1,6 +1,7 @@
 # connection/mod.rs をサブモジュールに分割する
 
 Created: 2026-05-14
+Priority: Low
 Model: deepseek-v4-pro
 
 ## 対象

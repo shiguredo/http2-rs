@@ -1,6 +1,7 @@
 # テスト命名規則違反と重複を整理する
 
 Created: 2026-05-14
+Priority: Medium
 Model: deepseek-v4-pro
 
 ## 根拠

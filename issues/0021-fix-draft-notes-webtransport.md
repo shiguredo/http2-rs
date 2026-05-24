@@ -1,6 +1,7 @@
 # WebTransport draft 注記を充実させる
 
 Created: 2026-05-14
+Priority: Low
 Model: deepseek-v4-pro
 
 ## 根拠

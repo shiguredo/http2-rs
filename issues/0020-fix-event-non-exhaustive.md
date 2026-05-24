@@ -1,6 +1,7 @@
 # Event enum に #[non_exhaustive] を付与し CHANGES.md 種別を修正する
 
 Created: 2026-05-14
+Priority: Medium
 Model: deepseek-v4-pro
 
 ## 対象

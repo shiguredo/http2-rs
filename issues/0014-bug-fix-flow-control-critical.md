@@ -1,6 +1,7 @@
 # with_separate_windows が受信側初期ウィンドウサイズを誤って参照するバグを修正する
 
 Created: 2026-05-14
+Priority: High
 Model: deepseek-v4-pro
 
 ## 対象

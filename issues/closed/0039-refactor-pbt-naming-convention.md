@@ -101,21 +101,21 @@ CLAUDE.md L83 「PBT のファイル名は `pbt/tests/prop_<module>.rs`」は **
 
 - [x] Phase A: `pbt/tests/prop_header_field_syntax.rs` は 0045 で crate 内 `#[cfg(test)]` に移管済みのため削除されている (事前に削除確認済み)
 - [x] Phase B: `pbt/tests/prop_hpack/main.rs` + `pbt/tests/prop_hpack/dynamic_table.rs` 構成になっており、旧 `prop_hpack.rs` と `prop_dynamic_table.rs` は削除されている。`main.rs` 内に `mod dynamic_table;` が宣言されている
-- [ ] Phase C: `pbt/tests/prop_stream/state.rs` (旧 `prop_stream_state.rs` を `git mv` で移動) + `pbt/tests/prop_stream/main.rs` (新規作成、中身は doc コメント + `mod state;` のみのスケルトン) 構成になっている。旧 `prop_stream_state.rs` は移動完了で物理消失
-- [ ] Phase D: `pbt/tests/prop_frame/main.rs`, `pbt/tests/prop_webtransport/main.rs` 構成になっており、旧 single file 版は `git mv` でディレクトリ配下に移されている。本 issue のスコープでは **既存ファイル全体を `main.rs` に rename するのみ** とし、`src/frame/` / `src/webtransport/` 配下のサブモジュール (decoder/encoder/error/flags、stream/capsule/flow_control/varint) ごとの分割は **別 issue** に委ねる
-- [ ] `prop_connection.rs` は無変更 (`src/connection/` がサブモジュール無しの dir module のため L83 単一 file 規約準拠で OK)
-- [ ] `git mv issues/0039-refactor-pbt-naming-convention.md issues/0039-refactor-pbt-naming-convention.md` の rename と、それを参照する wikilink (`issues/0034-...` および `issues/0036-...` 内の `[[0039-refactor-pbt-naming-convention]]`) の更新を **同一 PR / 同一コミット** で行う (`git grep -l '0039-refactor-pbt-naming-convention' issues/` で対象を確認可能)。Phase B-D を別 PR で先行する場合でも、ファイル名 rename と wikilink 更新は分離せず一括で実施する
-- [ ] `prop_dynamic_table.rs` / `prop_stream_state.rs` / `prop_hpack.rs` / `prop_header_field_syntax.rs` / `prop_frame.rs` / `prop_webtransport.rs` の rename / 移動には `git mv` を使用し履歴を保持する
-- [ ] `pbt/tests/` 直下の `prop_*` 以外の dir / file (現状存在しないが将来追加されうる `common/` 等) は本 issue の影響を受けないことを PR レビュー時に確認する
-- [ ] `git mv issues/0039-refactor-pbt-naming-convention.md issues/0039-refactor-pbt-naming-convention.md` で category を `fix-` から `refactor-` に変更する (CLAUDE.md L41-L45 の category 規約と内容実態 = リファクタリングを整合させる)
-- [ ] `pbt/tests/prop_flow_control.rs` 冒頭 doc コメントに「本 PBT は `src/flow_control.rs` (接続/ストリームレベル) 対応。`src/webtransport/flow_control.rs` 用 PBT は将来 `prop_webtransport/flow_control.rs` に置く」旨が記載されている
-- [ ] `prop_validation.rs`, `prop_settings.rs`, `prop_event.rs`, `prop_error.rs`, `prop_flow_control.rs` の 5 ファイルは無変更
-- [ ] 移行前後で `cargo test --workspace` の passed 件数が一致する (`cargo test --workspace 2>&1 | grep "^test result:" | awk '{p+=$4} END {print p}'` で集計)
-- [ ] `cargo llvm-cov report` の PBT 経路カバレッジが移行前後で同等以上
-- [ ] `cargo build` が通る
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` が通る
-- [ ] `cargo fmt --all -- --check` が通る
-- [ ] CHANGES.md `### misc` に下記文面を追記
+- [x] Phase C: `pbt/tests/prop_stream/state.rs` (旧 `prop_stream_state.rs` を `git mv` で移動) + `pbt/tests/prop_stream/main.rs` (新規作成、中身は doc コメント + `mod state;` のみのスケルトン) 構成になっている。旧 `prop_stream_state.rs` は移動完了で物理消失
+- [x] Phase D: `pbt/tests/prop_frame/main.rs`, `pbt/tests/prop_webtransport/main.rs` 構成になっており、旧 single file 版は `git mv` でディレクトリ配下に移されている。本 issue のスコープでは **既存ファイル全体を `main.rs` に rename するのみ** とし、`src/frame/` / `src/webtransport/` 配下のサブモジュール (decoder/encoder/error/flags、stream/capsule/flow_control/varint) ごとの分割は **別 issue** に委ねる
+- [x] `prop_connection.rs` は無変更 (`src/connection/` がサブモジュール無しの dir module のため L83 単一 file 規約準拠で OK)
+- [x] `git mv issues/0039-refactor-pbt-naming-convention.md issues/0039-refactor-pbt-naming-convention.md` の rename と、それを参照する wikilink (`issues/0034-...` および `issues/0036-...` 内の `[[0039-refactor-pbt-naming-convention]]`) の更新を **同一 PR / 同一コミット** で行う (`git grep -l '0039-refactor-pbt-naming-convention' issues/` で対象を確認可能)。Phase B-D を別 PR で先行する場合でも、ファイル名 rename と wikilink 更新は分離せず一括で実施する
+- [x] `prop_dynamic_table.rs` / `prop_stream_state.rs` / `prop_hpack.rs` / `prop_header_field_syntax.rs` / `prop_frame.rs` / `prop_webtransport.rs` の rename / 移動には `git mv` を使用し履歴を保持する
+- [x] `pbt/tests/` 直下の `prop_*` 以外の dir / file (現状存在しないが将来追加されうる `common/` 等) は本 issue の影響を受けないことを PR レビュー時に確認する
+- [x] `git mv issues/0039-refactor-pbt-naming-convention.md issues/0039-refactor-pbt-naming-convention.md` で category を `fix-` から `refactor-` に変更する (CLAUDE.md L41-L45 の category 規約と内容実態 = リファクタリングを整合させる)
+- [x] `pbt/tests/prop_flow_control.rs` 冒頭 doc コメントに「本 PBT は `src/flow_control.rs` (接続/ストリームレベル) 対応。`src/webtransport/flow_control.rs` 用 PBT は将来 `prop_webtransport/flow_control.rs` に置く」旨が記載されている
+- [x] `prop_validation.rs`, `prop_settings.rs`, `prop_event.rs`, `prop_error.rs`, `prop_flow_control.rs` の 5 ファイルは無変更
+- [x] 移行前後で `cargo test --workspace` の passed 件数が一致する (`cargo test --workspace 2>&1 | grep "^test result:" | awk '{p+=$4} END {print p}'` で集計)
+- [x] `cargo llvm-cov report` の PBT 経路カバレッジが移行前後で同等以上
+- [x] `cargo build` が通る
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` が通る
+- [x] `cargo fmt --all -- --check` が通る
+- [x] CHANGES.md `### misc` に下記文面を追記
 
 ## CHANGES.md エントリ
 
