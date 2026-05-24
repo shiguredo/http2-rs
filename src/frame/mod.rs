@@ -145,12 +145,6 @@ impl FrameHeader {
         self.length = length;
         self
     }
-
-    /// フレームタイプを取得する
-    #[must_use]
-    pub const fn get_frame_type(&self) -> Option<FrameType> {
-        FrameType::from_u8(self.frame_type)
-    }
 }
 
 /// DATA フレーム (RFC 9113 §6.1)
@@ -528,15 +522,6 @@ impl PriorityUpdateFrame {
         Self {
             prioritized_element_id,
             priority_field_value,
-        }
-    }
-
-    /// デフォルト優先度の `PriorityUpdateFrame` を生成する
-    #[must_use]
-    pub fn default_priority(prioritized_element_id: NonZeroStreamId) -> Self {
-        Self {
-            prioritized_element_id,
-            priority_field_value: Vec::new(),
         }
     }
 }

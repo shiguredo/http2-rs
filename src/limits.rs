@@ -267,7 +267,7 @@ impl LimitsBuilder {
 
     /// const コンテキスト用。不正制約でコンパイル時 panic になる
     pub const fn build_static(self) -> Limits {
-        if !self.enable_connect_protocol && self.has_webtransport_settings_const() {
+        if !self.enable_connect_protocol && self.has_webtransport_settings() {
             panic!(
                 "LimitsBuilder::build_static: WebTransport settings require enable_connect_protocol = true"
             );
@@ -291,16 +291,7 @@ impl LimitsBuilder {
         }
     }
 
-    fn has_webtransport_settings(&self) -> bool {
-        self.wt_initial_max_data.is_some()
-            || self.wt_initial_max_stream_data_uni.is_some()
-            || self.wt_initial_max_stream_data_bidi_local.is_some()
-            || self.wt_initial_max_streams_uni.is_some()
-            || self.wt_initial_max_streams_bidi.is_some()
-            || self.wt_initial_max_stream_data_bidi_remote.is_some()
-    }
-
-    const fn has_webtransport_settings_const(&self) -> bool {
+    const fn has_webtransport_settings(&self) -> bool {
         self.wt_initial_max_data.is_some()
             || self.wt_initial_max_stream_data_uni.is_some()
             || self.wt_initial_max_stream_data_bidi_local.is_some()

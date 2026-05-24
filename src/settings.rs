@@ -237,7 +237,7 @@ impl Settings {
     /// 設定を `Setting` のリストとして取得する
     #[must_use]
     pub fn to_settings_list(&self) -> Vec<Setting> {
-        let mut list = Vec::with_capacity(8);
+        let mut list = Vec::new();
         list.push(Setting::HeaderTableSize(self.header_table_size));
         list.push(Setting::EnablePush(self.enable_push));
         if let Some(max) = self.max_concurrent_streams {

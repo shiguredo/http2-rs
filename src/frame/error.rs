@@ -2,9 +2,6 @@
 //!
 //! 各 HTTP/2 フレーム型の構築 API で発生する検査エラーを表現する。
 //! 文字列ベースの [`crate::error::Error`] とは分離し、違反値を構造化フィールドで保持する。
-//!
-//! 本ファイルは issue 0027 構築時検査リファクタリングの Phase 1 として追加された。
-//! Phase 2 で各 [`crate::frame::DataFrame`] 等の構築 API と統合される予定。
 
 use crate::frame::FrameType;
 
@@ -140,7 +137,7 @@ impl WindowIncrement {
         if increment > Self::MAX {
             return Err(FrameError::WindowIncrementOutOfRange { value: increment });
         }
-        // SAFETY: 直前で 0 を弾いている
+        // 直前で 0 を弾いているため NonZeroU32::new は必ず Some を返す
         Ok(Self(
             core::num::NonZeroU32::new(increment).expect("non-zero checked above"),
         ))
