@@ -759,13 +759,18 @@ impl Connection {
 
     /// ストリームをリセットする
     pub fn reset_stream(&mut self, stream_id: StreamId, error_code: ErrorCode) -> Result<()> {
+        // RFC 9113 §6.4: RST_STREAM は非ゼロストリーム ID に関連付けなければならない
+        let nz_stream_id = stream_id.non_zero().ok_or_else(|| {
+            Error::connection_error(
+                ErrorCode::ProtocolError,
+                "RST_STREAM requires non-zero stream ID",
+            )
+        })?;
+
         if let Some(stream) = self.streams.get_mut(&stream_id.as_u32()) {
             stream.state_machine_mut().send_rst_stream();
         }
 
-        let nz_stream_id = stream_id
-            .non_zero()
-            .expect("RST_STREAM requires non-zero stream ID");
         let rst_frame = RstStreamFrame::new(nz_stream_id, error_code.as_u32());
         self.send_frame(&Frame::RstStream(rst_frame))?;
 
