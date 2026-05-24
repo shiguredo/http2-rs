@@ -1,5 +1,8 @@
 //! HPACK エンコード/デコードの PBT
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 use proptest::prelude::*;
 use shiguredo_http2::{HeaderField, HpackDecoder, HpackEncoder};
 
@@ -162,6 +165,43 @@ proptest! {
             prop_assert_eq!(original.value(), decoded.value());
             prop_assert_eq!(original.sensitive(), decoded.sensitive());
         }
+    }
+
+    /// HPACK エンコード/デコード往復後の HeaderField 等価性テスト
+    ///
+    /// `new` で構築した HeaderField と HPACK encode/decode で再構築した HeaderField の
+    /// PartialEq / Hash / size() が一致することを検証する。
+    /// Cow::Borrowed vs Cow::Owned の cross-variant 等価性は
+    /// `src/hpack/table.rs` の `header_field_cross_variant_*` 単体テストで検証する。
+    #[test]
+    fn prop_header_field_hpack_roundtrip_equivalence(
+        name in valid_header_name(),
+        value in valid_header_value(),
+    ) {
+        let runtime = HeaderField::new(&name, &value).expect("valid header field");
+
+        // HPACK Literal Header Field without Indexing として符号化し、
+        // decoder 経由で Cow::Owned な HeaderField を構築する
+        let mut encoder = HpackEncoder::new(0);
+        let mut decoder = HpackDecoder::new(0);
+        let headers = vec![runtime.clone()];
+        let mut encoded = Vec::new();
+        encoder.encode(&mut encoded, &headers);
+        let decoded = decoder.decode(&encoded).expect("valid HPACK");
+        let decoded_field = &decoded[0];
+
+        // PartialEq
+        prop_assert_eq!(&runtime, decoded_field);
+
+        // Hash
+        let mut h1 = DefaultHasher::new();
+        runtime.hash(&mut h1);
+        let mut h2 = DefaultHasher::new();
+        decoded_field.hash(&mut h2);
+        prop_assert_eq!(h1.finish(), h2.finish());
+
+        // size()
+        prop_assert_eq!(runtime.size(), decoded_field.size());
     }
 
     /// 機密ヘッダーは動的テーブルに追加されないことを確認

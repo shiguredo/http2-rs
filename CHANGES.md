@@ -125,5 +125,7 @@
   - @voluntas
 - [UPDATE] field-name / field-value / 疑似ヘッダーの構文検査関数を `src/syntax.rs` に集約し、HPACK 非依存のモジュールに分離する (issue 0034)
   - @voluntas
+- [UPDATE] `HeaderField` の内部表現を自前 enum `HeaderBytes` から `std::borrow::Cow<'static, [u8]>` に置換し、`src/hpack/bytes.rs` を削除する (issue 0035)
+  - @voluntas
 - [FIX] `examples/http2_client` と `examples/http2_server` で DATA 受信時に接続・ストリームレベルの WINDOW_UPDATE を送信するように修正する (issue 0041)
   - @voluntas
