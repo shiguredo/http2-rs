@@ -80,6 +80,20 @@
   - @voluntas
 - [ADD] `LimitsBuilder::build_static` (`const fn`) を追加し、リテラル定数で構築する `Limits` の制約違反をコンパイル時に検出可能にする (issue 0028)
   - @voluntas
+- [ADD] `tokio-http2::Client` と `tokio-http2::ServerConnection` に `send_window_update` メソッドを追加する (issue 0041)
+  - @voluntas
+- [FIX] `shiguredo_http2::Connection` の接続レベル `FlowControl` の `send_window` を、ピアのデフォルト値を反映して `DEFAULT_INITIAL_WINDOW_SIZE` (65535) で初期化するように修正する (従来は `connection_window_size` で初期化していた) (issue 0041)
+  - @voluntas
+- [FIX] `connection_window_size` をデフォルトより大きく設定した場合に、接続確立時に接続レベル WINDOW_UPDATE を送信して受信ウィンドウを広告するように修正する (`initiate()` および `send_settings()` の両経路) (issue 0041)
+  - @voluntas
+- [FIX] `tokio-http2` の WebTransport ドライバーが `DataReceived` 処理時に HTTP/2 レベルの接続・ストリーム WINDOW_UPDATE を送信するように修正する (issue 0041)
+  - @voluntas
+- [FIX] `LimitsBuilder::connection_window_size` で `DEFAULT_INITIAL_WINDOW_SIZE` 未満の値を拒否する (接続レベルウィンドウは SETTINGS で縮小できないため; RFC 9113 §6.9.2) (issue 0041)
+  - @voluntas
+- [FIX] `shiguredo_http2::StreamStateMachine::send_data` を validate のみに変更し、END_STREAM 付き DATA が送信バッファに残った状態でピアからの WINDOW_UPDATE が Closed 扱いで無視されるバグを修正する。実際の状態遷移は `complete_send_data` で送信完了時に行う (issue 0041)
+  - @voluntas
+- [FIX] `shiguredo_http2::Connection::send_data` で END_STREAM 宣言済みのストリームへの追加 DATA を `StreamClosed` で拒否する (issue 0041)
+  - @voluntas
 
 ### misc
 
@@ -100,4 +114,6 @@
 - [UPDATE] `HeaderField::from_validated_parts` の cfg 排他 2 定義を解消し、テスト向け公開層を `__test_helpers::header_field_from_validated_parts` に集約する (issue 0033)
   - @voluntas
 - [UPDATE] decoder 内部で構築時検査型を組み立てる際に `pub(crate) from_validated_parts` を経由するようにし、二重検査を排除する (issue 0030)
+  - @voluntas
+- [FIX] `examples/http2_client` と `examples/http2_server` で DATA 受信時に接続・ストリームレベルの WINDOW_UPDATE を送信するように修正する (issue 0041)
   - @voluntas

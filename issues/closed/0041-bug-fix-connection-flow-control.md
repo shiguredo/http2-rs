@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-05-24
+- Completed: 2026-05-24
 - Model: Opus 4.7
 - Branch: feature/fix-flow-control-window-update
 
@@ -156,3 +157,47 @@ increment は受信した `data.len()` を使用する。`end_stream == true` �
 
 - [FIX] examples/http2_client と examples/http2_server で DATA 受信時に WINDOW_UPDATE を送信するよう修正する
   - @voluntas
+
+## 解決方法
+
+設計方針に沿って以下のとおり実装した。
+
+### 1. `Client` / `ServerConnection` への `send_window_update` デリゲーション追加
+
+- `crates/tokio-http2/src/client.rs`: `Client::send_window_update` を追加し、内部 `Connection::send_window_update` に委譲する。
+- `crates/tokio-http2/src/server.rs`: `ServerConnection::send_window_update` を同様に追加する。
+
+### 2. 接続レベル `FlowControl` 初期化と接続確立時 WINDOW_UPDATE 送信
+
+- `src/connection/mod.rs`: `Connection` 構造体に `connection_window_size: u32` と `connection_window_update_sent: bool` を追加。
+- `Connection::new()` で `FlowControl::new(DEFAULT_INITIAL_WINDOW_SIZE)` を使い、`connection_window_size` を別フィールドに保存するように変更。
+- `Connection::initiate()` および `Connection::send_settings()` の末尾で `send_initial_connection_window_update()` を呼び、`connection_window_size > DEFAULT_INITIAL_WINDOW_SIZE` の場合に差分の WINDOW_UPDATE を送信する。`connection_window_update_sent` フラグで二重送信を防止する。
+
+### 3. `LimitsBuilder::connection_window_size` の下限チェック
+
+- `src/limits.rs`: `LimitsBuilder::connection_window_size()` 内で `assert!(size.get() >= DEFAULT_INITIAL_WINDOW_SIZE)` により `DEFAULT_INITIAL_WINDOW_SIZE` 未満を拒否する。`const fn` のためコンパイル時 panic として扱える。
+- `pbt/tests/prop_limits.rs`: `valid_connection_window_size()` 戦略 (`DEFAULT_INITIAL_WINDOW_SIZE..=MAX_INITIAL_WINDOW_SIZE`) を追加し、connection_window_size を生成する PBT 2 件を該当戦略に切り替えた。
+
+### 4. WebTransport ドライバーの WINDOW_UPDATE 送信
+
+- `crates/tokio-http2/src/webtransport.rs`: `DriverState::handle_event()` の `DataReceived` ハンドラで、受信した `data.len()` 分の接続レベル WINDOW_UPDATE を送信する (RFC 9113 §6.9)。ストリームレベル WINDOW_UPDATE は `end_stream == false` のときのみ送信し、`end_stream == true` のときは直後にストリームが closed になるため省略する。
+
+### 5. examples の WINDOW_UPDATE 送信
+
+- `examples/http2_client/src/main.rs` / `examples/http2_server/src/main.rs`: `Event::DataReceived` ハンドラに接続・ストリームレベルの WINDOW_UPDATE 送信を追加。`tokio_http2::StreamId` を import する。
+
+### 6. テスト
+
+- `crates/tokio-http2/tests/client_server.rs`: `test_response_body_exceeds_default_connection_window` を追加。デフォルト接続ウィンドウ (65535) で 100,000 bytes のレスポンスボディを送受信し、クライアント側が WINDOW_UPDATE を返してフロー制御が機能することを検証する。`multi_thread` runtime を使い、サーバー側のループは `Event::GoawayReceived` を検知して終了する。回帰時は 30 秒の `tokio::time::timeout` で明示的に失敗する。なお、サーバー側が一括 push できる上限は「初期送信ウィンドウ 65535 + Sans I/O 層の送信バッファ上限 65535 = 約 131_070」なので、それを超えるテストを書く場合はサーバー側で送信と `next_event` を交互に回す構造に変更する必要がある (本テストは 100_000 でその上限を踏まない構造)。
+- `pbt/tests/prop_connection.rs`:
+  - `prop_initiate_emits_connection_window_update`: `connection_window_size > DEFAULT_INITIAL_WINDOW_SIZE` のとき、`initiate()` の出力に increment が `connection_window_size - DEFAULT_INITIAL_WINDOW_SIZE` の接続レベル WINDOW_UPDATE が含まれることを `FrameDecoder` でデコードして検証する。
+  - `prop_send_settings_emits_connection_window_update`: 上記を `send_settings()` 経路で検証する。
+  - `test_initiate_does_not_emit_window_update_when_default` / `test_send_settings_does_not_emit_window_update_when_default`: `connection_window_size == DEFAULT_INITIAL_WINDOW_SIZE` (increment が 0 となり `send_window_update` が拒否するケース) において、WINDOW_UPDATE が一切送信されないことを単体テストで検証する。
+
+### 7. 状態機械の分離 (派生バグ修正)
+
+issue 0041 の症状「65535 bytes 超でフリーズする」は、上記の対応方針 1〜6 だけでは tokio-http2 統合テストで再現したまま解消しなかった。原因は、`Connection::send_data(_, end_stream=true)` が呼ばれた時点で `StreamStateMachine::send_data(true)` が state を `Closed` に遷移させていたため、フロー制御で詰まって送信バッファに残ったデータがある状態でも、後続のピアからの stream WINDOW_UPDATE が「Closed への WINDOW_UPDATE は無視」のルールで捨てられ、送信再開できなくなっていた。
+
+そのため、`StateMachine` を validate (`send_data`) と完了通知 (`complete_send_data`) に分離し、`Connection::flush_stream_data` で実際に最後の DATA フレームを出力バッファへ積んだ時点で `complete_send_data(true)` を呼んで state を遷移させるよう修正した。あわせて `Connection::send_data` の冒頭で「`pending_end_stream` 済みのストリームへの追加 DATA」を `StreamClosed` エラーで拒否し、API misuse を防いだ。
+
+- `src/stream/state.rs`: `StateMachine::send_data` を validate のみに変更、`complete_send_data(end_stream)` を新設。既存の unit / PBT (`pbt/tests/prop_stream_state.rs`) も新仕様に追従。

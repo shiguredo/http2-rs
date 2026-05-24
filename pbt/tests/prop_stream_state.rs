@@ -29,11 +29,19 @@ fn stream_op() -> impl Strategy<Value = StreamOp> {
 }
 
 /// 操作を適用する (エラーは無視して状態を返す)
+///
+/// `send_data` は validate のみで状態遷移しない設計のため、検査が通った場合に限り
+/// 同時に `complete_send_data` を呼んで「DATA を実際に送信し終えた」モデルを表現する。
+/// 実プロダクションでは `Connection::flush_stream_data` が最後の DATA を出力した時点で
+/// `complete_send_data` を呼ぶ。
 fn apply_op(sm: &mut StateMachine, op: StreamOp) -> Result<(), ()> {
     match op {
         StreamOp::SendHeaders { end_stream } => sm.send_headers(end_stream).map_err(|_| ()),
         StreamOp::RecvHeaders { end_stream } => sm.recv_headers(end_stream).map_err(|_| ()),
-        StreamOp::SendData { end_stream } => sm.send_data(end_stream).map_err(|_| ()),
+        StreamOp::SendData { end_stream } => {
+            sm.send_data(end_stream).map_err(|_| ())?;
+            sm.complete_send_data(end_stream).map_err(|_| ())
+        }
         StreamOp::RecvData { end_stream } => sm.recv_data(end_stream).map_err(|_| ()),
         StreamOp::SendRstStream => {
             sm.send_rst_stream();
@@ -295,6 +303,9 @@ proptest! {
 
         if send {
             sm.send_data(end_stream).unwrap();
+            // send_data は validate のみで状態遷移しない
+            prop_assert_eq!(sm.state(), StreamState::Open);
+            sm.complete_send_data(end_stream).unwrap();
             if end_stream {
                 prop_assert_eq!(sm.state(), StreamState::HalfClosedLocal);
             } else {
@@ -326,8 +337,9 @@ proptest! {
         sm.send_headers(false).unwrap();
 
         if local_first {
-            // ローカルが先に END_STREAM を送信
+            // ローカルが先に END_STREAM を送信 (validate + complete)
             sm.send_data(true).unwrap();
+            sm.complete_send_data(true).unwrap();
             prop_assert_eq!(sm.state(), StreamState::HalfClosedLocal);
 
             // リモートから END_STREAM を受信
@@ -338,8 +350,9 @@ proptest! {
             sm.recv_data(true).unwrap();
             prop_assert_eq!(sm.state(), StreamState::HalfClosedRemote);
 
-            // ローカルが END_STREAM を送信
+            // ローカルが END_STREAM を送信 (validate + complete)
             sm.send_data(true).unwrap();
+            sm.complete_send_data(true).unwrap();
             prop_assert_eq!(sm.state(), StreamState::Closed);
         }
     }

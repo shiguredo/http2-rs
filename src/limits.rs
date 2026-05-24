@@ -196,8 +196,17 @@ impl LimitsBuilder {
     }
 
     /// 接続レベルのウィンドウサイズを設定する
+    ///
+    /// RFC 9113 Section 6.9.2 / Section 6.5.2: 接続レベルのウィンドウは WINDOW_UPDATE
+    /// でのみ拡張可能で、`SETTINGS_INITIAL_WINDOW_SIZE` で縮小する手段はない。負の増分も
+    /// 存在しないため、プロトコル既定 (65535) 未満を要求しても実現できない。構築時点で
+    /// 拒否することで、利用側で握りつぶせない panic を保証する。
     #[must_use]
     pub const fn connection_window_size(mut self, size: WindowSize) -> Self {
+        assert!(
+            size.get() >= DEFAULT_INITIAL_WINDOW_SIZE,
+            "LimitsBuilder::connection_window_size: size must be >= DEFAULT_INITIAL_WINDOW_SIZE (RFC 9113 §6.9.2)"
+        );
         self.connection_window_size = size;
         self
     }

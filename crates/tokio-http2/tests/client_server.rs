@@ -3184,3 +3184,164 @@ async fn test_custom_initial_window_size() {
     client.shutdown().await.ok();
     server_handle.await.expect("server task failed");
 }
+
+/// デフォルトウィンドウ (65535) で 65535 bytes を超えるレスポンスボディを送受信する
+///
+/// issue 0041: クライアント側で `send_window_update` を返さない / Connection 側で接続レベル
+/// `send_window` が誤って `connection_window_size` で初期化されている / `connection_window_size`
+/// が拡張されたときに WINDOW_UPDATE が広告されない、のいずれかが残っていると、サーバーの送信
+/// ウィンドウが 65535 で枯渇しテスト全体タイムアウトに到達する。
+///
+/// クライアントとサーバーを並列に進行させるため `multi_thread` runtime を使用する。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_response_body_exceeds_default_connection_window() {
+    let tls_config = generate_test_cert();
+    let limits = Limits::default();
+
+    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
+        .await
+        .expect("サーバーの bind に失敗");
+    let server_addr = server.local_addr();
+
+    // デフォルト接続ウィンドウ (65535) を確実に超え、フロー制御が発動する
+    // サイズを設定する。送信側はサーバータスクの中で全チャンクを連続キューイング
+    // するため、初期送信ウィンドウ (65535) + Sans I/O 層の送信バッファ上限 (65535)
+    // を合計した約 131_070 までしか一括投入できない。100_000 は両者の範囲内で
+    // 必ずフロー制御に詰まるサイズである。
+    let body_size: usize = 100_000;
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続 accept に失敗");
+
+        // リクエスト受信まで待つ
+        let stream_id = loop {
+            let event = conn.next_event().await.expect("イベント取得に失敗");
+            match event {
+                Event::HeadersReceived {
+                    stream_id,
+                    end_stream,
+                    ..
+                } => {
+                    if end_stream {
+                        break stream_id;
+                    }
+                }
+                Event::SettingsReceived { .. } | Event::ConnectionPreface => {}
+                _ => {}
+            }
+        };
+
+        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+        conn.send_response(stream_id, response_headers, false)
+            .await
+            .expect("レスポンスヘッダー送信に失敗");
+
+        // データを分割して送信する。デフォルトの送信ウィンドウ (65535) を超える分は
+        // Sans I/O 層の送信バッファにキューイングされ、後続の next_event() で
+        // クライアントから WINDOW_UPDATE を受信した時点で自動的に送信される。
+        let data: Vec<u8> = (0..body_size).map(|i| (i % 256) as u8).collect();
+        let chunk_size = 16_384;
+        let chunks: Vec<&[u8]> = data.chunks(chunk_size).collect();
+        let total_chunks = chunks.len();
+        for (i, chunk) in chunks.into_iter().enumerate() {
+            let is_last = i == total_chunks - 1;
+            conn.send_data(stream_id, chunk.to_vec(), is_last)
+                .await
+                .expect("DATA チャンク送信に失敗");
+        }
+
+        // クライアントからの WINDOW_UPDATE 受信と保留中データの送信を進める。
+        // クライアントの shutdown (GOAWAY) または EOF を検知してループを抜ける。
+        loop {
+            match conn.next_event().await {
+                Ok(Event::GoawayReceived { .. }) => break,
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+    });
+
+    let mut client = Client::connect_insecure(server_addr, "localhost", limits)
+        .await
+        .expect("クライアント接続に失敗");
+
+    // サーバーの SETTINGS に対する ACK 送信まで待つ
+    loop {
+        let event = client.next_event().await.expect("イベント取得に失敗");
+        if let Event::SettingsReceived { ack: true } = event {
+            break;
+        }
+    }
+
+    let request_headers = vec![
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/large").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+    ];
+    client
+        .send_request(request_headers, true)
+        .await
+        .expect("リクエスト送信に失敗");
+
+    let mut received_data = Vec::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let event = tokio::time::timeout(remaining, client.next_event())
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "レスポンス受信がタイムアウト。受信済み {} / {} bytes (フロー制御の不整合の疑い)",
+                    received_data.len(),
+                    body_size
+                )
+            })
+            .expect("イベント取得に失敗");
+        match event {
+            Event::DataReceived {
+                stream_id: sid,
+                data,
+                end_stream,
+            } => {
+                received_data.extend_from_slice(&data);
+
+                // RFC 9113 Section 6.9: 受信した DATA 分だけウィンドウを補充する。
+                // これが無い、または Connection 内部のウィンドウ初期化が誤っていると
+                // 65535 bytes 受信した時点でサーバーの送信が止まる。
+                let increment = u32::try_from(data.len())
+                    .expect("DATA ペイロードサイズが u32 範囲内であること (RFC 9113)");
+                if increment > 0 {
+                    client
+                        .send_window_update(StreamId::Connection, increment)
+                        .await
+                        .expect("接続レベル WINDOW_UPDATE 送信に失敗");
+                    if !end_stream {
+                        client
+                            .send_window_update(sid, increment)
+                            .await
+                            .expect("ストリームレベル WINDOW_UPDATE 送信に失敗");
+                    }
+                }
+
+                if end_stream {
+                    break;
+                }
+            }
+            Event::HeadersReceived { .. } => {}
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        received_data.len(),
+        body_size,
+        "受信バイト数が想定と一致しない"
+    );
+    for (i, byte) in received_data.iter().enumerate() {
+        assert_eq!(*byte, (i % 256) as u8, "{} バイト目の内容不一致", i);
+    }
+
+    client.shutdown().await.ok();
+    server_handle.await.expect("サーバータスクが panic で終了");
+}

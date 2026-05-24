@@ -15,7 +15,7 @@ use crate::frame::{
 };
 use crate::hpack::{Decoder as HpackDecoder, Encoder as HpackEncoder, HeaderField};
 use crate::limits::Limits;
-use crate::settings::{Setting, Settings};
+use crate::settings::{DEFAULT_INITIAL_WINDOW_SIZE, Setting, Settings};
 use crate::stream::{Stream, StreamState};
 use crate::validation;
 
@@ -119,6 +119,16 @@ pub struct Connection {
     /// サーバーロールで feed() 経由のプリフェイス検証に使用する。
     /// 24 バイト蓄積された時点で検証し、preface_received を true にする。
     preface_buffer: Vec<u8>,
+    /// 接続レベルの希望ウィンドウサイズ
+    ///
+    /// RFC 9113 Section 6.9.2: 接続フロー制御ウィンドウは WINDOW_UPDATE でのみ変更可能。
+    /// `DEFAULT_INITIAL_WINDOW_SIZE` (65535) を超える場合は、接続確立直後に
+    /// 差分の WINDOW_UPDATE を送信して受信ウィンドウを広告する。
+    connection_window_size: u32,
+    /// 接続確立時の WINDOW_UPDATE を送信済みかどうか
+    ///
+    /// `initiate()` と `send_settings()` の両経路から重複送信されるのを防ぐ。
+    connection_window_update_sent: bool,
 }
 
 impl Connection {
@@ -149,12 +159,20 @@ impl Connection {
             Role::Server => 2,
         };
 
+        // RFC 9113 Section 6.9.2 / Section 5.2.1:
+        // 接続レベルの送受信ウィンドウはプロトコル既定 (65535) で初期化する。
+        // `connection_window_size` がデフォルトより大きい場合は、initiate() / send_settings()
+        // で接続レベルの WINDOW_UPDATE を送信して受信ウィンドウを広告する。
+        // SETTINGS_INITIAL_WINDOW_SIZE (0x04) はストリームレベルにのみ適用される。
+        let flow_control = FlowControl::new(DEFAULT_INITIAL_WINDOW_SIZE);
+        let connection_window_size = limits.connection_window_size().get();
+
         Self {
             role,
             state: ConnectionState::WaitingPreface,
             local_settings,
             remote_settings: Settings::new(),
-            flow_control: FlowControl::new(limits.connection_window_size().get()),
+            flow_control,
             streams: HashMap::new(),
             closed_streams: HashSet::new(),
             next_stream_id,
@@ -175,6 +193,8 @@ impl Connection {
             initial_no_rfc7540_priorities: None,
             pending_table_size_update: None,
             preface_buffer: Vec::new(),
+            connection_window_size,
+            connection_window_update_sent: false,
         }
     }
 
@@ -260,6 +280,10 @@ impl Connection {
         self.pending_settings_count += 1;
         self.preface_sent = true;
 
+        // RFC 9113 Section 6.9.2: 接続レベルのウィンドウは SETTINGS では変更できないため
+        // デフォルト (65535) を超える受信ウィンドウは WINDOW_UPDATE で広告する。
+        self.send_initial_connection_window_update()?;
+
         Ok(())
     }
 
@@ -334,6 +358,27 @@ impl Connection {
         self.send_frame(&Frame::Settings(settings_frame))?;
         self.pending_settings_count += 1;
 
+        // RFC 9113 Section 6.9.2: 接続レベルのウィンドウは SETTINGS では変更できないため
+        // デフォルト (65535) を超える受信ウィンドウは WINDOW_UPDATE で広告する。
+        self.send_initial_connection_window_update()?;
+
+        Ok(())
+    }
+
+    /// 接続確立時に接続レベル WINDOW_UPDATE を送信する
+    ///
+    /// `connection_window_size` がデフォルト (65535) より大きい場合のみ送信し、
+    /// 初回送信後はフラグで二重送信を防ぐ。
+    fn send_initial_connection_window_update(&mut self) -> Result<()> {
+        if self.connection_window_update_sent {
+            return Ok(());
+        }
+        if self.connection_window_size > DEFAULT_INITIAL_WINDOW_SIZE {
+            let increment = self.connection_window_size - DEFAULT_INITIAL_WINDOW_SIZE;
+            self.send_window_update(StreamId::Connection, increment)?;
+        }
+        // 既定値の場合でもフラグを立てて、後段の send_settings() で再評価しない。
+        self.connection_window_update_sent = true;
         Ok(())
     }
 
@@ -517,12 +562,23 @@ impl Connection {
     ) -> Result<()> {
         let sid = stream_id.as_u32();
 
-        // ストリームの存在確認と状態遷移
+        // ストリームの存在確認と事前検証
         {
             let stream = self
                 .streams
                 .get_mut(&sid)
                 .ok_or_else(|| Error::stream_error(ErrorCode::StreamClosed, "stream not found"))?;
+
+            // 既に END_STREAM をキューに積んだストリームへの追加 DATA は禁止。
+            // state_machine の遷移は最後の DATA を実際に送信完了した時点で行うため
+            // state はまだ Open/HalfClosedRemote のままだが、利用者の意図としては
+            // 既に END_STREAM 宣言済みなので拒否する (RFC 9113 §5.1)。
+            if stream.pending_end_stream() {
+                return Err(Error::stream_error(
+                    ErrorCode::StreamClosed,
+                    "cannot send DATA after END_STREAM was queued for this stream",
+                ));
+            }
 
             // 状態チェック（end_stream=false でも送信可能な状態か検証する）
             stream.state_machine_mut().send_data(end_stream)?;
@@ -628,9 +684,10 @@ impl Connection {
                 let stream = self.streams.get_mut(&stream_id).expect("stream must exist");
                 stream.flow_control_mut().consume_send(data.len())?;
 
-                // end_stream を送信したらフラグをクリア
+                // end_stream を送信したらフラグをクリアし、状態機械を遷移させる
                 if end_stream {
                     stream.set_pending_end_stream(false);
+                    stream.state_machine_mut().complete_send_data(true)?;
                 }
             }
 
@@ -652,6 +709,7 @@ impl Connection {
             && stream.send_buffer().is_empty()
         {
             stream.set_pending_end_stream(false);
+            stream.state_machine_mut().complete_send_data(true)?;
             let sid =
                 NonZeroStreamId::new(stream_id).expect("stream IDs in HashMap are always non-zero");
             let data_frame = DataFrame::new(sid, vec![]).with_end_stream(true);

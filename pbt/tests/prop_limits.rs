@@ -3,11 +3,21 @@
 //! LimitsBuilder::build() の複合制約検査を検証する。
 
 use proptest::prelude::*;
-use shiguredo_http2::settings::{MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, MIN_MAX_FRAME_SIZE};
+use shiguredo_http2::settings::{
+    DEFAULT_INITIAL_WINDOW_SIZE, MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, MIN_MAX_FRAME_SIZE,
+};
 use shiguredo_http2::{Limits, MaxFrameSize, WindowSize};
 
 fn valid_window_size() -> impl Strategy<Value = WindowSize> {
     (0u32..=MAX_INITIAL_WINDOW_SIZE).prop_map(WindowSize::from_static)
+}
+
+/// 接続レベルの有効なウィンドウサイズを生成する
+///
+/// RFC 9113 Section 6.9.2: 接続レベルのウィンドウは SETTINGS では縮小できないため、
+/// `LimitsBuilder::connection_window_size` は `DEFAULT_INITIAL_WINDOW_SIZE` 未満を拒否する。
+fn valid_connection_window_size() -> impl Strategy<Value = WindowSize> {
+    (DEFAULT_INITIAL_WINDOW_SIZE..=MAX_INITIAL_WINDOW_SIZE).prop_map(WindowSize::from_static)
 }
 
 fn valid_max_frame_size() -> impl Strategy<Value = MaxFrameSize> {
@@ -30,7 +40,7 @@ proptest! {
         max_frame in valid_max_frame_size(),
         max_header_list in prop::option::of(any::<u32>()),
         header_table in any::<u32>(),
-        connection_window in valid_window_size(),
+        connection_window in valid_connection_window_size(),
         enable_connect in prop::bool::ANY,
         no_rfc7540 in prop::bool::ANY,
     ) {
@@ -125,7 +135,7 @@ proptest! {
         max_frame in valid_max_frame_size(),
         max_header_list in prop::option::of(any::<u32>()),
         header_table in any::<u32>(),
-        connection_window in valid_window_size(),
+        connection_window in valid_connection_window_size(),
     ) {
         let limits = Limits::builder()
             .max_concurrent_streams(max_concurrent)

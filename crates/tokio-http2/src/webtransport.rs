@@ -750,6 +750,13 @@ impl DriverState {
                 data,
                 end_stream,
             } if stream_id == self.connect_stream_id => {
+                // RFC 9113 Section 6.9.1: DATA 受信は接続およびストリームのフロー制御
+                // ウィンドウから計上される。WebTransport セッションは単一の CONNECT
+                // ストリーム上で大量データをやり取りするため、ピアが送り続けられるよう
+                // 受信した分の WINDOW_UPDATE を即座に返す。
+                let data_len_u32 =
+                    u32::try_from(data.len()).expect("DATA payload fits in u32 per RFC 9113");
+
                 self.wt_session.feed(&data).map_err(wt_err)?;
                 self.wt_session.process().map_err(wt_err)?;
 
@@ -761,6 +768,21 @@ impl DriverState {
                 self.maybe_grow_session_window()?;
                 self.maybe_grow_max_streams(true)?;
                 self.maybe_grow_max_streams(false)?;
+
+                if data_len_u32 > 0 {
+                    // RFC 9113 Section 6.9: 接続レベルの WINDOW_UPDATE は他ストリームの
+                    // 受信余地を維持するため end_stream に関わらず送信する。
+                    self.conn
+                        .send_window_update(StreamId::Connection, data_len_u32)
+                        .await?;
+                    // RFC 9113 Section 6.9: end_stream のときは直後にストリームが
+                    // closed になるためストリームレベルの WINDOW_UPDATE は不要。
+                    if !end_stream {
+                        self.conn
+                            .send_window_update(self.connect_stream_id, data_len_u32)
+                            .await?;
+                    }
+                }
 
                 self.flush_wt_output().await?;
 

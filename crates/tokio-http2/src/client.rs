@@ -137,6 +137,11 @@ impl Client {
         self.conn.send_ping(data).await
     }
 
+    /// WINDOW_UPDATE を送信
+    pub async fn send_window_update(&mut self, stream_id: StreamId, increment: u32) -> Result<()> {
+        self.conn.send_window_update(stream_id, increment).await
+    }
+
     /// GOAWAY を送信して接続を終了
     pub async fn shutdown(&mut self) -> Result<()> {
         self.conn.send_goaway(ErrorCode::NoError, vec![]).await

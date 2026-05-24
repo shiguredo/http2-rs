@@ -5,12 +5,12 @@
 use proptest::prelude::*;
 use shiguredo_http2::{
     Connection, ErrorCode, HeaderField, HpackEncoder, LastStreamId, Limits, NonZeroStreamId,
-    WindowIncrement,
+    WindowIncrement, WindowSize,
     frame::{
-        ContinuationFrame, DataFrame, Frame, FrameEncoder, GoawayFrame, HeadersFrame, PingFrame,
-        RstStreamFrame, SettingsFrame, StreamId, WindowUpdateFrame,
+        ContinuationFrame, DataFrame, Frame, FrameDecoder, FrameEncoder, GoawayFrame, HeadersFrame,
+        PingFrame, RstStreamFrame, SettingsFrame, StreamId, WindowUpdateFrame,
     },
-    settings::{MAX_INITIAL_WINDOW_SIZE, Setting},
+    settings::{DEFAULT_INITIAL_WINDOW_SIZE, MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, Setting},
 };
 
 /// 有効なストリーム ID を生成する（クライアント開始: 奇数）
@@ -831,9 +831,143 @@ proptest! {
     }
 }
 
+proptest! {
+    // ========================================================================
+    // 接続レベル WINDOW_UPDATE の広告 (issue 0041) の PBT
+    // ========================================================================
+
+    /// `connection_window_size` がデフォルトより大きい場合、`initiate()` の出力に
+    /// `connection_window_size - DEFAULT_INITIAL_WINDOW_SIZE` の WINDOW_UPDATE が含まれる
+    ///
+    /// RFC 9113 Section 6.9.2: 接続レベルのフロー制御ウィンドウは WINDOW_UPDATE でのみ
+    /// 拡張できる。SETTINGS_INITIAL_WINDOW_SIZE は接続レベルに適用されない。
+    #[test]
+    fn prop_initiate_emits_connection_window_update(
+        size in (DEFAULT_INITIAL_WINDOW_SIZE + 1)..=MAX_INITIAL_WINDOW_SIZE,
+    ) {
+        let window = WindowSize::from_static(size);
+        let limits = Limits::builder()
+            .connection_window_size(window)
+            .build()
+            .expect("valid limits");
+        let mut client = Connection::client(limits);
+        client.initiate().expect("initiate");
+
+        let output = client.poll_output().expect("output must contain preface + settings");
+
+        // CONNECTION_PREFACE をスキップしてから FrameDecoder にかける
+        let preface_len = shiguredo_http2::CONNECTION_PREFACE_LEN;
+        prop_assert!(output.len() > preface_len);
+        let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+        decoder.feed(&output[preface_len..]);
+
+        let mut found = None;
+        while let Some(frame) = decoder.decode().expect("decode frame") {
+            if let Frame::WindowUpdate(wu) = frame
+                && matches!(wu.stream_id, StreamId::Connection)
+            {
+                found = Some(wu.window_size_increment.as_u32());
+            }
+        }
+        let expected = size - DEFAULT_INITIAL_WINDOW_SIZE;
+        prop_assert_eq!(
+            found,
+            Some(expected),
+            "expected connection-level WINDOW_UPDATE with increment {}",
+            expected
+        );
+    }
+
+    /// `send_settings()` (preface 外部処理経路) でも同じ WINDOW_UPDATE が送信される
+    #[test]
+    fn prop_send_settings_emits_connection_window_update(
+        size in (DEFAULT_INITIAL_WINDOW_SIZE + 1)..=MAX_INITIAL_WINDOW_SIZE,
+    ) {
+        let window = WindowSize::from_static(size);
+        let limits = Limits::builder()
+            .connection_window_size(window)
+            .build()
+            .expect("valid limits");
+        let mut server = Connection::server(limits);
+        server.mark_preface_received();
+        server.send_settings().expect("send_settings");
+
+        let output = server.poll_output().expect("output must contain settings");
+
+        let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+        decoder.feed(&output);
+
+        let mut found = None;
+        while let Some(frame) = decoder.decode().expect("decode frame") {
+            if let Frame::WindowUpdate(wu) = frame
+                && matches!(wu.stream_id, StreamId::Connection)
+            {
+                found = Some(wu.window_size_increment.as_u32());
+            }
+        }
+        let expected = size - DEFAULT_INITIAL_WINDOW_SIZE;
+        prop_assert_eq!(
+            found,
+            Some(expected),
+            "expected connection-level WINDOW_UPDATE with increment {}",
+            expected
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `connection_window_size == DEFAULT_INITIAL_WINDOW_SIZE` のとき
+    /// `initiate()` は接続レベル WINDOW_UPDATE を送信しない
+    ///
+    /// `send_window_update(_, 0)` は PROTOCOL_ERROR で拒否されるため、デフォルト値の場合は
+    /// 一切 WINDOW_UPDATE を送信しないことを直接検証する。
+    #[test]
+    fn test_initiate_does_not_emit_window_update_when_default() {
+        let mut client = Connection::client(Limits::default());
+        client.initiate().expect("initiate");
+
+        let output = client.poll_output().expect("output");
+        let preface_len = shiguredo_http2::CONNECTION_PREFACE_LEN;
+        let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+        decoder.feed(&output[preface_len..]);
+
+        let mut saw_window_update = false;
+        while let Some(frame) = decoder.decode().expect("decode") {
+            if matches!(frame, Frame::WindowUpdate(_)) {
+                saw_window_update = true;
+            }
+        }
+        assert!(
+            !saw_window_update,
+            "WINDOW_UPDATE は connection_window_size がデフォルトのとき送信されてはならない"
+        );
+    }
+
+    /// `send_settings()` でも同様にデフォルト値で WINDOW_UPDATE を送信しない
+    #[test]
+    fn test_send_settings_does_not_emit_window_update_when_default() {
+        let mut server = Connection::server(Limits::default());
+        server.mark_preface_received();
+        server.send_settings().expect("send_settings");
+
+        let output = server.poll_output().expect("output");
+        let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+        decoder.feed(&output);
+
+        let mut saw_window_update = false;
+        while let Some(frame) = decoder.decode().expect("decode") {
+            if matches!(frame, Frame::WindowUpdate(_)) {
+                saw_window_update = true;
+            }
+        }
+        assert!(
+            !saw_window_update,
+            "WINDOW_UPDATE は connection_window_size がデフォルトのとき送信されてはならない"
+        );
+    }
 
     #[test]
     fn test_continuation_without_headers_is_error() {
