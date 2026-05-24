@@ -1,5 +1,6 @@
 //! HTTP/2 フレームデコーダー
 
+use crate::decode_error::DecodeError;
 use crate::error::{Error, ErrorCode, Result};
 use crate::frame::{
     CONNECTION_STREAM_ID, ContinuationFrame, DataFrame, FRAME_HEADER_SIZE, Frame, FrameFlags,
@@ -128,7 +129,7 @@ impl Default for FrameDecoder {
 /// バッファが 9 バイト未満の場合は `Err` を返す。
 pub fn decode_header(buf: &[u8]) -> Result<FrameHeader> {
     if buf.len() < FRAME_HEADER_SIZE {
-        return Err(Error::incomplete());
+        return Err(DecodeError::Incomplete.into());
     }
 
     // Length (24 bits)

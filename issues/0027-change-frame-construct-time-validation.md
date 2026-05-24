@@ -239,5 +239,24 @@ impl HeadersFrame {
 
 - [[0025-change-stream-id-newtype]] (`NonZeroStreamId` を提供)
 - [[0024-change-header-field-construct-time-validation]] (`HeaderField` 構築時検査)
-- [[0029-change-split-error-types]] (`FrameError`)
+- [[0029-change-split-error-types]] (基盤の `DecodeError` / `SettingError` を提供)
 - [[0013-refactor-bytes-payloads]] (Bytes 化と統合)
+
+## 0029 から引き継ぐ作業
+
+`SendError` の定義および `src/connection/mod.rs` のクライアント側送信前検査
+(`Error::protocol_error` / `Error::stream_error` の一部) を `SendError` に置き換える
+作業は、本 issue 0027 で `FrameError` と同時に設計・実装する。
+
+`SendError` は当初 issue 0029 で導入する設計だったが、フレーム送信 API の
+コンテキストに密接しているため、`FrameError` と同時に決定する方が境界が明確になる。
+
+variant 候補 (実コードに対応する):
+
+- `ServerCannotInitiateStream` (server push 不許可、`connection/mod.rs:401`)
+- `MaxConcurrentStreamsExceeded { current: usize, limit: u32 }` (`connection/mod.rs:422`)
+- `ExtendedConnectNotEnabled` (`connection/mod.rs:435`、RFC 8441 §3)
+- `HeaderListTooLarge { actual: usize, limit: u32 }`
+  (`connection/mod.rs:444 / 787 / 869`、RFC 9113 §10.5.1)
+
+最終的な variant は本 issue 着手時に再評価する。

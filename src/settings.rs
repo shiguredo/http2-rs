@@ -217,14 +217,16 @@ impl Settings {
     /// 設定パラメータを適用する
     ///
     /// 無効な値の場合は `Err` を返す。
-    pub fn apply(&mut self, setting: Setting) -> Result<(), SettingsError> {
+    pub fn apply(&mut self, setting: Setting) -> Result<(), SettingError> {
         match SettingId::from_u16(setting.id) {
             Some(SettingId::HeaderTableSize) => {
                 self.header_table_size = setting.value;
             }
             Some(SettingId::EnablePush) => {
                 if setting.value > 1 {
-                    return Err(SettingsError::InvalidEnablePush(setting.value));
+                    return Err(SettingError::EnablePushNotBoolean {
+                        value: setting.value,
+                    });
                 }
                 self.enable_push = setting.value == 1;
             }
@@ -233,13 +235,20 @@ impl Settings {
             }
             Some(SettingId::InitialWindowSize) => {
                 if setting.value > MAX_INITIAL_WINDOW_SIZE {
-                    return Err(SettingsError::InvalidInitialWindowSize(setting.value));
+                    return Err(SettingError::InitialWindowSizeOutOfRange {
+                        value: setting.value,
+                        max: MAX_INITIAL_WINDOW_SIZE,
+                    });
                 }
                 self.initial_window_size = setting.value;
             }
             Some(SettingId::MaxFrameSize) => {
                 if setting.value < MIN_MAX_FRAME_SIZE || setting.value > MAX_MAX_FRAME_SIZE {
-                    return Err(SettingsError::InvalidMaxFrameSize(setting.value));
+                    return Err(SettingError::MaxFrameSizeOutOfRange {
+                        value: setting.value,
+                        min: MIN_MAX_FRAME_SIZE,
+                        max: MAX_MAX_FRAME_SIZE,
+                    });
                 }
                 self.max_frame_size = setting.value;
             }
@@ -249,14 +258,18 @@ impl Settings {
             Some(SettingId::EnableConnectProtocol) => {
                 // RFC 8441: 0 または 1 のみ有効
                 if setting.value > 1 {
-                    return Err(SettingsError::InvalidEnableConnectProtocol(setting.value));
+                    return Err(SettingError::EnableConnectProtocolNotBoolean {
+                        value: setting.value,
+                    });
                 }
                 self.enable_connect_protocol = setting.value == 1;
             }
             Some(SettingId::NoRfc7540Priorities) => {
                 // RFC 9218 Section 2.1: 0 または 1 のみ有効
                 if setting.value > 1 {
-                    return Err(SettingsError::InvalidNoRfc7540Priorities(setting.value));
+                    return Err(SettingError::NoRfc7540PrioritiesNotBoolean {
+                        value: setting.value,
+                    });
                 }
                 self.no_rfc7540_priorities = setting.value == 1;
             }
@@ -333,65 +346,9 @@ impl Settings {
     }
 }
 
-/// SETTINGS パラメータのバリデーションエラー
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SettingsError {
-    /// ENABLE_PUSH の値が無効（0 または 1 以外）
-    InvalidEnablePush(u32),
-    /// INITIAL_WINDOW_SIZE の値が無効（2^31-1 を超える）
-    InvalidInitialWindowSize(u32),
-    /// MAX_FRAME_SIZE の値が無効（16384 未満または 16777215 を超える）
-    InvalidMaxFrameSize(u32),
-    /// ENABLE_CONNECT_PROTOCOL の値が無効（0 または 1 以外）
-    InvalidEnableConnectProtocol(u32),
-    /// NO_RFC7540_PRIORITIES の値が無効（0 または 1 以外）
-    InvalidNoRfc7540Priorities(u32),
-}
-
-impl std::fmt::Display for SettingsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InvalidEnablePush(v) => {
-                write!(f, "invalid ENABLE_PUSH value: {v} (must be 0 or 1)")
-            }
-            Self::InvalidInitialWindowSize(v) => {
-                write!(
-                    f,
-                    "invalid INITIAL_WINDOW_SIZE value: {v} (must be <= 2147483647)"
-                )
-            }
-            Self::InvalidMaxFrameSize(v) => {
-                write!(
-                    f,
-                    "invalid MAX_FRAME_SIZE value: {v} (must be 16384..=16777215)"
-                )
-            }
-            Self::InvalidEnableConnectProtocol(v) => {
-                write!(
-                    f,
-                    "invalid ENABLE_CONNECT_PROTOCOL value: {v} (must be 0 or 1)"
-                )
-            }
-            Self::InvalidNoRfc7540Priorities(v) => {
-                write!(
-                    f,
-                    "invalid NO_RFC7540_PRIORITIES value: {v} (must be 0 or 1)"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for SettingsError {}
-
-// === issue 0026 / 0029: 構築時検査用エラー・補助型 (Phase 1) ===
-//
-// 既存の `SettingsError` は Phase 2 でリネームし、各構築 API と統合される予定。
-// Phase 1 では新型を追加するだけに留め、既存 API は変更しない。
-
-/// SETTINGS 構築時検査エラー (issue 0026 / 0029)
+/// SETTINGS 値範囲検査エラー
 ///
-/// `WindowSize::new` / `MaxFrameSize::new` / 各 `Setting` 値範囲検査で使用される。
+/// `Settings::apply` / `WindowSize::new` / `MaxFrameSize::new` の戻り値で使用される。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SettingError {

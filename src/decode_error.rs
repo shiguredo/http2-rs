@@ -1,17 +1,13 @@
-//! デコード共通エラー型 (issue 0029)
+//! フレーム decoder / encoder で共通利用するデコード時エラー型。
 //!
-//! フレーム decoder / HPACK decoder で共通利用するエラー型。
-//! 構築時検査エラー (各ドメインエラー型) とは分離する。
-//!
-//! 本ファイルは issue 0029 の構築時検査リファクタリングの Phase 1 として追加された。
-//! 既存の [`crate::error::ErrorKind::BufferTooShort`] / [`crate::error::ErrorKind::Incomplete`]
-//! を将来的に置き換える予定だが、Phase 1 では両系統が並存する。
+//! フレームレベルの接続エラーへの昇格は
+//! [`From<DecodeError> for crate::error::Error`] で行う。
 
-/// HTTP/2 デコード時のエラー
+/// HTTP/2 フレームデコード / エンコード時のバッファ操作エラー
 ///
-/// フレーム decoder / HPACK decoder の内部で発生するバッファ不足や
-/// 入力不足を表現する。接続エラーへの昇格は [`From<DecodeError> for crate::error::Error`]
-/// で行う (Phase 2 で実装予定)。
+/// フレーム decoder / encoder の内部で発生するバッファ不足や入力不足を表現する。
+/// フレームレベルの接続エラーへの昇格は [`From<DecodeError> for crate::error::Error`]
+/// で行う。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum DecodeError {

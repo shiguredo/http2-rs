@@ -16,7 +16,7 @@ use crate::error::{Error, Result};
 /// バッファが不足している場合は `Err` を返す。
 pub fn encode(buf: &mut [u8], value: u64, prefix_bits: u8, prefix_value: u8) -> Result<usize> {
     if buf.is_empty() {
-        return Err(Error::buffer_too_short());
+        return Err(Error::hpack_error("HPACK integer encode buffer too short"));
     }
 
     let max_prefix = (1u64 << prefix_bits) - 1;
@@ -32,7 +32,7 @@ pub fn encode(buf: &mut [u8], value: u64, prefix_bits: u8, prefix_value: u8) -> 
 
     while remaining >= 128 {
         if offset >= buf.len() {
-            return Err(Error::buffer_too_short());
+            return Err(Error::hpack_error("HPACK integer encode buffer too short"));
         }
         buf[offset] = 0x80 | ((remaining & 0x7f) as u8);
         remaining >>= 7;
@@ -40,7 +40,7 @@ pub fn encode(buf: &mut [u8], value: u64, prefix_bits: u8, prefix_value: u8) -> 
     }
 
     if offset >= buf.len() {
-        return Err(Error::buffer_too_short());
+        return Err(Error::hpack_error("HPACK integer encode buffer too short"));
     }
     buf[offset] = remaining as u8;
     Ok(offset + 1)
@@ -74,11 +74,11 @@ pub fn encoded_len(value: u64, prefix_bits: u8) -> usize {
 ///
 /// # Errors
 ///
-/// - データが不足している場合は `Incomplete` エラーを返す。
-/// - オーバーフローが発生した場合は `InvalidInput` エラーを返す。
+/// - データが不足している場合は `HpackError` を返す。
+/// - オーバーフローが発生した場合は `HpackError` を返す。
 pub fn decode(buf: &[u8], prefix_bits: u8) -> Result<(u64, usize)> {
     if buf.is_empty() {
-        return Err(Error::incomplete());
+        return Err(Error::hpack_error("incomplete HPACK integer"));
     }
 
     let max_prefix = (1u64 << prefix_bits) - 1;
@@ -95,21 +95,21 @@ pub fn decode(buf: &[u8], prefix_bits: u8) -> Result<(u64, usize)> {
 
     loop {
         if offset >= buf.len() {
-            return Err(Error::incomplete());
+            return Err(Error::hpack_error("incomplete HPACK integer"));
         }
 
         let byte = buf[offset];
         offset += 1;
 
-        // オーバーフローチェック
+        // RFC 7541 §5.1: HPACK 整数のオーバーフロー
         if shift >= 63 {
-            return Err(Error::invalid_input("HPACK integer overflow"));
+            return Err(Error::hpack_error("HPACK integer overflow"));
         }
 
         let contribution = u64::from(byte & 0x7f);
         value = value
             .checked_add(contribution << shift)
-            .ok_or_else(|| Error::invalid_input("HPACK integer overflow"))?;
+            .ok_or_else(|| Error::hpack_error("HPACK integer overflow"))?;
 
         if byte & 0x80 == 0 {
             break;

@@ -6,6 +6,8 @@
 use std::backtrace::{Backtrace, BacktraceStatus};
 use std::panic::Location;
 
+use crate::decode_error::DecodeError;
+
 /// HTTP/2 エラーコード (RFC 9113 Section 7)
 ///
 /// 接続エラーやストリームエラーで使用される。
@@ -151,6 +153,12 @@ impl std::fmt::Display for ErrorCode {
 }
 
 /// エラーの種類
+///
+/// 接続エラー / ストリームエラー / HPACK エラーの 3 種類を表現する。
+/// 構築時検査エラーは [`crate::HeaderFieldError`] / [`crate::SettingError`] /
+/// [`crate::LimitsError`] などのドメイン特化型で表現する。
+/// フレームレベルのバッファ操作エラーは [`DecodeError`] で表現し、
+/// [`From<DecodeError> for Error`] 経由でフレームサイズエラーに昇格する。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ErrorKind {
@@ -159,15 +167,6 @@ pub enum ErrorKind {
 
     /// ストリームエラー（RST_STREAM を送信する必要がある）
     StreamError(ErrorCode),
-
-    /// バッファが不足している
-    BufferTooShort,
-
-    /// 入力データが不足している（ストリーミングデコード時）
-    Incomplete,
-
-    /// 入力データが無効
-    InvalidInput,
 
     /// HPACK デコードエラー
     HpackError,
@@ -178,9 +177,6 @@ impl std::fmt::Display for ErrorKind {
         match self {
             Self::ConnectionError(code) => write!(f, "ConnectionError({code})"),
             Self::StreamError(code) => write!(f, "StreamError({code})"),
-            Self::BufferTooShort => write!(f, "BufferTooShort"),
-            Self::Incomplete => write!(f, "Incomplete"),
-            Self::InvalidInput => write!(f, "InvalidInput"),
             Self::HpackError => write!(f, "HpackError"),
         }
     }
@@ -233,24 +229,6 @@ impl Error {
         Self::with_reason(ErrorKind::StreamError(code), reason)
     }
 
-    /// バッファ不足エラーを生成する
-    #[track_caller]
-    pub fn buffer_too_short() -> Self {
-        Self::new(ErrorKind::BufferTooShort)
-    }
-
-    /// 入力データ不足エラーを生成する
-    #[track_caller]
-    pub fn incomplete() -> Self {
-        Self::new(ErrorKind::Incomplete)
-    }
-
-    /// 無効な入力エラーを生成する
-    #[track_caller]
-    pub fn invalid_input<T: Into<String>>(reason: T) -> Self {
-        Self::with_reason(ErrorKind::InvalidInput, reason)
-    }
-
     /// HPACK エラーを生成する
     #[track_caller]
     pub fn hpack_error<T: Into<String>>(reason: T) -> Self {
@@ -267,16 +245,6 @@ impl Error {
     #[track_caller]
     pub fn frame_size_error<T: Into<String>>(reason: T) -> Self {
         Self::connection_error(ErrorCode::FrameSizeError, reason)
-    }
-
-    /// バッファサイズをチェックする
-    #[track_caller]
-    pub fn check_buffer_size(required: usize, buf: &[u8]) -> Result<()> {
-        if buf.len() < required {
-            Err(Self::buffer_too_short())
-        } else {
-            Ok(())
-        }
     }
 
     /// 接続エラーかどうかを返す
@@ -322,6 +290,20 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+/// [`DecodeError`] をフレームレベルの接続エラーに昇格させる
+///
+/// フレーム decoder / encoder 経路でのバッファ不足・入力不足を
+/// RFC 9113 §4.2 (Frame Size) に基づき FRAME_SIZE_ERROR に変換する。
+///
+/// HPACK 経路では本変換を使用しない。HPACK の入力不足は
+/// [`ErrorKind::HpackError`] (COMPRESSION_ERROR 相当) で直接構築する。
+impl From<DecodeError> for Error {
+    #[track_caller]
+    fn from(err: DecodeError) -> Self {
+        Self::connection_error(ErrorCode::FrameSizeError, err.to_string())
+    }
+}
 
 /// [`Result`] のエイリアス
 pub type Result<T> = std::result::Result<T, Error>;

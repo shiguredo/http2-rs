@@ -396,9 +396,10 @@ impl Connection {
         // RFC 9113 Section 8.3.1: 送信前にリクエストヘッダーの妥当性を検証する
         validation::validate_request_headers(&headers)?;
 
-        // RFC 9113 Section 8.4: サーバープッシュ非サポートのため、サーバーは新規ストリームを開始できない
+        // RFC 9113 §8.4: サーバープッシュ非サポートのため、サーバーは新規ストリームを開始できない
+        // (送信前ローカル検査であり wire 上の RST_STREAM は送信しない)
         if self.role == Role::Server {
-            return Err(Error::invalid_input(
+            return Err(Error::protocol_error(
                 "server cannot initiate streams (server push not supported)",
             ));
         }
@@ -419,7 +420,10 @@ impl Connection {
                 .filter(|s| !s.state().is_closed())
                 .count();
             if current_open >= max as usize {
-                return Err(Error::invalid_input(
+                // RFC 9113 §5.1.2: REFUSED_STREAM は再試行可能性を示す
+                // (送信前ローカル検査であり wire 上の RST_STREAM は送信しない)
+                return Err(Error::stream_error(
+                    ErrorCode::RefusedStream,
                     "max concurrent streams limit set by peer would be exceeded",
                 ));
             }
@@ -432,7 +436,7 @@ impl Connection {
             .iter()
             .any(|h| h.name() == crate::validation::pseudo_headers::PROTOCOL);
         if has_protocol && !self.remote_settings.enable_connect_protocol {
-            return Err(Error::invalid_input(
+            return Err(Error::protocol_error(
                 "cannot send :protocol without peer's SETTINGS_ENABLE_CONNECT_PROTOCOL=1",
             ));
         }
@@ -441,10 +445,14 @@ impl Connection {
         if let Some(max_size) = self.remote_settings.max_header_list_size {
             let header_list_size = Self::calculate_header_list_size(&headers);
             if header_list_size > max_size as usize {
-                return Err(Error::invalid_input(format!(
-                    "header list size {} exceeds peer's SETTINGS_MAX_HEADER_LIST_SIZE {}",
-                    header_list_size, max_size
-                )));
+                // RFC 9113 §10.5.1: 送信前ローカル検査
+                return Err(Error::stream_error(
+                    ErrorCode::ProtocolError,
+                    format!(
+                        "header list size {} exceeds peer's SETTINGS_MAX_HEADER_LIST_SIZE {}",
+                        header_list_size, max_size
+                    ),
+                ));
             }
         }
 
@@ -784,10 +792,14 @@ impl Connection {
         if let Some(max_size) = self.remote_settings.max_header_list_size {
             let header_list_size = Self::calculate_header_list_size(&headers);
             if header_list_size > max_size as usize {
-                return Err(Error::invalid_input(format!(
-                    "header list size {} exceeds peer's SETTINGS_MAX_HEADER_LIST_SIZE {}",
-                    header_list_size, max_size
-                )));
+                // RFC 9113 §10.5.1: 送信前ローカル検査
+                return Err(Error::stream_error(
+                    ErrorCode::ProtocolError,
+                    format!(
+                        "header list size {} exceeds peer's SETTINGS_MAX_HEADER_LIST_SIZE {}",
+                        header_list_size, max_size
+                    ),
+                ));
             }
         }
 
@@ -866,10 +878,14 @@ impl Connection {
         if let Some(max_size) = self.remote_settings.max_header_list_size {
             let header_list_size = Self::calculate_header_list_size(&headers);
             if header_list_size > max_size as usize {
-                return Err(Error::invalid_input(format!(
-                    "header list size {} exceeds peer's SETTINGS_MAX_HEADER_LIST_SIZE {}",
-                    header_list_size, max_size
-                )));
+                // RFC 9113 §10.5.1: 送信前ローカル検査
+                return Err(Error::stream_error(
+                    ErrorCode::ProtocolError,
+                    format!(
+                        "header list size {} exceeds peer's SETTINGS_MAX_HEADER_LIST_SIZE {}",
+                        header_list_size, max_size
+                    ),
+                ));
             }
         }
 
@@ -1518,11 +1534,19 @@ impl Connection {
                 }
 
                 self.remote_settings.apply(*setting).map_err(|e| {
-                    // RFC 9113 Section 6.5.2: INITIAL_WINDOW_SIZE の無効な値は
-                    // FLOW_CONTROL_ERROR で応答する
+                    // RFC 9113 §6.5.2: 各 SETTINGS パラメータ違反のエラーコード
+                    #[allow(unreachable_patterns)]
                     let error_code = match e {
-                        crate::settings::SettingsError::InvalidInitialWindowSize(_) => {
+                        crate::settings::SettingError::InitialWindowSizeOutOfRange { .. } => {
                             ErrorCode::FlowControlError
+                        }
+                        crate::settings::SettingError::EnablePushNotBoolean { .. }
+                        | crate::settings::SettingError::MaxFrameSizeOutOfRange { .. }
+                        | crate::settings::SettingError::EnableConnectProtocolNotBoolean {
+                            ..
+                        }
+                        | crate::settings::SettingError::NoRfc7540PrioritiesNotBoolean { .. } => {
+                            ErrorCode::ProtocolError
                         }
                         _ => ErrorCode::ProtocolError,
                     };

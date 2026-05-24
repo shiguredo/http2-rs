@@ -1,5 +1,6 @@
 //! HTTP/2 フレームエンコーダー
 
+use crate::decode_error::DecodeError;
 use crate::error::{Error, Result};
 use crate::frame::{
     ContinuationFrame, DataFrame, FRAME_HEADER_SIZE, Frame, FrameFlags, FrameHeader, FrameType,
@@ -320,7 +321,7 @@ impl Default for FrameEncoder {
 ///
 /// バッファが 9 バイト未満の場合は `Err` を返す。
 pub fn encode_header(buf: &mut [u8], header: &FrameHeader) -> Result<()> {
-    Error::check_buffer_size(FRAME_HEADER_SIZE, buf)?;
+    DecodeError::check_buffer_size(FRAME_HEADER_SIZE, buf)?;
 
     // Length (24 bits)
     buf[0] = ((header.length >> 16) & 0xff) as u8;
@@ -350,7 +351,7 @@ pub fn encode_frame(buf: &mut [u8], frame: &Frame) -> Result<usize> {
     let mut encoder = FrameEncoder::new();
     encoder.encode(frame)?;
     let encoded = encoder.buffer();
-    Error::check_buffer_size(encoded.len(), buf)?;
+    DecodeError::check_buffer_size(encoded.len(), buf)?;
     buf[..encoded.len()].copy_from_slice(encoded);
     Ok(encoded.len())
 }

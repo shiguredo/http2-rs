@@ -42,6 +42,12 @@
   - @voluntas
 - [CHANGE] `tokio_http2::WtServerRequest::reject(status)` で status を `100..=599` (RFC 9110 §15) に制限し、範囲外は `Err(Error::Io)` を返す (issue 0024)
   - @voluntas
+- [CHANGE] `ErrorKind::BufferTooShort` / `Incomplete` / `InvalidInput` を削除し、フレームレベルのバッファ操作エラーは `DecodeError` 型、HPACK エラーは `ErrorKind::HpackError` に統一する (issue 0029)
+  - @voluntas
+- [CHANGE] `Error::buffer_too_short` / `incomplete` / `invalid_input` / `check_buffer_size` を削除し、`From<DecodeError> for Error` を追加する (issue 0029)
+  - @voluntas
+- [CHANGE] `SettingsError` (複数形) を `SettingError` (単数形) にリネームし、tuple variant を構造化フィールドに変更する (issue 0029)
+  - @voluntas
 
 ### misc
 
