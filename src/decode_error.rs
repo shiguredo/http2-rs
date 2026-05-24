@@ -9,7 +9,6 @@
 /// フレームレベルの接続エラーへの昇格は [`From<DecodeError> for crate::error::Error`]
 /// で行う。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum DecodeError {
     /// バッファが必要なサイズに満たない
     ///

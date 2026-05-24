@@ -18,7 +18,6 @@ pub enum Parity {
 /// RFC 9113 §5.1.1: stream identifier は unsigned 31-bit integer、
 /// クライアント開始は奇数、サーバー開始は偶数、0 は接続制御用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum StreamIdError {
     /// 0 が指定された (本来許可しない構築点で)
     Reserved,

@@ -10,7 +10,6 @@ use crate::frame::FrameType;
 /// RFC 9113 §6 各フレーム定義における stream_id / payload / window-increment 等の
 /// 制約を構築点で検出した結果を表現する。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum FrameError {
     /// stream_id = 0 を許可しないフレーム種別で 0 が指定された
     ///

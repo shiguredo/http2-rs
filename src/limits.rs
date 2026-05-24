@@ -303,7 +303,6 @@ impl LimitsBuilder {
 
 /// `Limits` 構築時検査エラー
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum LimitsError {
     /// WebTransport 関連設定があるのに `enable_connect_protocol = false`
     ///

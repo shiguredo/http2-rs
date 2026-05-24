@@ -8,7 +8,6 @@
 
 /// HTTP/2 送信エラー
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum SendError {
     /// 接続が既にクローズされている
     ConnectionClosed,

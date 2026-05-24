@@ -10,7 +10,6 @@
 ///
 /// `Vec<u8>` フィールドを持つため [`Copy`] は導出不可能。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum HeaderFieldError {
     /// field-name が空
     ///

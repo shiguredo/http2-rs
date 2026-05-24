@@ -160,7 +160,6 @@ impl std::fmt::Display for ErrorCode {
 /// フレームレベルのバッファ操作エラーは [`DecodeError`] で表現し、
 /// [`From<DecodeError> for Error`] 経由でフレームサイズエラーに昇格する。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum ErrorKind {
     /// 接続エラー（GOAWAY を送信する必要がある）
     ConnectionError(ErrorCode),

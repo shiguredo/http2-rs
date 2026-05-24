@@ -42,7 +42,6 @@ pub const MAX_INITIAL_WINDOW_SIZE: u32 = 2_147_483_647;
 /// 未知 ID は `Setting::Unknown { id, value }` として保持する
 /// (RFC 9113 §6.5.2: 未知パラメータは MUST ignore)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Setting {
     /// SETTINGS_HEADER_TABLE_SIZE (0x01)
     HeaderTableSize(u32),
@@ -284,7 +283,6 @@ impl Settings {
 ///
 /// `Setting::from_wire` / `WindowSize::new` / `MaxFrameSize::new` の戻り値で使用される。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum SettingError {
     /// `SETTINGS_ENABLE_PUSH` が 0/1 以外
     ///
