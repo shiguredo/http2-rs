@@ -17,7 +17,7 @@
 //! ```
 
 use shiguredo_http11::uri::Uri;
-use tokio_http2::{Client, Event, HeaderField, Limits};
+use tokio_http2::{Client, Event, HeaderField, Limits, StreamId};
 
 const DEFAULT_URL: &str = "https://localhost:8443/";
 
@@ -113,6 +113,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("--- Response Body ---");
                     print!("{}", String::from_utf8_lossy(data));
                     println!("--- End Body ---");
+                }
+
+                // RFC 9113 Section 6.9: 受信した DATA 分だけフロー制御ウィンドウを補充する。
+                // 接続レベルは他ストリームの受信余地を残すため end_stream に関わらず送信する。
+                // ストリームレベルは end_stream のとき closed になるため不要。
+                let increment =
+                    u32::try_from(data.len()).expect("DATA payload fits in u32 per RFC 9113");
+                if increment > 0 {
+                    client
+                        .send_window_update(StreamId::Connection, increment)
+                        .await?;
+                    if !*end_stream {
+                        client.send_window_update(*sid, increment).await?;
+                    }
                 }
 
                 if *end_stream && *sid == stream_id {

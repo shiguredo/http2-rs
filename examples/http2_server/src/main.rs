@@ -125,6 +125,19 @@ async fn handle_connection(
                     data.len()
                 );
 
+                // RFC 9113 Section 6.9: 受信した DATA 分だけフロー制御ウィンドウを補充する。
+                // 接続レベルは他ストリームの受信余地を残すため end_stream に関わらず送信する。
+                // ストリームレベルは end_stream のとき closed になるため不要。
+                let increment =
+                    u32::try_from(data.len()).expect("DATA payload fits in u32 per RFC 9113");
+                if increment > 0 {
+                    conn.send_window_update(StreamId::Connection, increment)
+                        .await?;
+                    if !*end_stream {
+                        conn.send_window_update(*stream_id, increment).await?;
+                    }
+                }
+
                 if *end_stream {
                     send_response(&mut conn, *stream_id, "/").await?;
                 }

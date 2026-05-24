@@ -199,24 +199,44 @@ impl StateMachine {
         Ok(())
     }
 
-    /// DATA フレーム送信時の状態遷移
-    pub fn send_data(&mut self, end_stream: bool) -> Result<(), Error> {
+    /// DATA フレーム送信の事前検査
+    ///
+    /// 状態遷移は行わない。送信ウィンドウ枯渇でデータが内部バッファに残っている場合に、
+    /// END_STREAM 付きの呼び出しでも state を Closed に進めないようにするため、
+    /// validate (本メソッド) と state 遷移 (`complete_send_data`) を分離している。
+    /// 状態遷移を先に進めると、送信完了前に Closed 扱いになり、ピアからの
+    /// WINDOW_UPDATE が「Closed への WINDOW_UPDATE は無視」のルールで捨てられ、
+    /// 永久に送信再開できなくなる (RFC 9113 §5.1 / §6.9.1)。
+    pub fn send_data(&mut self, _end_stream: bool) -> Result<(), Error> {
+        match self.state {
+            StreamState::Open | StreamState::HalfClosedRemote => Ok(()),
+            _ => Err(Error::stream_error(
+                ErrorCode::StreamClosed,
+                "cannot send DATA in current state",
+            )),
+        }
+    }
+
+    /// END_STREAM 付き DATA フレームを実際に送信完了したときの状態遷移
+    ///
+    /// `flush_stream_data` で最後のフレームを出力バッファに積んだ直後に呼ぶ。
+    /// `end_stream == false` の場合は状態遷移なし。
+    pub fn complete_send_data(&mut self, end_stream: bool) -> Result<(), Error> {
+        if !end_stream {
+            return Ok(());
+        }
         match self.state {
             StreamState::Open => {
-                if end_stream {
-                    self.state = StreamState::HalfClosedLocal;
-                }
+                self.state = StreamState::HalfClosedLocal;
                 Ok(())
             }
             StreamState::HalfClosedRemote => {
-                if end_stream {
-                    self.state = StreamState::Closed;
-                }
+                self.state = StreamState::Closed;
                 Ok(())
             }
             _ => Err(Error::stream_error(
                 ErrorCode::StreamClosed,
-                "cannot send DATA in current state",
+                "complete_send_data called in invalid state",
             )),
         }
     }
@@ -303,6 +323,9 @@ mod tests {
         let mut sm = StateMachine::new();
         sm.send_headers(false).unwrap();
         sm.send_data(true).unwrap();
+        // send_data は validate のみで状態遷移しない (フロー制御で詰まる可能性のため)
+        assert_eq!(sm.state(), StreamState::Open);
+        sm.complete_send_data(true).unwrap();
         assert_eq!(sm.state(), StreamState::HalfClosedLocal);
     }
 
@@ -319,6 +342,7 @@ mod tests {
         let mut sm = StateMachine::new();
         sm.send_headers(false).unwrap();
         sm.send_data(true).unwrap();
+        sm.complete_send_data(true).unwrap();
         assert_eq!(sm.state(), StreamState::HalfClosedLocal);
 
         sm.recv_data(true).unwrap();
@@ -358,6 +382,10 @@ mod tests {
 
         // サーバーがボディを送信 (end_stream=true)
         sm.send_data(true).unwrap();
+        // validate のみで遷移しない
+        assert_eq!(sm.state(), StreamState::HalfClosedRemote);
+        // 実際に送信完了したら Closed
+        sm.complete_send_data(true).unwrap();
         assert_eq!(sm.state(), StreamState::Closed);
     }
 
