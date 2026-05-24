@@ -99,6 +99,8 @@
 
 ### misc
 
+- [UPDATE] `nghttp2-sys` のビルド依存を cmake から shiguredo_cmake に切り替える
+  - @voluntas
 - [UPDATE] 依存ライブラリを更新する (nghttp2 1.69.0, rustls-platform-verifier 0.7, shiguredo_toml 2026.2)
   - @voluntas
 - [CHANGE] issue 0013 (HTTP/2 ペイロードを Bytes 化する) を `bytes` クレート依存追加の保留に伴い `issues/pending/` に退避する

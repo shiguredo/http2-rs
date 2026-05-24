@@ -678,8 +678,8 @@ name = "nghttp2-sys"
 version = "0.0.0"
 dependencies = [
  "bindgen",
- "cmake",
  "libc",
+ "shiguredo_cmake",
  "shiguredo_toml",
 ]
 
@@ -1230,6 +1230,16 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "shiguredo_cmake"
+version = "4.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2c6a73b295ff44900705fa5fdede6f6d425017964ad1ed8368376bcc83d85fa"
+dependencies = [
+ "cmake",
+ "shiguredo_toml",
 ]
 
 [[package]]

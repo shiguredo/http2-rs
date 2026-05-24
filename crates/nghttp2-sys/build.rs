@@ -42,7 +42,8 @@ fn main() {
     }
 
     // nghttp2 ビルド (静的ライブラリのみ)
-    let nghttp2_dst = cmake::Config::new(&nghttp2_dir)
+    shiguredo_cmake::set_cmake_env();
+    let nghttp2_dst = shiguredo_cmake::Config::new(&nghttp2_dir)
         .define("BUILD_STATIC_LIBS", "ON")
         .define("BUILD_SHARED_LIBS", "OFF")
         .define("ENABLE_LIB_ONLY", "ON")
