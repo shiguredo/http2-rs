@@ -21,10 +21,6 @@
 //! - [`connection`] - 接続管理
 //! - [`webtransport`] - WebTransport over HTTP/2
 
-#[cfg(feature = "__test_helpers")]
-#[doc(hidden)]
-pub mod __test_helpers;
-
 pub mod connection;
 pub mod decode_error;
 pub mod error;

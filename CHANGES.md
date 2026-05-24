@@ -111,6 +111,8 @@
   - @voluntas
 - [ADD] `issues/` ディレクトリと issue 運用を導入する
   - @voluntas
+- [UPDATE] cargo feature `__test_helpers` を廃止し、PBT / fuzz は公開 API と HPACK decoder 経路のみで wire 模擬する (issue 0045)
+  - @voluntas
 - [UPDATE] `HeaderField::from_validated_parts` の cfg 排他 2 定義を解消し、テスト向け公開層を `__test_helpers::header_field_from_validated_parts` に集約する (issue 0033)
   - @voluntas
 - [UPDATE] decoder 内部で構築時検査型を組み立てる際に `pub(crate) from_validated_parts` を経由するようにし、二重検査を排除する (issue 0030)

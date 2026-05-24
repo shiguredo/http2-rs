@@ -43,7 +43,7 @@ CLAUDE.md「テストについて」(L78-L88) の規約「単体テストのフ�
 ### 移管原則
 
 1. **公開 API 経由で再現できるテストは `tests/test_<module>.rs` に移す**。
-2. **`pub(crate)` 関数を直接叩くテスト、または private ヘルパに依存するテストは `src/<module>` 内の `#[cfg(test)] mod tests` に残す**。テストのために API 表面を広げる方針 (`pub` 昇格、新規 feature 追加) は採らない。例外として `__test_helpers::header_field_from_validated_parts` (0033 で公開済み) を使うテストは crate 外に出せる。
+2. **`pub(crate)` 関数を直接叩くテスト、または private ヘルパに依存するテストは `src/<module>` 内の `#[cfg(test)] mod tests` に残す**。テストのために API 表面を広げる方針 (`pub` 昇格、新規 feature 追加) は採らない。crate 外から任意の name/value で `HeaderField` を構築するには HPACK wire 模擬 (`HpackDecoder` 経路) を使用する。
 3. **`#[cfg(test)] pub` で crate 外公開する選択肢は採用しない**。`#[cfg(test)]` 限定の `pub` は他 crate (integration test, fuzz, examples) から見えないため `pub(crate)` と挙動が変わらず、また「テスト時のみ pub」という cfg 揺れは可読性を下げる。本 issue は原則 2 (mod tests 残置) を優先する。
 4. **どちらにも分類できないグレー判定 (例: `fn`-only テストヘルパに依存する 1 テストだけ tests/ に出す)** は、PR レビュー時に都度判断する。
 
@@ -89,8 +89,8 @@ Phase 別 PR にする場合のブランチ命名は `feature/refactor-move-mod-
 - [ ] 移管前後で `cargo test --workspace` の passed 件数が一致する (`cargo test --workspace 2>&1 | grep "^test result:" | awk '{p+=$4} END {print p}'` で集計)
 - [ ] 移管前後で `cargo llvm-cov report` の対象モジュール行カバレッジが同等以上 (低下 0% を目視確認)
 - [ ] Phase 3 着手時点で `tests/test_validation.rs` の件数が長大になった場合、PR レビューで CLAUDE.md L86「テストが長くなったらファイル内 `mod` で分割」適用要否を判断する (本完了条件は強制要件ではなく着手時判断項目)
-- [ ] `cargo build` と `cargo build --features __test_helpers` の両方が通る
-- [ ] `cargo test --workspace` と `cargo test --workspace --features __test_helpers` の両方が通る
+- [ ] `cargo build` が通る
+- [ ] `cargo test --workspace` が通る
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` が通る
 - [ ] `cargo fmt --all -- --check` が通る
 - [ ] CHANGES.md `### misc` に下記文面を追記
@@ -118,7 +118,7 @@ Phase 別 PR にする場合のブランチ命名は `feature/refactor-move-mod-
 
 - **件数一致**: `cargo test --workspace 2>&1 | grep "^test result:" | awk '{p+=$4} END {print p}'` で移管前後の合計 passed 件数が一致
 - **カバレッジ低下なし**: CLAUDE.md L107-L121 のカバレッジ取得コマンドで移管対象モジュールの行カバレッジが同等以上
-- **CI 通過**: `cargo test --workspace` および `cargo test --workspace --features __test_helpers` の両方を CI で確認
+- **CI 通過**: `cargo test --workspace` が CI で通過する
 - **`#[ignore]` 禁止**: CLAUDE.md L85 規約。本 issue で `#[ignore]` を新規付与しない
 
 ## 依存
@@ -127,7 +127,7 @@ Phase ごとに blocking 関係が異なるため Phase 別に列挙する。
 
 - **Phase 1 / Phase 2**: blocking 依存なし (`pub(crate)` 直接参照ゼロまたは軽微、検査関数の `src/syntax.rs` 配置にも未依存)。0033/0034/0035 完了前に着手可能
 - **Phase 3**: blocking 依存
-  - [[0033-refactor-test-helpers-module-and-bytes-mod-name]] (`__test_helpers::header_field_from_validated_parts` ラッパ完成後、tests/ から `HeaderField::from_validated_parts` 相当を呼べるようになる)
+  - [[0045-refactor-remove-test-helpers-feature]] (wire 模擬ヘルパ完成後、tests/ から HPACK decoder 経路で `HeaderField` を構築できる)
   - [[0034-refactor-consolidate-field-syntax-module]] (`validate_*` テストの crate path が `crate::syntax::` に確定している必要がある)
 - **Phase 4**: blocking 依存なし (webtransport は `pub(crate)` 直接参照ゼロ)
 - **`src/hpack/bytes.rs`**: [[0035-refactor-replace-header-bytes-with-cow]] (ファイル削除により本 issue のスコープから自動除外)

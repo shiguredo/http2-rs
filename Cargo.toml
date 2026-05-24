@@ -30,12 +30,5 @@ rust-version = "1.88"
 [dependencies]
 
 [dev-dependencies]
-# PBT: from_validated_parts と公開 API の整合性検証
-proptest = "1.6"
-
-[features]
-# テスト専用ヘルパを公開する (PBT/fuzz 専用、本番利用禁止)
-# 構築時検査をバイパスする HeaderField::from_validated_parts などを
-# 外部 crate から呼び出せるようにする。型不変条件を破壊するため
-# 通常の利用者は有効化してはならない。
-__test_helpers = []
+# PBT: const fn / runtime 検査の同値性検証
+proptest = "1.11"
