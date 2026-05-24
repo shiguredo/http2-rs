@@ -2,6 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-05-24
+- Completed: 2026-05-24
 - Model: Composer 2.5
 - Branch: feature/refactor-remove-test-helpers-feature
 
@@ -182,19 +183,31 @@ fn encode_string(buf: &mut Vec<u8>, data: &[u8]) {
 - [ ] 0036 / 0037 / 0039 の `__test_helpers` 関連記述が更新されている
 - [ ] `CHANGES.md` の `### misc` に `[UPDATE]` エントリが追加されている
 
-## 解決方法 (実装手順)
+## 解決方法
 
-1. `src/hpack/table.rs` の `#[cfg(test)] mod tests` に `prop_header_field_syntax.rs` の proptest 3 プロパティ・strategy・panic-catch ヘルパを移管
-2. `pbt/tests/prop_header_field_syntax.rs` を削除
-3. `pbt/Cargo.toml` の `shiguredo_http2` を `[dev-dependencies]` から `[dependencies]` に移動し `features = ["__test_helpers"]` を削除すると同時に、`pbt/src/lib.rs` に HPACK literal wire 符号化 + `HpackDecoder` デコードヘルパ (`wire_header_field`) を実装
-4. `pbt/tests/prop_validation.rs` の `header_field_from_validated_parts` を `pbt::wire_header_field` に置換
-5. `fuzz/fuzz_targets/fuzz_validation.rs` / `fuzz_hpack_roundtrip.rs` に wire 符号化ヘルパを定義し、wire ヘルパ方式に書き換え
-6. `Cargo.toml` の `[dev-dependencies]` の `proptest` バージョンを `"1.11"` に更新
-7. `src/__test_helpers.rs` 削除、`Cargo.toml` / `src/lib.rs` / `fuzz/Cargo.toml` から feature 関連を削除
-8. `src/hpack/table.rs` L107-L108 doc 更新
-9. 0036 / 0037 / 0039 issue 記述更新
-10. `CHANGES.md` の `### misc` に `[UPDATE]` エントリを追記
-11. 上記完了条件のコマンドをすべて実行して確認
+コミット `07fed49` (PR #12) で対応済み。
+
+### 削除したもの
+
+- `src/__test_helpers.rs` (panic-catch ラッパ 3 関数、runtime 検査ラッパ 3 関数、`header_field_from_validated_parts`)
+- `Cargo.toml` の `[features] __test_helpers = []`
+- `src/lib.rs` の `#[cfg(feature = "__test_helpers")] pub mod __test_helpers`
+- `pbt/tests/prop_header_field_syntax.rs`
+- `pbt/Cargo.toml` / `fuzz/Cargo.toml` の `features = ["__test_helpers"]`
+
+### 移管・追加したもの
+
+- `src/hpack/table.rs` の `#[cfg(test)] mod tests` 内に `mod syntax_equivalence` を追加し、const/runtime 同値性 proptest 3 プロパティと strategy、スコープ限定 panic-catch ヘルパを移管
+- `pbt/src/lib.rs` に `wire_header_field` ヘルパを追加 (HPACK Literal Header Field without Indexing で符号化し `HpackDecoder` でデコードする wire 模擬)
+- `pbt/Cargo.toml` の `shiguredo_http2` を `[dev-dependencies]` から `[dependencies]` に移動 (feature 指定なし)
+
+### 書き換えたもの
+
+- `pbt/tests/prop_validation.rs` の 7 箇所の `header_field_from_validated_parts` を `pbt::wire_header_field` に置換
+- `fuzz/fuzz_targets/fuzz_validation.rs` / `fuzz_hpack_roundtrip.rs` に wire 符号化ヘルパを定義し wire ヘルパ方式に移行
+- `Cargo.toml` の `[dev-dependencies]` の `proptest` バージョンを `"1.11"` に更新
+- issues 0036 / 0037 / 0039 の `__test_helpers` 関連記述を更新
+- `CHANGES.md` の `### misc` に `[UPDATE]` エントリを追記
 
 ## 関連
 
