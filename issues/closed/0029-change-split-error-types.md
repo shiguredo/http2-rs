@@ -1,6 +1,8 @@
 # エラー型を構築点ごとのドメイン特化型に分割する
 
 Created: 2026-05-23
+Completed: 2026-05-24
+Priority: High
 Model: Opus 4.7
 
 ## 概要
@@ -274,6 +276,14 @@ variant は `ValidationError` に残す。`ValidationError` 自体は `Error` �
 - 上位アプリが文字列マッチではなく `match e` で失敗種別を分岐できる
 - `src/lib.rs` で全ドメインエラー型が re-export されている
 - 既存の全テスト・PBT・fuzz が通る
+
+## 解決方法
+
+- `ErrorKind` から `BufferTooShort` / `Incomplete` / `InvalidInput` を削除した
+- `DecodeError` 型を新設し、フレーム decoder / HPACK decoder のバッファ操作エラーを移行した
+- `Error::buffer_too_short` / `incomplete` / `invalid_input` / `check_buffer_size` を削除し、`From<DecodeError> for Error` を追加した
+- `SettingsError` (複数形) を `SettingError` (単数形) にリネームし、tuple variant を構造化フィールドに変更した
+- `HeaderFieldError` / `FrameError` / `StreamIdError` / `LimitsError` / `SendError` は各 issue (0024/0025/0026/0027/0028) で定義済み
 
 ## 関連
 

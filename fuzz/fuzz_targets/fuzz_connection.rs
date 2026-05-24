@@ -6,7 +6,7 @@ use shiguredo_http2::{Connection, Limits};
 fuzz_target!(|data: &[u8]| {
     // サーバーとして任意のバイト列を処理する
     // クライアントから送られる任意のフレーム列による状態遷移のパニックを検出する
-    let limits = Limits::new();
+    let limits = Limits::default();
     let mut conn = Connection::server(limits);
 
     // プリフェイスは外部で処理済みとしてマークする

@@ -1567,3 +1567,78 @@ proptest! {
         prop_assert!(decoded.is_some());
     }
 }
+
+mod from_static_consistency {
+    use proptest::prelude::*;
+    use shiguredo_http2::{
+        ClientStreamId, LastStreamId, NonZeroStreamId, ServerStreamId, Weight, WindowIncrement,
+    };
+
+    proptest! {
+        /// WindowIncrement::from_static と new の一貫性
+        #[test]
+        fn prop_window_increment_static_matches_new(
+            v in 1u32..=WindowIncrement::MAX,
+        ) {
+            let via_new = WindowIncrement::new(v).unwrap();
+            let via_static = WindowIncrement::from_static(v);
+            prop_assert_eq!(via_new, via_static);
+        }
+
+        /// Weight::from_static と new の一貫性
+        #[test]
+        fn prop_weight_static_matches_new(
+            w in 0u16..=255,
+        ) {
+            let via_new = Weight::new(w).unwrap();
+            let via_static = Weight::from_static(w);
+            prop_assert_eq!(via_new, via_static);
+        }
+
+        /// LastStreamId::from_static と new の一貫性
+        #[test]
+        fn prop_last_stream_id_static_matches_new(
+            id in 0u32..=LastStreamId::MAX,
+        ) {
+            let via_new = LastStreamId::new(id).unwrap();
+            let via_static = LastStreamId::from_static(id);
+            prop_assert_eq!(via_new, via_static);
+        }
+
+        /// ClientStreamId::from_static と new の一貫性
+        #[test]
+        fn prop_client_stream_id_static_matches_new(
+            id in (1u32..=(1u32 << 31) - 1).prop_filter(
+                "奇数のみ",
+                |id| id % 2 == 1,
+            ),
+        ) {
+            let via_new = ClientStreamId::new(id).unwrap();
+            let via_static = ClientStreamId::from_static(id);
+            prop_assert_eq!(via_new, via_static);
+        }
+
+        /// ServerStreamId::from_static と new の一貫性
+        #[test]
+        fn prop_server_stream_id_static_matches_new(
+            id in (2u32..=(1u32 << 31) - 1).prop_filter(
+                "偶数のみ",
+                |id| id % 2 == 0,
+            ),
+        ) {
+            let via_new = ServerStreamId::new(id).unwrap();
+            let via_static = ServerStreamId::from_static(id);
+            prop_assert_eq!(via_new, via_static);
+        }
+
+        /// NonZeroStreamId::from_static と new の一貫性
+        #[test]
+        fn prop_non_zero_stream_id_static_matches_new(
+            id in 1u32..=(1u32 << 31) - 1,
+        ) {
+            let via_new = NonZeroStreamId::new(id).unwrap();
+            let via_static = NonZeroStreamId::from_static(id);
+            prop_assert_eq!(via_new, via_static);
+        }
+    }
+}

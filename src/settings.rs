@@ -406,6 +406,23 @@ impl WindowSize {
         Self(size)
     }
 
+    /// decoder 内部で検証済みの値から構築する
+    ///
+    /// 呼び出し側が「0..=2^31-1 の範囲」を保証していること。
+    /// 現時点では `Setting::from_wire` が `new` 経由で検査するため未使用だが、
+    /// 他の構築時検査型との API 一貫性のために用意する。
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "構築時検査型 API の一貫性のために用意")
+    )]
+    pub(crate) fn from_validated_parts(size: u32) -> Self {
+        debug_assert!(
+            size <= Self::MAX,
+            "WindowSize::from_validated_parts: size must be <= 2^31-1"
+        );
+        Self(size)
+    }
+
     /// 値を取得する
     pub const fn get(self) -> u32 {
         self.0
@@ -471,8 +488,54 @@ impl MaxFrameSize {
         Self(size)
     }
 
+    /// decoder 内部で検証済みの値から構築する
+    ///
+    /// 呼び出し側が「16384..=16777215 の範囲」を保証していること。
+    /// 現時点では `Setting::from_wire` が `new` 経由で検査するため未使用だが、
+    /// 他の構築時検査型との API 一貫性のために用意する。
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "構築時検査型 API の一貫性のために用意")
+    )]
+    pub(crate) fn from_validated_parts(size: u32) -> Self {
+        debug_assert!(
+            (Self::MIN..=Self::MAX).contains(&size),
+            "MaxFrameSize::from_validated_parts: size must be in 16384..=16777215"
+        );
+        Self(size)
+    }
+
     /// 値を取得する
     pub const fn get(self) -> u32 {
         self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    mod validated_parts {
+        use proptest::prelude::*;
+
+        use crate::settings::{MaxFrameSize, WindowSize};
+
+        proptest! {
+            #[test]
+            fn window_size_validated_matches_new(
+                size in 0u32..=WindowSize::MAX,
+            ) {
+                let via_new = WindowSize::new(size).unwrap();
+                let via_validated = WindowSize::from_validated_parts(size);
+                prop_assert_eq!(via_new, via_validated);
+            }
+
+            #[test]
+            fn max_frame_size_validated_matches_new(
+                size in MaxFrameSize::MIN..=MaxFrameSize::MAX,
+            ) {
+                let via_new = MaxFrameSize::new(size).unwrap();
+                let via_validated = MaxFrameSize::from_validated_parts(size);
+                prop_assert_eq!(via_new, via_validated);
+            }
+        }
     }
 }

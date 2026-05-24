@@ -1233,6 +1233,9 @@ checksum = "33d3ac49f07c211b152f7dc8940719c0ad8aa81bb2e04667e25e18b4ca073b39"
 [[package]]
 name = "shiguredo_http2"
 version = "2026.1.0-canary.2"
+dependencies = [
+ "proptest",
+]
 
 [[package]]
 name = "shiguredo_nghttp2"

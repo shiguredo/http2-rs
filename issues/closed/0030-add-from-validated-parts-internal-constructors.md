@@ -1,6 +1,8 @@
 # 検証済み値用の pub(crate) コンストラクタを導入する
 
 Created: 2026-05-23
+Completed: 2026-05-24
+Priority: Medium
 Model: Opus 4.7
 
 ## 概要
@@ -158,6 +160,17 @@ issue 0024 のスコープ内で実施する。
 - `from_validated_parts` と公開 API (`new` 等) の結果が一致することを `#[cfg(test)]` PBT で
   検証している
 - 既存の全テスト・PBT・fuzz が通る
+
+## 解決方法
+
+- `WindowIncrement::from_validated_parts(NonZeroU32)` を追加し、decoder で非ゼロ検査済みの値から直接構築するようにした
+- `Weight::from_validated_parts(u8)` を追加し、decoder で u8 から直接構築するようにした (u8 は常に 0..=255 に収まる)
+- `LastStreamId::from_validated_parts(u32)` を追加し、decoder で 31-bit マスク済みの値から直接構築するようにした
+- `NonZeroStreamId::from_validated_parts(NonZeroU32)` を追加し、decoder の `require_non_zero_stream_id` で使用するようにした
+- `WindowSize::from_validated_parts(u32)` / `MaxFrameSize::from_validated_parts(u32)` を API 一貫性のために追加した (現時点では未使用)
+- 全 `from_validated_parts` に `debug_assert!` で不変条件チェックを入れた
+- `src/frame/error.rs`、`src/stream_id.rs`、`src/settings.rs` に `#[cfg(test)]` 内の PBT で `from_validated_parts` と `new` の整合性を検証した
+- proptest を shiguredo_http2 の dev-dependencies に追加した
 
 ## 依存
 

@@ -13,7 +13,7 @@ pub use client::Client;
 pub use connection::Connection;
 pub use error::{Error, Result};
 pub use server::{Server, ServerConnection};
-pub use shiguredo_http2::{ErrorCode, Event, HeaderField, Limits, StreamId};
+pub use shiguredo_http2::{ErrorCode, Event, HeaderField, Limits, LimitsBuilder, StreamId};
 pub use tls::{TlsClientConfig, TlsServerConfig};
 pub use webtransport::{
     WEBTRANSPORT_PROTOCOL, WtBidiStream, WtServerRequest, WtServerSession, WtSessionHandle,

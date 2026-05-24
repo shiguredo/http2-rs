@@ -72,12 +72,24 @@
   - @voluntas
 - [CHANGE] `WtInitialSettings` 構造体を削除し、`Settings` / `Limits` の個別フィールドに展開する (issue 0026)
   - @voluntas
+- [CHANGE] `Limits::new()` / `with_*` を `LimitsBuilder` 経由に置き換え、範囲外値で panic していた挙動を `LimitsBuilder::build() -> Result<Limits, LimitsError>` に変更する (issue 0028)
+  - @voluntas
+- [CHANGE] `Limits` のフィールドを private 化し、getter メソッド経由でのみアクセス可能にする (issue 0028)
+  - @voluntas
+- [CHANGE] `Limits` の `initial_window_size` / `connection_window_size` を `WindowSize` 型に、`max_frame_size` を `MaxFrameSize` 型に変更する (issue 0028)
+  - @voluntas
+- [ADD] `LimitsBuilder::build_static` (`const fn`) を追加し、リテラル定数で構築する `Limits` の制約違反をコンパイル時に検出可能にする (issue 0028)
+  - @voluntas
 
 ### misc
 
 - [ADD] 構築時検査の `*::from_static` API に `compile_fail` doctest を追加し、不正リテラル検出のリグレッションを CI で防止する (issue 0032)
   - @voluntas
 - [UPDATE] `HeaderField::from_validated_parts` の cfg 排他 2 定義を解消し、テスト向け公開層を `__test_helpers::header_field_from_validated_parts` に集約する (issue 0033)
+  - @voluntas
+- [UPDATE] decoder 内部で構築時検査型を組み立てる際に `pub(crate) from_validated_parts` を経由するようにし、二重検査を排除する (issue 0030)
+  - @voluntas
+- [ADD] 構築時検査の完全性・健全性・`from_static` 一貫性・`from_validated_parts` 整合性を検証する PBT を整備する (issue 0031)
   - @voluntas
 - [ADD] `tokio-http2` に WebTransport 統合テスト (`tests/test_webtransport.rs`) を追加する
   - @voluntas

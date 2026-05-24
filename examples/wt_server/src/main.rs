@@ -44,17 +44,19 @@ async fn run_server(listen: &str, reject_connect: bool) -> Result<(), Error> {
 
     let tls_config = tls::generate_tls_server()?;
 
-    let limits = Limits::default()
-        .with_max_concurrent_streams(Some(100))
-        .with_enable_connect_protocol(true)
-        .with_webtransport(
+    let limits = Limits::builder()
+        .max_concurrent_streams(Some(100))
+        .enable_connect_protocol(true)
+        .webtransport(
             Some(4 * 1024 * 1024),
             Some(512 * 1024),
             Some(512 * 1024),
             Some(100),
             Some(100),
             Some(512 * 1024),
-        );
+        )
+        .build()
+        .expect("valid limits");
 
     let server = Server::bind(addr, tls_config, limits).await?;
     let local_addr = server.local_addr();

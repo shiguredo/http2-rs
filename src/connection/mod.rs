@@ -126,23 +126,23 @@ impl Connection {
     #[must_use]
     pub fn new(role: Role, limits: Limits) -> Self {
         let mut local_settings = Settings::new();
-        local_settings.header_table_size = limits.header_table_size;
-        if let Some(max) = limits.max_concurrent_streams {
+        local_settings.header_table_size = limits.header_table_size();
+        if let Some(max) = limits.max_concurrent_streams() {
             local_settings.max_concurrent_streams = Some(max);
         }
-        local_settings.initial_window_size = limits.initial_window_size;
-        local_settings.max_frame_size = limits.max_frame_size;
-        local_settings.max_header_list_size = limits.max_header_list_size;
-        local_settings.enable_connect_protocol = limits.enable_connect_protocol;
-        local_settings.no_rfc7540_priorities = limits.no_rfc7540_priorities;
-        local_settings.wt_initial_max_data = limits.wt_initial_max_data;
-        local_settings.wt_initial_max_stream_data_uni = limits.wt_initial_max_stream_data_uni;
+        local_settings.initial_window_size = limits.initial_window_size().get();
+        local_settings.max_frame_size = limits.max_frame_size().get();
+        local_settings.max_header_list_size = limits.max_header_list_size();
+        local_settings.enable_connect_protocol = limits.enable_connect_protocol();
+        local_settings.no_rfc7540_priorities = limits.no_rfc7540_priorities();
+        local_settings.wt_initial_max_data = limits.wt_initial_max_data();
+        local_settings.wt_initial_max_stream_data_uni = limits.wt_initial_max_stream_data_uni();
         local_settings.wt_initial_max_stream_data_bidi_local =
-            limits.wt_initial_max_stream_data_bidi_local;
-        local_settings.wt_initial_max_streams_uni = limits.wt_initial_max_streams_uni;
-        local_settings.wt_initial_max_streams_bidi = limits.wt_initial_max_streams_bidi;
+            limits.wt_initial_max_stream_data_bidi_local();
+        local_settings.wt_initial_max_streams_uni = limits.wt_initial_max_streams_uni();
+        local_settings.wt_initial_max_streams_bidi = limits.wt_initial_max_streams_bidi();
         local_settings.wt_initial_max_stream_data_bidi_remote =
-            limits.wt_initial_max_stream_data_bidi_remote;
+            limits.wt_initial_max_stream_data_bidi_remote();
 
         let next_stream_id = match role {
             Role::Client => 1,
@@ -154,15 +154,15 @@ impl Connection {
             state: ConnectionState::WaitingPreface,
             local_settings,
             remote_settings: Settings::new(),
-            flow_control: FlowControl::new(limits.connection_window_size),
+            flow_control: FlowControl::new(limits.connection_window_size().get()),
             streams: HashMap::new(),
             closed_streams: HashSet::new(),
             next_stream_id,
             last_recv_stream_id: 0,
             last_successful_stream_id: 0,
-            hpack_encoder: HpackEncoder::new(limits.header_table_size as usize),
-            hpack_decoder: HpackDecoder::new(limits.header_table_size as usize),
-            frame_decoder: FrameDecoder::new(limits.max_frame_size),
+            hpack_encoder: HpackEncoder::new(limits.header_table_size() as usize),
+            hpack_decoder: HpackDecoder::new(limits.header_table_size() as usize),
+            frame_decoder: FrameDecoder::new(limits.max_frame_size().get()),
             frame_encoder: FrameEncoder::new(),
             output_buffer: VecDeque::new(),
             events: VecDeque::new(),

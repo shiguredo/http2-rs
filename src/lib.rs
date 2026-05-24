@@ -52,7 +52,7 @@ pub use frame::{
     WindowUpdateFrame,
 };
 pub use hpack::{Decoder as HpackDecoder, Encoder as HpackEncoder, HeaderField, HeaderFieldError};
-pub use limits::{Limits, LimitsError};
+pub use limits::{Limits, LimitsBuilder, LimitsError};
 pub use send_error::SendError;
 pub use settings::{MaxFrameSize, Setting, SettingError, Settings, WindowSize};
 pub use stream::{Stream, StreamState};

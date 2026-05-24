@@ -1,5 +1,7 @@
 //! HTTP/2 フレームデコーダー
 
+use core::num::NonZeroU32;
+
 use crate::decode_error::DecodeError;
 use crate::error::{Error, ErrorCode, Result};
 use crate::frame::error::{LastStreamId, Weight, WindowIncrement};
@@ -258,8 +260,7 @@ fn decode_headers(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
             | (u32::from(payload[offset + 2]) << 8)
             | u32::from(payload[offset + 3]);
         // u8 は Weight の有効範囲 (0..=255) に常に収まる
-        let weight =
-            Weight::new(u16::from(payload[offset + 4])).expect("u8 is always valid for Weight");
+        let weight = Weight::from_validated_parts(payload[offset + 4]);
         offset += 5;
         Some(PriorityFields {
             exclusive,
@@ -307,7 +308,7 @@ fn decode_priority(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
         | (u32::from(payload[2]) << 8)
         | u32::from(payload[3]);
     // u8 は Weight の有効範囲 (0..=255) に常に収まる
-    let weight = Weight::new(u16::from(payload[4])).expect("u8 is always valid for Weight");
+    let weight = Weight::from_validated_parts(payload[4]);
 
     Ok(Frame::Priority(PriorityFrame {
         stream_id,
@@ -422,8 +423,7 @@ fn decode_goaway(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
         | (u32::from(payload[2]) << 8)
         | u32::from(payload[3]);
     // wire 上は 31-bit マスク済みなので LastStreamId の範囲 (0..=2^31-1) に必ず収まる
-    let last_stream_id = LastStreamId::new(last_stream_id_raw)
-        .expect("31-bit wire value is always valid for LastStreamId");
+    let last_stream_id = LastStreamId::from_validated_parts(last_stream_id_raw);
 
     let error_code = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
 
@@ -469,8 +469,9 @@ fn decode_window_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     }
 
     // 非ゼロかつ 31-bit マスク済みなので WindowIncrement の範囲に必ず収まる
-    let window_size_increment = WindowIncrement::new(raw_increment)
-        .expect("non-zero 31-bit wire value is always valid for WindowIncrement");
+    let window_size_increment = WindowIncrement::from_validated_parts(
+        NonZeroU32::new(raw_increment).expect("zero increment already rejected above"),
+    );
 
     Ok(Frame::WindowUpdate(WindowUpdateFrame {
         stream_id: StreamId::from_wire(header.stream_id),
@@ -534,9 +535,10 @@ fn decode_priority_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> 
         | (u32::from(payload[2]) << 8)
         | u32::from(payload[3]);
 
-    let prioritized_element_id = NonZeroStreamId::new(raw_id).map_err(|_| {
+    let nz_id = NonZeroU32::new(raw_id).ok_or_else(|| {
         Error::protocol_error("PRIORITY_UPDATE prioritized element ID must not be 0")
     })?;
+    let prioritized_element_id = NonZeroStreamId::from_validated_parts(nz_id);
 
     // Priority Field Value (残りのバイト)
     let priority_field_value = if payload.len() > 4 {
@@ -553,6 +555,7 @@ fn decode_priority_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> 
 
 /// stream_id が 0 の場合に PROTOCOL_ERROR を返すヘルパー
 fn require_non_zero_stream_id(raw: u32, frame_name: &str) -> Result<NonZeroStreamId> {
-    NonZeroStreamId::new(raw)
-        .map_err(|_| Error::protocol_error(format!("{frame_name} frame with stream ID 0")))
+    let nz = NonZeroU32::new(raw)
+        .ok_or_else(|| Error::protocol_error(format!("{frame_name} frame with stream ID 0")))?;
+    Ok(NonZeroStreamId::from_validated_parts(nz))
 }

@@ -1,6 +1,8 @@
 # Limits ビルダーの panic を build() Result に置き換える
 
 Created: 2026-05-23
+Completed: 2026-05-24
+Priority: High
 Model: Opus 4.7
 
 ## 概要
@@ -205,6 +207,20 @@ impl LimitsBuilder {
 - 既存の `#[should_panic]` テストが `Result::Err` テストに移行されている
 - `Connection::new` 内のフィールドアクセスが getter 経由に変更されている
 - 既存の全テスト・PBT・fuzz が通る
+
+## 解決方法
+
+- `Limits` の全フィールドを private 化し、getter メソッド経由でのみアクセス可能にした
+- `initial_window_size` / `connection_window_size` を `WindowSize` 型に、`max_frame_size` を `MaxFrameSize` 型に変更した
+- `Limits::new()` / `with_*` メソッドを削除し、`LimitsBuilder` を導入した
+- `LimitsBuilder::build() -> Result<Limits, LimitsError>` で複合制約検査 (WebTransport + connect_protocol) を実装した
+- `LimitsBuilder::build_static()` を `const fn` で実装した
+- `Default for Limits` を `Limits::builder().build().expect(...)` で維持した
+- `Connection::new` 内のフィールドアクセスを getter 経由に変更した
+- fuzz ターゲットの `Limits::new()` を `Limits::default()` に変更した
+- examples (`wt_server`, `http2_server`, `http2_client`) を `LimitsBuilder` 経由に移行した
+- tokio-http2 テスト (`client_server.rs`, `test_webtransport.rs`) を `LimitsBuilder` 経由に移行した
+- 旧 `#[should_panic]` テスト 3 件は、値範囲検査が `WindowSize::new` / `MaxFrameSize::new` (issue 0026) に移動済みのため不要になり削除した
 
 ## 依存
 

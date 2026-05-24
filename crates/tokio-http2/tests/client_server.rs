@@ -3,6 +3,7 @@
 
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use shiguredo_http2::WindowSize;
 use tokio_http2::{
     Client, ErrorCode, Event, HeaderField, Limits, Server, StreamId, TlsServerConfig,
 };
@@ -1913,7 +1914,10 @@ async fn test_multiple_clients() {
 #[tokio::test]
 async fn test_limits_max_concurrent_streams() {
     let tls_config = generate_test_cert();
-    let limits = Limits::default().with_max_concurrent_streams(Some(1));
+    let limits = Limits::builder()
+        .max_concurrent_streams(Some(1))
+        .build()
+        .expect("valid limits");
 
     let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
         .await
@@ -1997,7 +2001,10 @@ async fn test_limits_max_concurrent_streams() {
 async fn test_window_update_received() {
     let tls_config = generate_test_cert();
     // 小さいウィンドウサイズでフロー制御を誘発
-    let limits = Limits::default().with_initial_window_size(1024);
+    let limits = Limits::builder()
+        .initial_window_size(WindowSize::from_static(1024))
+        .build()
+        .expect("valid limits");
 
     let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
         .await
@@ -3082,9 +3089,11 @@ async fn test_send_data_after_reset() {
 async fn test_custom_initial_window_size() {
     let tls_config = generate_test_cert();
     // 非常に大きなウィンドウサイズ (ストリームと接続レベル両方)
-    let limits = Limits::default()
-        .with_initial_window_size(1 << 20)
-        .with_connection_window_size(1 << 20);
+    let limits = Limits::builder()
+        .initial_window_size(WindowSize::from_static(1 << 20))
+        .connection_window_size(WindowSize::from_static(1 << 20))
+        .build()
+        .expect("valid limits");
 
     let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
         .await

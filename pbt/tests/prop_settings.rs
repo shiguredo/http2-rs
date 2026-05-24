@@ -368,4 +368,26 @@ proptest! {
         let restored = Setting::from_wire(id, value).unwrap();
         prop_assert_eq!(setting, restored);
     }
+
+    /// WindowSize::from_static と WindowSize::new の一貫性
+    ///
+    /// from_static が成功するリテラルは new でも同じ結果を返す
+    #[test]
+    fn prop_window_size_static_matches_new(
+        size in 0u32..=MAX_INITIAL_WINDOW_SIZE,
+    ) {
+        let via_new = WindowSize::new(size).unwrap();
+        let via_static = WindowSize::from_static(size);
+        prop_assert_eq!(via_new, via_static);
+    }
+
+    /// MaxFrameSize::from_static と MaxFrameSize::new の一貫性
+    #[test]
+    fn prop_max_frame_size_static_matches_new(
+        size in MIN_MAX_FRAME_SIZE..=MAX_MAX_FRAME_SIZE,
+    ) {
+        let via_new = MaxFrameSize::new(size).unwrap();
+        let via_static = MaxFrameSize::from_static(size);
+        prop_assert_eq!(via_new, via_static);
+    }
 }

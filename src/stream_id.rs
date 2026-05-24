@@ -278,6 +278,21 @@ impl NonZeroStreamId {
         }
     }
 
+    /// decoder 内部で検証済みの値から構築する
+    ///
+    /// 呼び出し側が「非ゼロかつ 31-bit 範囲」を保証していること。
+    pub(crate) fn from_validated_parts(id: NonZeroU32) -> Self {
+        debug_assert!(
+            id.get() <= STREAM_ID_MAX,
+            "NonZeroStreamId::from_validated_parts: id must be <= 2^31-1"
+        );
+        if id.get().is_multiple_of(2) {
+            Self::Server(ServerStreamId::from_validated_parts(id))
+        } else {
+            Self::Client(ClientStreamId::from_validated_parts(id))
+        }
+    }
+
     /// `u32` として取得する
     pub const fn as_u32(self) -> u32 {
         match self {
@@ -630,5 +645,49 @@ mod tests {
         let raw = NonZeroU32::new(6).unwrap();
         let id = ServerStreamId::from_validated_parts(raw);
         assert_eq!(id.as_u32(), 6);
+    }
+
+    mod validated_parts {
+        use proptest::prelude::*;
+
+        use super::{ClientStreamId, NonZeroStreamId, NonZeroU32, STREAM_ID_MAX, ServerStreamId};
+
+        proptest! {
+            #[test]
+            fn client_stream_id_validated_matches_new(
+                id in (1u32..=STREAM_ID_MAX).prop_filter(
+                    "奇数のみ",
+                    |id| id % 2 == 1,
+                ),
+            ) {
+                let via_new = ClientStreamId::new(id).unwrap();
+                let nz = NonZeroU32::new(id).unwrap();
+                let via_validated = ClientStreamId::from_validated_parts(nz);
+                prop_assert_eq!(via_new, via_validated);
+            }
+
+            #[test]
+            fn server_stream_id_validated_matches_new(
+                id in (2u32..=STREAM_ID_MAX).prop_filter(
+                    "偶数のみ",
+                    |id| id % 2 == 0,
+                ),
+            ) {
+                let via_new = ServerStreamId::new(id).unwrap();
+                let nz = NonZeroU32::new(id).unwrap();
+                let via_validated = ServerStreamId::from_validated_parts(nz);
+                prop_assert_eq!(via_new, via_validated);
+            }
+
+            #[test]
+            fn non_zero_stream_id_validated_matches_new(
+                id in 1u32..=STREAM_ID_MAX,
+            ) {
+                let via_new = NonZeroStreamId::new(id).unwrap();
+                let nz = NonZeroU32::new(id).unwrap();
+                let via_validated = NonZeroStreamId::from_validated_parts(nz);
+                prop_assert_eq!(via_new, via_validated);
+            }
+        }
     }
 }

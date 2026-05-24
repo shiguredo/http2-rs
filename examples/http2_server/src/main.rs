@@ -32,9 +32,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tls_config = create_tls_config()?;
     let addr: SocketAddr = LISTEN_ADDR.parse()?;
 
-    let limits = Limits::default()
-        .with_max_concurrent_streams(Some(100))
-        .with_initial_window_size(65535);
+    let limits = Limits::builder()
+        .max_concurrent_streams(Some(100))
+        .build()
+        .expect("valid limits");
 
     let server = Server::bind(addr, tls_config, limits).await?;
 

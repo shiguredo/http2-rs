@@ -77,9 +77,9 @@ fn test_tls() -> TlsServerConfig {
 }
 
 fn server_limits() -> Limits {
-    Limits::default()
-        .with_enable_connect_protocol(true)
-        .with_webtransport(
+    Limits::builder()
+        .enable_connect_protocol(true)
+        .webtransport(
             Some(1 << 20),
             Some(64 * 1024),
             Some(64 * 1024),
@@ -87,6 +87,8 @@ fn server_limits() -> Limits {
             Some(10),
             Some(64 * 1024),
         )
+        .build()
+        .expect("valid server limits")
 }
 
 /// draft-ietf-webtrans-http2-14: クライアント → サーバー bidi ストリームへの送信をサーバーがエコーし、

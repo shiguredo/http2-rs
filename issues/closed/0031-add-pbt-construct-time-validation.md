@@ -1,6 +1,8 @@
 # 構築時検査の PBT を整備する
 
 Created: 2026-05-23
+Completed: 2026-05-24
+Priority: Medium
 Model: Opus 4.7
 
 ## 概要
@@ -175,6 +177,15 @@ pub mod strategies {
 - `from_static` と `new` の一貫性プロパティが実装されている
 - `from_validated_parts` と `new` の整合性プロパティが `#[cfg(test)]` 内で実装されている
 - 既存の全テスト・PBT・fuzz が通る
+
+## 解決方法
+
+- `pbt/tests/prop_frame.rs` に `from_static_consistency` モジュールを追加し、`WindowIncrement`/`Weight`/`LastStreamId`/`ClientStreamId`/`ServerStreamId`/`NonZeroStreamId` の `from_static` と `new` の一貫性を検証する PBT を追加した
+- `pbt/tests/prop_settings.rs` に `WindowSize`/`MaxFrameSize` の `from_static` と `new` の一貫性 PBT を追加した
+- `pbt/tests/prop_limits.rs` を新規作成し、`LimitsBuilder::build()` の複合制約検査 (WT + connect_protocol)、getter ラウンドトリップを PBT で検証した
+- `src/frame/error.rs`、`src/stream_id.rs`、`src/settings.rs` に `from_validated_parts` と `new` の整合性 PBT を `#[cfg(test)]` 内で実装した (issue 0030 と統合)
+- ラウンドトリップ PBT は既存の `prop_frame.rs` / `prop_settings.rs` で充実しているため追加不要と判断した
+- strategies の集約 (`pbt/src/lib.rs`) は各テストファイル内にローカル定義する方針で実装した
 
 ## 依存
 
