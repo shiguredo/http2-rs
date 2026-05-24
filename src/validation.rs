@@ -5,7 +5,7 @@
 //! 個別フィールドの値構文検査は [`crate::hpack::HeaderField::new`] に集約されている。
 //! 本モジュールは「ヘッダーリスト全体の整合性」検査と、HPACK decoder 経路で
 //! 検査をバイパスして構築された `HeaderField` の再検査を担う。
-//! 再検査は [`crate::hpack::table`] の `validate_field_name` /
+//! 再検査は [`crate::syntax`] の `validate_field_name` /
 //! `validate_field_value` / `validate_pseudo_header` を直接呼ぶことで
 //! 余分な alloc を避けつつ `HeaderField::new` と同等の検査を実施する。
 
@@ -172,7 +172,7 @@ fn strip_default_port<'a>(authority: &'a [u8], scheme: Option<&[u8]>) -> &'a [u8
 /// 含む field-value 等を検出する。`HeaderField::new_with_sensitive` を呼ぶ
 /// 実装だと Vec を 2 個確保して即捨てるため、検査関数を直接呼んで alloc を回避する。
 fn check_field(header: &HeaderField) -> Result<(), Error> {
-    use crate::hpack::table::{validate_field_name, validate_field_value, validate_pseudo_header};
+    use crate::syntax::{validate_field_name, validate_field_value, validate_pseudo_header};
     let name = header.name();
     let value = header.value();
     validate_field_name(name)
