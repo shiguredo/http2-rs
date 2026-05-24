@@ -48,6 +48,12 @@
   - @voluntas
 - [CHANGE] `SettingsError` (複数形) を `SettingError` (単数形) にリネームし、tuple variant を構造化フィールドに変更する (issue 0029)
   - @voluntas
+- [CHANGE] `StreamId` を `u32` 型エイリアスから `enum StreamId { Connection, Client(ClientStreamId), Server(ServerStreamId) }` に変更し、奇偶ルールと接続制御 ID を型で表現する (issue 0025)
+  - @voluntas
+- [CHANGE] `CONNECTION_STREAM_ID` 定数を廃止し、`StreamId::Connection` に置き換える (issue 0025)
+  - @voluntas
+- [CHANGE] `FrameHeader.stream_id` を明示的な `u32` に変更し、wire レベルの raw 値を保持する (issue 0025)
+  - @voluntas
 
 ### misc
 

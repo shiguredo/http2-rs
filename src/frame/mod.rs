@@ -13,15 +13,10 @@ pub use error::{FrameError, LastStreamId, Weight, WindowIncrement};
 pub use flags::FrameFlags;
 
 use crate::settings::Setting;
+pub use crate::stream_id::StreamId;
 
 /// フレームヘッダーサイズ（9 バイト）
 pub const FRAME_HEADER_SIZE: usize = 9;
-
-/// ストリーム ID の型
-pub type StreamId = u32;
-
-/// 接続レベルのストリーム ID
-pub const CONNECTION_STREAM_ID: StreamId = 0;
 
 /// フレームタイプ (RFC 9113 Section 6, RFC 9218 Section 7.1)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -128,14 +123,14 @@ pub struct FrameHeader {
     pub frame_type: u8,
     /// フレームフラグ
     pub flags: FrameFlags,
-    /// ストリーム ID（31 ビット）
-    pub stream_id: StreamId,
+    /// ストリーム ID（31 ビット、wire レベルの raw 値）
+    pub stream_id: u32,
 }
 
 impl FrameHeader {
     /// 新しい `FrameHeader` を生成する
     #[must_use]
-    pub const fn new(frame_type: FrameType, flags: FrameFlags, stream_id: StreamId) -> Self {
+    pub const fn new(frame_type: FrameType, flags: FrameFlags, stream_id: u32) -> Self {
         Self {
             length: 0,
             frame_type: frame_type.as_u8(),
@@ -556,21 +551,21 @@ pub enum Frame {
 impl Frame {
     /// フレームのストリーム ID を取得する
     #[must_use]
-    pub const fn stream_id(&self) -> StreamId {
+    pub fn stream_id(&self) -> StreamId {
         match self {
             Self::Data(f) => f.stream_id,
             Self::Headers(f) => f.stream_id,
             Self::Priority(f) => f.stream_id,
             Self::RstStream(f) => f.stream_id,
-            Self::Settings(_) => CONNECTION_STREAM_ID,
+            Self::Settings(_) => StreamId::Connection,
             Self::PushPromise { stream_id } => *stream_id,
-            Self::Ping(_) => CONNECTION_STREAM_ID,
-            Self::Goaway(_) => CONNECTION_STREAM_ID,
+            Self::Ping(_) => StreamId::Connection,
+            Self::Goaway(_) => StreamId::Connection,
             Self::WindowUpdate(f) => f.stream_id,
             Self::Continuation(f) => f.stream_id,
             // RFC 9218 Section 7.1: PRIORITY_UPDATE は stream identifier 0 で送信される
-            Self::PriorityUpdate(_) => CONNECTION_STREAM_ID,
-            Self::Unknown { header, .. } => header.stream_id,
+            Self::PriorityUpdate(_) => StreamId::Connection,
+            Self::Unknown { header, .. } => StreamId::from_wire(header.stream_id),
         }
     }
 

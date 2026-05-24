@@ -14,7 +14,7 @@ use shiguredo_http2::{
 
 /// 有効なストリーム ID を生成する（クライアント開始: 奇数）
 fn client_stream_id() -> impl Strategy<Value = StreamId> {
-    (1u32..=100).prop_map(|n| n * 2 + 1) // 1, 3, 5, ...
+    (1u32..=100).prop_map(|n| StreamId::from_wire(n * 2 + 1)) // 1, 3, 5, ...
 }
 
 /// フレームをバイト列にエンコードする
@@ -147,7 +147,7 @@ proptest! {
 
     /// サーバーが偶数のストリーム ID を受信した場合、PROTOCOL_ERROR
     #[test]
-    fn prop_server_rejects_even_stream_id(stream_id in (1u32..=100).prop_map(|n| n * 2)) {
+    fn prop_server_rejects_even_stream_id(stream_id in (1u32..=100).prop_map(|n| StreamId::from_wire(n * 2))) {
         let mut server = Connection::server(Limits::default());
         server.mark_preface_received();
         server.initiate().unwrap();
@@ -197,9 +197,10 @@ proptest! {
     /// ストリーム ID が単調増加しない場合、PROTOCOL_ERROR
     #[test]
     fn prop_non_monotonic_stream_id_is_error(
-        first_id in (5u32..=100).prop_map(|n| n * 2 + 1),
+        first_id_raw in (5u32..=100).prop_map(|n| n * 2 + 1),
     ) {
-        let second_id = first_id - 2; // 単調増加していない
+        let first_id = StreamId::from_wire(first_id_raw);
+        let second_id = StreamId::from_wire(first_id_raw - 2); // 単調増加していない
 
         let mut server = Connection::server(Limits::default());
         server.mark_preface_received();
@@ -328,7 +329,7 @@ proptest! {
         client.process().unwrap();
 
         // サーバーから GOAWAY を受信
-        let goaway_frame = Frame::Goaway(GoawayFrame::new(0, ErrorCode::NoError.as_u32()));
+        let goaway_frame = Frame::Goaway(GoawayFrame::new(StreamId::Connection, ErrorCode::NoError.as_u32()));
         let goaway_bytes = encode_frame(&goaway_frame);
         client.feed(&goaway_bytes).unwrap();
         client.process().unwrap();
@@ -644,7 +645,7 @@ proptest! {
             HeaderField::new(":authority", "example.com").unwrap(),
         ];
         let stream_id = client.start_stream(request_headers, true).unwrap();
-        prop_assert_eq!(stream_id, 1); // 最初のクライアントストリーム
+        prop_assert_eq!(stream_id, StreamId::from_wire(1)); // 最初のクライアントストリーム
 
         // クライアントの出力をサーバーに送信
         if let Some(client_output) = client.poll_output() {
@@ -657,7 +658,8 @@ proptest! {
         while let Some(event) = server.poll_event() {
             if matches!(
                 &event,
-                shiguredo_http2::Event::HeadersReceived { stream_id: 1, end_stream: true, .. }
+                shiguredo_http2::Event::HeadersReceived { stream_id, end_stream: true, .. }
+                    if stream_id.as_u32() == 1
             ) {
                 found_headers = true;
                 break;
@@ -690,7 +692,7 @@ proptest! {
 
         // ストリーム ID は奇数で単調増加
         for (i, &id) in stream_ids.iter().enumerate() {
-            let expected = i as u32 * 2 + 1; // 1, 3, 5, ...
+            let expected = StreamId::from_wire(i as u32 * 2 + 1); // 1, 3, 5, ...
             prop_assert_eq!(id, expected);
         }
     }
@@ -731,7 +733,7 @@ proptest! {
         let (_client, mut server) = setup_client_server();
 
         // クライアント: 接続レベルの WINDOW_UPDATE を送信
-        let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::new(0, increment));
+        let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::new(StreamId::Connection, increment));
         let wu_bytes = encode_frame(&wu_frame);
         server.feed(&wu_bytes).unwrap();
         server.process().unwrap();
@@ -739,7 +741,7 @@ proptest! {
         // サーバー: WindowUpdateReceived イベントを確認
         let mut found_window_update = false;
         while let Some(event) = server.poll_event() {
-            if matches!(&event, shiguredo_http2::Event::WindowUpdateReceived { stream_id: 0, .. }) {
+            if matches!(&event, shiguredo_http2::Event::WindowUpdateReceived { stream_id: StreamId::Connection, .. }) {
                 found_window_update = true;
                 break;
             }
@@ -755,7 +757,7 @@ proptest! {
         let (mut client, _server) = setup_client_server();
 
         // サーバー: GOAWAY を送信
-        let goaway_frame = Frame::Goaway(GoawayFrame::new(0, ErrorCode::NoError.as_u32()));
+        let goaway_frame = Frame::Goaway(GoawayFrame::new(StreamId::Connection, ErrorCode::NoError.as_u32()));
         let goaway_bytes = encode_frame(&goaway_frame);
         client.feed(&goaway_bytes).unwrap();
         client.process().unwrap();
@@ -793,7 +795,7 @@ proptest! {
         while server.poll_event().is_some() {}
 
         // サーバー: RST_STREAM を送信
-        let rst_frame = Frame::RstStream(RstStreamFrame::new(1, error_code));
+        let rst_frame = Frame::RstStream(RstStreamFrame::new(StreamId::from_wire(1), error_code));
         let rst_bytes = encode_frame(&rst_frame);
         client.feed(&rst_bytes).unwrap();
         client.process().unwrap();
@@ -801,7 +803,7 @@ proptest! {
         // クライアント: StreamReset イベントを確認
         let mut found_reset = false;
         while let Some(event) = client.poll_event() {
-            if matches!(&event, shiguredo_http2::Event::StreamReset { stream_id: 1, .. }) {
+            if matches!(&event, shiguredo_http2::Event::StreamReset { stream_id, .. } if stream_id.as_u32() == 1) {
                 found_reset = true;
                 break;
             }
@@ -827,7 +829,7 @@ mod tests {
         server.process().unwrap();
 
         // HEADERS なしで CONTINUATION を送信
-        let continuation = create_continuation(1, vec![0x82], true);
+        let continuation = create_continuation(StreamId::from_wire(1), vec![0x82], true);
         let continuation_bytes = encode_frame(&Frame::Continuation(continuation));
         server.feed(&continuation_bytes).unwrap();
 
@@ -852,7 +854,10 @@ mod tests {
         server.process().unwrap();
 
         // idle ストリームに RST_STREAM を送信
-        let rst_frame = Frame::RstStream(RstStreamFrame::new(1, ErrorCode::Cancel.as_u32()));
+        let rst_frame = Frame::RstStream(RstStreamFrame::new(
+            StreamId::from_wire(1),
+            ErrorCode::Cancel.as_u32(),
+        ));
         let rst_bytes = encode_frame(&rst_frame);
         server.feed(&rst_bytes).unwrap();
 

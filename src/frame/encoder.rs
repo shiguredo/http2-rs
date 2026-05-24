@@ -95,7 +95,8 @@ impl FrameEncoder {
             (frame.data.len() as u32, None)
         };
 
-        let header = FrameHeader::new(FrameType::Data, flags, frame.stream_id).with_length(length);
+        let header =
+            FrameHeader::new(FrameType::Data, flags, frame.stream_id.as_u32()).with_length(length);
 
         self.encode_header(&header);
 
@@ -140,8 +141,8 @@ impl FrameEncoder {
             (frame.header_block_fragment.len() as u32, None)
         };
 
-        let header =
-            FrameHeader::new(FrameType::Headers, flags, frame.stream_id).with_length(length);
+        let header = FrameHeader::new(FrameType::Headers, flags, frame.stream_id.as_u32())
+            .with_length(length);
 
         self.encode_header(&header);
 
@@ -175,8 +176,12 @@ impl FrameEncoder {
 
     /// RST_STREAM フレームをエンコードする
     fn encode_rst_stream(&mut self, frame: &RstStreamFrame) -> Result<()> {
-        let header = FrameHeader::new(FrameType::RstStream, FrameFlags::empty(), frame.stream_id)
-            .with_length(4);
+        let header = FrameHeader::new(
+            FrameType::RstStream,
+            FrameFlags::empty(),
+            frame.stream_id.as_u32(),
+        )
+        .with_length(4);
 
         self.encode_header(&header);
         self.buf.extend_from_slice(&frame.error_code.to_be_bytes());
@@ -231,10 +236,11 @@ impl FrameEncoder {
 
         self.encode_header(&header);
         // Last-Stream-ID (31 bits, R bit is reserved)
-        self.buf.push(((frame.last_stream_id >> 24) & 0x7f) as u8);
-        self.buf.push(((frame.last_stream_id >> 16) & 0xff) as u8);
-        self.buf.push(((frame.last_stream_id >> 8) & 0xff) as u8);
-        self.buf.push((frame.last_stream_id & 0xff) as u8);
+        let last_stream_id = frame.last_stream_id.as_u32();
+        self.buf.push(((last_stream_id >> 24) & 0x7f) as u8);
+        self.buf.push(((last_stream_id >> 16) & 0xff) as u8);
+        self.buf.push(((last_stream_id >> 8) & 0xff) as u8);
+        self.buf.push((last_stream_id & 0xff) as u8);
         // Error Code
         self.buf.extend_from_slice(&frame.error_code.to_be_bytes());
         // Debug Data
@@ -247,7 +253,7 @@ impl FrameEncoder {
         let header = FrameHeader::new(
             FrameType::WindowUpdate,
             FrameFlags::empty(),
-            frame.stream_id,
+            frame.stream_id.as_u32(),
         )
         .with_length(4);
 
@@ -271,8 +277,8 @@ impl FrameEncoder {
         }
 
         let length = frame.header_block_fragment.len() as u32;
-        let header =
-            FrameHeader::new(FrameType::Continuation, flags, frame.stream_id).with_length(length);
+        let header = FrameHeader::new(FrameType::Continuation, flags, frame.stream_id.as_u32())
+            .with_length(length);
 
         self.encode_header(&header);
         self.buf.extend_from_slice(&frame.header_block_fragment);
@@ -288,13 +294,11 @@ impl FrameEncoder {
 
         self.encode_header(&header);
         // Prioritized Element ID (31 bits, R bit is reserved)
-        self.buf
-            .push(((frame.prioritized_element_id >> 24) & 0x7f) as u8);
-        self.buf
-            .push(((frame.prioritized_element_id >> 16) & 0xff) as u8);
-        self.buf
-            .push(((frame.prioritized_element_id >> 8) & 0xff) as u8);
-        self.buf.push((frame.prioritized_element_id & 0xff) as u8);
+        let element_id = frame.prioritized_element_id.as_u32();
+        self.buf.push(((element_id >> 24) & 0x7f) as u8);
+        self.buf.push(((element_id >> 16) & 0xff) as u8);
+        self.buf.push(((element_id >> 8) & 0xff) as u8);
+        self.buf.push((element_id & 0xff) as u8);
         // Priority Field Value
         self.buf.extend_from_slice(&frame.priority_field_value);
         Ok(())

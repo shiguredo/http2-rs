@@ -3,9 +3,9 @@
 use crate::decode_error::DecodeError;
 use crate::error::{Error, ErrorCode, Result};
 use crate::frame::{
-    CONNECTION_STREAM_ID, ContinuationFrame, DataFrame, FRAME_HEADER_SIZE, Frame, FrameFlags,
-    FrameHeader, FrameType, GoawayFrame, HeadersFrame, PingFrame, PriorityFields, PriorityFrame,
-    PriorityUpdateFrame, RstStreamFrame, SettingsFrame, WindowUpdateFrame,
+    ContinuationFrame, DataFrame, FRAME_HEADER_SIZE, Frame, FrameFlags, FrameHeader, FrameType,
+    GoawayFrame, HeadersFrame, PingFrame, PriorityFields, PriorityFrame, PriorityUpdateFrame,
+    RstStreamFrame, SettingsFrame, StreamId, WindowUpdateFrame,
 };
 use crate::settings::Setting;
 
@@ -179,7 +179,7 @@ fn decode_frame(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 /// DATA フレームをデコードする
 fn decode_data(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     // DATA フレームはストリーム ID が 0 であってはならない
-    if header.stream_id == CONNECTION_STREAM_ID {
+    if header.stream_id == 0 {
         return Err(Error::protocol_error("DATA frame with stream ID 0"));
     }
 
@@ -207,7 +207,7 @@ fn decode_data(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     };
 
     Ok(Frame::Data(DataFrame {
-        stream_id: header.stream_id,
+        stream_id: StreamId::from_wire(header.stream_id),
         end_stream,
         data,
         pad_length,
@@ -217,7 +217,7 @@ fn decode_data(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 /// HEADERS フレームをデコードする
 fn decode_headers(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     // HEADERS フレームはストリーム ID が 0 であってはならない
-    if header.stream_id == CONNECTION_STREAM_ID {
+    if header.stream_id == 0 {
         return Err(Error::protocol_error("HEADERS frame with stream ID 0"));
     }
 
@@ -264,7 +264,7 @@ fn decode_headers(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
         offset += 5;
         Some(PriorityFields {
             exclusive,
-            stream_dependency,
+            stream_dependency: StreamId::from_wire(stream_dependency),
             weight,
         })
     } else {
@@ -274,7 +274,7 @@ fn decode_headers(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     let header_block_fragment = payload[offset..data_end].to_vec();
 
     Ok(Frame::Headers(HeadersFrame {
-        stream_id: header.stream_id,
+        stream_id: StreamId::from_wire(header.stream_id),
         end_stream,
         end_headers,
         priority_fields,
@@ -291,7 +291,7 @@ fn decode_headers(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 /// 相互運用性のため受信は処理するが、優先度制御には使用しない。
 fn decode_priority(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     // PRIORITY フレームはストリーム ID が 0 であってはならない
-    if header.stream_id == CONNECTION_STREAM_ID {
+    if header.stream_id == 0 {
         return Err(Error::protocol_error("PRIORITY frame with stream ID 0"));
     }
 
@@ -312,9 +312,9 @@ fn decode_priority(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     let weight = payload[4];
 
     Ok(Frame::Priority(PriorityFrame {
-        stream_id: header.stream_id,
+        stream_id: StreamId::from_wire(header.stream_id),
         exclusive,
-        stream_dependency,
+        stream_dependency: StreamId::from_wire(stream_dependency),
         weight,
     }))
 }
@@ -322,7 +322,7 @@ fn decode_priority(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 /// RST_STREAM フレームをデコードする
 fn decode_rst_stream(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     // RST_STREAM フレームはストリーム ID が 0 であってはならない
-    if header.stream_id == CONNECTION_STREAM_ID {
+    if header.stream_id == 0 {
         return Err(Error::protocol_error("RST_STREAM frame with stream ID 0"));
     }
 
@@ -334,7 +334,7 @@ fn decode_rst_stream(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     let error_code = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
 
     Ok(Frame::RstStream(RstStreamFrame {
-        stream_id: header.stream_id,
+        stream_id: StreamId::from_wire(header.stream_id),
         error_code,
     }))
 }
@@ -342,7 +342,7 @@ fn decode_rst_stream(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 /// SETTINGS フレームをデコードする
 fn decode_settings(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     // SETTINGS フレームはストリーム ID が 0 でなければならない
-    if header.stream_id != CONNECTION_STREAM_ID {
+    if header.stream_id != 0 {
         return Err(Error::protocol_error(
             "SETTINGS frame with non-zero stream ID",
         ));
@@ -383,7 +383,7 @@ fn decode_settings(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 /// PING フレームをデコードする
 fn decode_ping(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     // PING フレームはストリーム ID が 0 でなければならない
-    if header.stream_id != CONNECTION_STREAM_ID {
+    if header.stream_id != 0 {
         return Err(Error::protocol_error("PING frame with non-zero stream ID"));
     }
 
@@ -402,7 +402,7 @@ fn decode_ping(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 /// GOAWAY フレームをデコードする
 fn decode_goaway(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     // GOAWAY フレームはストリーム ID が 0 でなければならない
-    if header.stream_id != CONNECTION_STREAM_ID {
+    if header.stream_id != 0 {
         return Err(Error::protocol_error(
             "GOAWAY frame with non-zero stream ID",
         ));
@@ -429,7 +429,7 @@ fn decode_goaway(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     };
 
     Ok(Frame::Goaway(GoawayFrame {
-        last_stream_id,
+        last_stream_id: StreamId::from_wire(last_stream_id),
         error_code,
         debug_data,
     }))
@@ -451,7 +451,7 @@ fn decode_window_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 
     // window_size_increment が 0 は無効
     if window_size_increment == 0 {
-        if header.stream_id == CONNECTION_STREAM_ID {
+        if header.stream_id == 0 {
             return Err(Error::connection_error(
                 ErrorCode::ProtocolError,
                 "WINDOW_UPDATE with zero increment on connection",
@@ -464,7 +464,7 @@ fn decode_window_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     }
 
     Ok(Frame::WindowUpdate(WindowUpdateFrame {
-        stream_id: header.stream_id,
+        stream_id: StreamId::from_wire(header.stream_id),
         window_size_increment,
     }))
 }
@@ -472,7 +472,7 @@ fn decode_window_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 /// CONTINUATION フレームをデコードする
 fn decode_continuation(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     // CONTINUATION フレームはストリーム ID が 0 であってはならない
-    if header.stream_id == CONNECTION_STREAM_ID {
+    if header.stream_id == 0 {
         return Err(Error::protocol_error("CONTINUATION frame with stream ID 0"));
     }
 
@@ -480,7 +480,7 @@ fn decode_continuation(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     let header_block_fragment = payload.to_vec();
 
     Ok(Frame::Continuation(ContinuationFrame {
-        stream_id: header.stream_id,
+        stream_id: StreamId::from_wire(header.stream_id),
         end_headers,
         header_block_fragment,
     }))
@@ -495,20 +495,20 @@ fn decode_continuation(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 /// 受信時はストリーム ID のみ抽出し、connection モジュールでエラー処理する。
 fn decode_push_promise(header: FrameHeader, _payload: &[u8]) -> Result<Frame> {
     // PUSH_PROMISE フレームはストリーム ID が 0 であってはならない
-    if header.stream_id == CONNECTION_STREAM_ID {
+    if header.stream_id == 0 {
         return Err(Error::protocol_error("PUSH_PROMISE frame with stream ID 0"));
     }
 
     // ペイロードの詳細なデコードは不要 (エラーを返すため)
     Ok(Frame::PushPromise {
-        stream_id: header.stream_id,
+        stream_id: StreamId::from_wire(header.stream_id),
     })
 }
 
 /// PRIORITY_UPDATE フレームをデコードする (RFC 9218 Section 7.1)
 fn decode_priority_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
     // RFC 9218 Section 7.1: PRIORITY_UPDATE フレームはストリーム ID が 0 でなければならない
-    if header.stream_id != CONNECTION_STREAM_ID {
+    if header.stream_id != 0 {
         return Err(Error::protocol_error(
             "PRIORITY_UPDATE frame with non-zero stream ID",
         ));
@@ -535,7 +535,7 @@ fn decode_priority_update(header: FrameHeader, payload: &[u8]) -> Result<Frame> 
     };
 
     Ok(Frame::PriorityUpdate(PriorityUpdateFrame {
-        prioritized_element_id,
+        prioritized_element_id: StreamId::from_wire(prioritized_element_id),
         priority_field_value,
     }))
 }

@@ -408,7 +408,7 @@ async fn test_goaway() {
             ..
         } = event
         {
-            assert_eq!(last_stream_id, 0);
+            assert_eq!(last_stream_id, StreamId::Connection);
             assert_eq!(error_code, ErrorCode::NoError);
             break;
         }
@@ -1033,22 +1033,24 @@ async fn test_bidirectional_streaming() {
     let server_handle = tokio::spawn(async move {
         let mut conn = server.accept().await.expect("failed to accept connection");
 
-        let mut stream_id = 0;
+        // ヘッダー受信後に設定される
+        let mut stream_id: Option<StreamId> = None;
 
         loop {
             let event = conn.next_event().await.expect("failed to get event");
             match event {
                 Event::HeadersReceived { stream_id: sid, .. } => {
-                    stream_id = sid;
+                    stream_id = Some(sid);
                     let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
-                    conn.send_response(stream_id, response_headers, false)
+                    conn.send_response(sid, response_headers, false)
                         .await
                         .expect("failed to send response");
                 }
                 Event::DataReceived {
                     data, end_stream, ..
                 } => {
-                    conn.send_data(stream_id, data, end_stream)
+                    let sid = stream_id.expect("data received before headers");
+                    conn.send_data(sid, data, end_stream)
                         .await
                         .expect("failed to echo data");
                     if end_stream {
@@ -1321,7 +1323,8 @@ async fn test_post_request_with_body() {
     let server_handle = tokio::spawn(async move {
         let mut conn = server.accept().await.expect("failed to accept connection");
 
-        let mut stream_id = 0;
+        // ヘッダー受信後に設定される
+        let mut stream_id: Option<StreamId> = None;
         let mut request_body = Vec::new();
 
         loop {
@@ -1339,23 +1342,24 @@ async fn test_post_request_with_body() {
                         .find(|h| h.name() == b":method")
                         .expect("missing :method");
                     assert_eq!(method.value(), b"POST");
-                    stream_id = sid;
+                    stream_id = Some(sid);
                 }
                 Event::DataReceived {
                     data, end_stream, ..
                 } => {
                     request_body.extend_from_slice(&data);
                     if end_stream {
+                        let sid = stream_id.expect("data received before headers");
                         // エコーレスポンス
                         let response_headers = vec![
                             HeaderField::new(":status", "200").unwrap(),
                             HeaderField::new("content-length", request_body.len().to_string())
                                 .unwrap(),
                         ];
-                        conn.send_response(stream_id, response_headers, false)
+                        conn.send_response(sid, response_headers, false)
                             .await
                             .expect("failed to send response");
-                        conn.send_data(stream_id, request_body.clone(), true)
+                        conn.send_data(sid, request_body.clone(), true)
                             .await
                             .expect("failed to send data");
                         break;
@@ -1793,7 +1797,7 @@ async fn test_goaway_with_error_and_debug_data() {
                 ..
             }) => {
                 assert_eq!(error_code, ErrorCode::NoError);
-                assert_eq!(last_stream_id, 0);
+                assert_eq!(last_stream_id, StreamId::Connection);
                 break;
             }
             Ok(_) => {}
@@ -2092,27 +2096,29 @@ async fn test_large_request_body() {
     let server_handle = tokio::spawn(async move {
         let mut conn = server.accept().await.expect("failed to accept connection");
 
-        let mut stream_id = 0;
+        // ヘッダー受信後に設定される
+        let mut stream_id: Option<StreamId> = None;
         let mut received_body = Vec::new();
 
         loop {
             let event = conn.next_event().await.expect("failed to get event");
             match event {
                 Event::HeadersReceived { stream_id: sid, .. } => {
-                    stream_id = sid;
+                    stream_id = Some(sid);
                 }
                 Event::DataReceived {
                     data, end_stream, ..
                 } => {
                     received_body.extend_from_slice(&data);
                     if end_stream {
+                        let sid = stream_id.expect("data received before headers");
                         // 受信サイズをレスポンスで返す
                         let response_headers = vec![
                             HeaderField::new(":status", "200").unwrap(),
                             HeaderField::new("x-received-size", received_body.len().to_string())
                                 .unwrap(),
                         ];
-                        conn.send_response(stream_id, response_headers, true)
+                        conn.send_response(sid, response_headers, true)
                             .await
                             .expect("failed to send response");
                         break;
@@ -2805,7 +2811,8 @@ async fn test_put_request_with_body() {
     let server_handle = tokio::spawn(async move {
         let mut conn = server.accept().await.expect("failed to accept connection");
 
-        let mut stream_id = 0;
+        // ヘッダー受信後に設定される
+        let mut stream_id: Option<StreamId> = None;
         let mut request_body = Vec::new();
 
         loop {
@@ -2821,15 +2828,16 @@ async fn test_put_request_with_body() {
                         .find(|h| h.name() == b":method")
                         .map(|h| h.value());
                     assert_eq!(method, Some(b"PUT" as &[u8]));
-                    stream_id = sid;
+                    stream_id = Some(sid);
                 }
                 Event::DataReceived {
                     data, end_stream, ..
                 } => {
                     request_body.extend_from_slice(&data);
                     if end_stream {
+                        let sid = stream_id.expect("data received before headers");
                         let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
-                        conn.send_response(stream_id, response_headers, true)
+                        conn.send_response(sid, response_headers, true)
                             .await
                             .expect("failed to send response");
                         break;

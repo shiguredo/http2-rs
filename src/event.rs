@@ -113,7 +113,7 @@ pub enum Event {
 impl Event {
     /// イベントがストリームに関連するかどうかを返す
     #[must_use]
-    pub const fn stream_id(&self) -> Option<StreamId> {
+    pub fn stream_id(&self) -> Option<StreamId> {
         match self {
             Self::HeadersReceived { stream_id, .. }
             | Self::DataReceived { stream_id, .. }
@@ -121,14 +121,18 @@ impl Event {
             | Self::StreamReset { stream_id, .. }
             | Self::StreamClosed { stream_id }
             | Self::PriorityUpdateReceived { stream_id, .. } => Some(*stream_id),
-            Self::WindowUpdateReceived { stream_id, .. } if *stream_id != 0 => Some(*stream_id),
+            Self::WindowUpdateReceived { stream_id, .. }
+                if !matches!(stream_id, StreamId::Connection) =>
+            {
+                Some(*stream_id)
+            }
             _ => None,
         }
     }
 
     /// イベントが接続レベルかどうかを返す
     #[must_use]
-    pub const fn is_connection_level(&self) -> bool {
+    pub fn is_connection_level(&self) -> bool {
         matches!(
             self,
             Self::ConnectionPreface
@@ -136,6 +140,6 @@ impl Event {
                 | Self::PingReceived { .. }
                 | Self::GoawayReceived { .. }
                 | Self::ConnectionError { .. }
-        ) || matches!(self, Self::WindowUpdateReceived { stream_id, .. } if *stream_id == 0)
+        ) || matches!(self, Self::WindowUpdateReceived { stream_id, .. } if matches!(stream_id, StreamId::Connection))
     }
 }

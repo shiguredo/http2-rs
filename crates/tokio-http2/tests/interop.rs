@@ -979,7 +979,7 @@ async fn test_http2_client_nghttp2_server_goaway() {
             ..
         } = event
         {
-            assert_eq!(last_stream_id, 0);
+            assert_eq!(last_stream_id, tokio_http2::StreamId::Connection);
             assert_eq!(error_code, Http2ErrorCode::NoError);
             break;
         }
@@ -1006,7 +1006,8 @@ async fn test_nghttp2_client_http2_server_post_with_body() {
     let server_handle = tokio::spawn(async move {
         let mut conn = server.accept().await.expect("failed to accept connection");
         let mut request_body = Vec::new();
-        let mut request_stream_id = 0;
+        // ヘッダー受信後に設定される
+        let mut request_stream_id: Option<tokio_http2::StreamId> = None;
         let mut headers_received = false;
 
         loop {
@@ -1022,7 +1023,7 @@ async fn test_nghttp2_client_http2_server_post_with_body() {
                         .find(|h| h.name() == b":method")
                         .expect("missing :method header");
                     assert_eq!(method.value(), b"POST");
-                    request_stream_id = stream_id;
+                    request_stream_id = Some(stream_id);
                     headers_received = true;
 
                     if end_stream {
@@ -1035,7 +1036,10 @@ async fn test_nghttp2_client_http2_server_post_with_body() {
                     end_stream,
                 })) => {
                     if headers_received {
-                        assert_eq!(stream_id, request_stream_id);
+                        assert_eq!(
+                            stream_id,
+                            request_stream_id.expect("data received before headers")
+                        );
                         request_body.extend_from_slice(&data);
 
                         if end_stream {
@@ -1056,8 +1060,9 @@ async fn test_nghttp2_client_http2_server_post_with_body() {
         assert_eq!(request_body, b"Hello from nghttp2!");
 
         // レスポンスを送信
+        let sid = request_stream_id.expect("headers not received");
         let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
-        conn.send_response(request_stream_id, response_headers, true)
+        conn.send_response(sid, response_headers, true)
             .await
             .expect("failed to send response");
     });
@@ -4111,7 +4116,8 @@ async fn test_nghttp2_client_http2_server_goaway_after_stream() {
 
     let server_handle = tokio::spawn(async move {
         let mut conn = server.accept().await.expect("failed to accept connection");
-        let mut received_stream_id = 0;
+        // ヘッダー受信後に設定される
+        let mut received_stream_id: Option<tokio_http2::StreamId> = None;
 
         loop {
             match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
@@ -4121,7 +4127,7 @@ async fn test_nghttp2_client_http2_server_goaway_after_stream() {
                     ..
                 })) => {
                     if end_stream {
-                        received_stream_id = stream_id;
+                        received_stream_id = Some(stream_id);
 
                         // まずレスポンスを送信
                         let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
@@ -4142,7 +4148,8 @@ async fn test_nghttp2_client_http2_server_goaway_after_stream() {
             }
         }
 
-        assert!(received_stream_id > 0);
+        // ストリームを受信したことを確認 (Connection ではないこと)
+        assert!(received_stream_id.is_some());
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -4309,7 +4316,8 @@ async fn test_http2_client_nghttp2_server_goaway_after_stream() {
                 error_code,
                 ..
             } => {
-                assert!(last_stream_id >= stream_id);
+                // last_stream_id はクライアントが開始したストリーム ID 以上
+                assert!(last_stream_id.as_u32() >= stream_id.as_u32());
                 assert_eq!(error_code, Http2ErrorCode::NoError);
                 received_goaway = true;
             }
@@ -4349,7 +4357,8 @@ async fn test_http2_client_http2_server_bidirectional_data() {
 
     let server_handle = tokio::spawn(async move {
         let mut conn = server.accept().await.expect("failed to accept connection");
-        let mut request_stream_id = 0;
+        // ヘッダー受信後に設定される
+        let mut request_stream_id: Option<tokio_http2::StreamId> = None;
         let mut received_body = Vec::new();
 
         loop {
@@ -4359,7 +4368,7 @@ async fn test_http2_client_http2_server_bidirectional_data() {
                     end_stream,
                     ..
                 })) => {
-                    request_stream_id = stream_id;
+                    request_stream_id = Some(stream_id);
                     if end_stream {
                         break;
                     }
@@ -4382,12 +4391,13 @@ async fn test_http2_client_http2_server_bidirectional_data() {
 
         assert_eq!(received_body, request_body_expected);
 
+        let sid = request_stream_id.expect("headers not received");
         let resp_headers = vec![HeaderField::new(":status", "200").unwrap()];
-        conn.send_response(request_stream_id, resp_headers, false)
+        conn.send_response(sid, resp_headers, false)
             .await
             .expect("failed to send response headers");
 
-        conn.send_data(request_stream_id, response_body.to_vec(), true)
+        conn.send_data(sid, response_body.to_vec(), true)
             .await
             .expect("failed to send response body");
     });
@@ -5570,7 +5580,8 @@ mod stress_tests {
 
         let server_handle = tokio::spawn(async move {
             let mut conn = server.accept().await.expect("failed to accept connection");
-            let mut stream_id = 0;
+            // ヘッダー受信後に設定される
+            let mut stream_id: Option<tokio_http2::StreamId> = None;
 
             loop {
                 let event =
@@ -5580,16 +5591,17 @@ mod stress_tests {
                     };
                 match event {
                     Http2Event::HeadersReceived { stream_id: sid, .. } => {
-                        stream_id = sid;
+                        stream_id = Some(sid);
                         let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
-                        conn.send_response(stream_id, response_headers, false)
+                        conn.send_response(sid, response_headers, false)
                             .await
                             .expect("failed to send response");
                     }
                     Http2Event::DataReceived {
                         data, end_stream, ..
                     } => {
-                        conn.send_data(stream_id, data, end_stream)
+                        let sid = stream_id.expect("data received before headers");
+                        conn.send_data(sid, data, end_stream)
                             .await
                             .expect("failed to echo data");
                         if end_stream {

@@ -6,12 +6,12 @@ use proptest::prelude::*;
 use shiguredo_http2::frame::{ContinuationFrame, FrameFlags, FrameHeader, PriorityUpdateFrame};
 use shiguredo_http2::{
     DataFrame, Frame, FrameDecoder, FrameEncoder, GoawayFrame, HeadersFrame, PingFrame,
-    RstStreamFrame, Setting, SettingsFrame, WindowUpdateFrame,
+    RstStreamFrame, Setting, SettingsFrame, StreamId, WindowUpdateFrame,
 };
 
 /// 有効なストリーム ID を生成する（0 以外）
-fn valid_stream_id() -> impl Strategy<Value = u32> {
-    1..=0x7FFF_FFFFu32
+fn valid_stream_id() -> impl Strategy<Value = StreamId> {
+    (1..=0x7FFF_FFFFu32).prop_map(StreamId::from_wire)
 }
 
 /// 任意のバイト列を生成する
@@ -168,7 +168,7 @@ proptest! {
     /// GOAWAY フレームのエンコード/デコード往復テスト
     #[test]
     fn prop_goaway_frame_roundtrip(
-        last_stream_id in 0..=0x7FFF_FFFFu32,
+        last_stream_id in (0..=0x7FFF_FFFFu32).prop_map(StreamId::from_wire),
         error_code in any::<u32>(),
         debug_data in arbitrary_bytes(128),
     ) {
@@ -198,7 +198,7 @@ proptest! {
     /// WINDOW_UPDATE フレームのエンコード/デコード往復テスト
     #[test]
     fn prop_window_update_frame_roundtrip(
-        stream_id in 0..=0x7FFF_FFFFu32,
+        stream_id in (0..=0x7FFF_FFFFu32).prop_map(StreamId::from_wire),
         // WINDOW_UPDATE の increment は 1 以上でなければならない
         window_size_increment in 1..=0x7FFF_FFFFu32,
     ) {
@@ -274,7 +274,7 @@ proptest! {
     /// PRIORITY_UPDATE フレームのエンコード/デコード往復テスト
     #[test]
     fn prop_priority_update_frame_roundtrip(
-        prioritized_element_id in 0..=0x7FFF_FFFFu32,
+        prioritized_element_id in (0..=0x7FFF_FFFFu32).prop_map(StreamId::from_wire),
         priority_field_value in arbitrary_bytes(128),
     ) {
         let frame = Frame::PriorityUpdate(PriorityUpdateFrame {
@@ -434,9 +434,9 @@ proptest! {
         let mut encoder = FrameEncoder::new();
 
         // 複数フレームをエンコード
-        let frames: Vec<Frame> = stream_ids.iter().take(frame_count).map(|&sid| {
+        let frames: Vec<Frame> = stream_ids.iter().take(frame_count).map(|sid| {
             Frame::WindowUpdate(WindowUpdateFrame {
-                stream_id: sid,
+                stream_id: *sid,
                 window_size_increment: 1000,
             })
         }).collect();
@@ -571,7 +571,7 @@ proptest! {
         prop_assume!(data_len > max_frame_size as usize);
 
         let frame = Frame::Data(DataFrame {
-            stream_id: 1,
+            stream_id: StreamId::from_wire(1),
             end_stream: false,
             data: vec![0u8; data_len],
             pad_length: None,
@@ -621,7 +621,7 @@ proptest! {
     /// RFC 9113 Section 4.1: R ビットは予約済み (0)
     #[test]
     fn prop_stream_id_reserved_bit(
-        stream_id in 0..=0x7FFF_FFFFu32,
+        stream_id in (0..=0x7FFF_FFFFu32).prop_map(StreamId::from_wire),
     ) {
         let frame = Frame::WindowUpdate(WindowUpdateFrame {
             stream_id,
@@ -737,15 +737,16 @@ proptest! {
     fn prop_settings_non_zero_stream_id_error(
         stream_id in valid_stream_id(),
     ) {
+        let sid = stream_id.as_u32();
         let mut buf = Vec::new();
         buf.extend_from_slice(&[0, 0, 0]);  // length = 0 (ACK)
         buf.push(0x04);  // SETTINGS frame type
         buf.push(0x01);  // ACK flag
         // stream_id (非ゼロ)
-        buf.push(((stream_id >> 24) & 0x7f) as u8);
-        buf.push(((stream_id >> 16) & 0xff) as u8);
-        buf.push(((stream_id >> 8) & 0xff) as u8);
-        buf.push((stream_id & 0xff) as u8);
+        buf.push(((sid >> 24) & 0x7f) as u8);
+        buf.push(((sid >> 16) & 0xff) as u8);
+        buf.push(((sid >> 8) & 0xff) as u8);
+        buf.push((sid & 0xff) as u8);
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&buf);
@@ -760,15 +761,16 @@ proptest! {
         stream_id in valid_stream_id(),
         opaque_data in any::<[u8; 8]>(),
     ) {
+        let sid = stream_id.as_u32();
         let mut buf = Vec::new();
         buf.extend_from_slice(&[0, 0, 8]);  // length = 8
         buf.push(0x06);  // PING frame type
         buf.push(0x00);  // flags
         // stream_id (非ゼロ)
-        buf.push(((stream_id >> 24) & 0x7f) as u8);
-        buf.push(((stream_id >> 16) & 0xff) as u8);
-        buf.push(((stream_id >> 8) & 0xff) as u8);
-        buf.push((stream_id & 0xff) as u8);
+        buf.push(((sid >> 24) & 0x7f) as u8);
+        buf.push(((sid >> 16) & 0xff) as u8);
+        buf.push(((sid >> 8) & 0xff) as u8);
+        buf.push((sid & 0xff) as u8);
         buf.extend_from_slice(&opaque_data);
 
         let mut decoder = FrameDecoder::new(16384);
@@ -785,15 +787,16 @@ proptest! {
         last_stream_id in 0..=0x7FFF_FFFFu32,
         error_code in any::<u32>(),
     ) {
+        let sid = stream_id.as_u32();
         let mut buf = Vec::new();
         buf.extend_from_slice(&[0, 0, 8]);  // length = 8
         buf.push(0x07);  // GOAWAY frame type
         buf.push(0x00);  // flags
         // stream_id (非ゼロ)
-        buf.push(((stream_id >> 24) & 0x7f) as u8);
-        buf.push(((stream_id >> 16) & 0xff) as u8);
-        buf.push(((stream_id >> 8) & 0xff) as u8);
-        buf.push((stream_id & 0xff) as u8);
+        buf.push(((sid >> 24) & 0x7f) as u8);
+        buf.push(((sid >> 16) & 0xff) as u8);
+        buf.push(((sid >> 8) & 0xff) as u8);
+        buf.push((sid & 0xff) as u8);
         // last_stream_id
         buf.push(((last_stream_id >> 24) & 0x7f) as u8);
         buf.push(((last_stream_id >> 16) & 0xff) as u8);
@@ -814,15 +817,16 @@ proptest! {
         stream_id in valid_stream_id(),
         prioritized_element_id in 0..=0x7FFF_FFFFu32,
     ) {
+        let sid = stream_id.as_u32();
         let mut buf = Vec::new();
         buf.extend_from_slice(&[0, 0, 4]);  // length = 4
         buf.push(0x10);  // PRIORITY_UPDATE frame type
         buf.push(0x00);  // flags
         // stream_id (非ゼロ)
-        buf.push(((stream_id >> 24) & 0x7f) as u8);
-        buf.push(((stream_id >> 16) & 0xff) as u8);
-        buf.push(((stream_id >> 8) & 0xff) as u8);
-        buf.push((stream_id & 0xff) as u8);
+        buf.push(((sid >> 24) & 0x7f) as u8);
+        buf.push(((sid >> 16) & 0xff) as u8);
+        buf.push(((sid >> 8) & 0xff) as u8);
+        buf.push((sid & 0xff) as u8);
         // prioritized_element_id
         buf.push(((prioritized_element_id >> 24) & 0x7f) as u8);
         buf.push(((prioritized_element_id >> 16) & 0xff) as u8);
@@ -1040,8 +1044,8 @@ proptest! {
     /// PRIORITY フレームのデコードテスト (非推奨、受信は処理する)
     #[test]
     fn prop_priority_frame_decode(
-        stream_id in valid_stream_id(),
-        stream_dependency in 0..=0x7FFF_FFFFu32,
+        stream_id_raw in 1..=0x7FFF_FFFFu32,
+        stream_dependency_raw in 0..=0x7FFF_FFFFu32,
         weight in any::<u8>(),
         exclusive in any::<bool>(),
     ) {
@@ -1051,16 +1055,16 @@ proptest! {
         buf.push(0x02);  // PRIORITY frame type
         buf.push(0x00);  // flags
         // stream_id
-        buf.push(((stream_id >> 24) & 0x7f) as u8);
-        buf.push(((stream_id >> 16) & 0xff) as u8);
-        buf.push(((stream_id >> 8) & 0xff) as u8);
-        buf.push((stream_id & 0xff) as u8);
+        buf.push(((stream_id_raw >> 24) & 0x7f) as u8);
+        buf.push(((stream_id_raw >> 16) & 0xff) as u8);
+        buf.push(((stream_id_raw >> 8) & 0xff) as u8);
+        buf.push((stream_id_raw & 0xff) as u8);
         // payload: exclusive + stream_dependency + weight
         let e_bit = if exclusive { 0x80 } else { 0x00 };
-        buf.push(((stream_dependency >> 24) & 0x7f) as u8 | e_bit);
-        buf.push(((stream_dependency >> 16) & 0xff) as u8);
-        buf.push(((stream_dependency >> 8) & 0xff) as u8);
-        buf.push((stream_dependency & 0xff) as u8);
+        buf.push(((stream_dependency_raw >> 24) & 0x7f) as u8 | e_bit);
+        buf.push(((stream_dependency_raw >> 16) & 0xff) as u8);
+        buf.push(((stream_dependency_raw >> 8) & 0xff) as u8);
+        buf.push((stream_dependency_raw & 0xff) as u8);
         buf.push(weight);
 
         let mut decoder = FrameDecoder::new(16384);
@@ -1068,8 +1072,8 @@ proptest! {
         let result = decoder.decode().unwrap().unwrap();
 
         if let Frame::Priority(pf) = result {
-            prop_assert_eq!(pf.stream_id, stream_id);
-            prop_assert_eq!(pf.stream_dependency, stream_dependency);
+            prop_assert_eq!(pf.stream_id, StreamId::from_wire(stream_id_raw));
+            prop_assert_eq!(pf.stream_dependency, StreamId::from_wire(stream_dependency_raw));
             prop_assert_eq!(pf.weight, weight);
             prop_assert_eq!(pf.exclusive, exclusive);
         } else {
@@ -1107,6 +1111,7 @@ proptest! {
         stream_id in valid_stream_id(),
         payload_len in prop_oneof![0..5usize, 6..20usize],
     ) {
+        let sid = stream_id.as_u32();
         let mut buf = Vec::new();
         let length = payload_len as u32;
         buf.push(((length >> 16) & 0xff) as u8);
@@ -1114,10 +1119,10 @@ proptest! {
         buf.push((length & 0xff) as u8);
         buf.push(0x02);  // PRIORITY frame type
         buf.push(0x00);  // flags
-        buf.push(((stream_id >> 24) & 0x7f) as u8);
-        buf.push(((stream_id >> 16) & 0xff) as u8);
-        buf.push(((stream_id >> 8) & 0xff) as u8);
-        buf.push((stream_id & 0xff) as u8);
+        buf.push(((sid >> 24) & 0x7f) as u8);
+        buf.push(((sid >> 16) & 0xff) as u8);
+        buf.push(((sid >> 8) & 0xff) as u8);
+        buf.push((sid & 0xff) as u8);
         buf.extend(std::iter::repeat_n(0u8, payload_len));
 
         let mut decoder = FrameDecoder::new(16384);
@@ -1192,7 +1197,7 @@ proptest! {
             (Frame::RstStream(RstStreamFrame { stream_id, error_code: 0 }), 0x03),
             (Frame::Settings(SettingsFrame { ack: false, settings: vec![] }), 0x04),
             (Frame::Ping(PingFrame { ack: false, opaque_data: [0; 8] }), 0x06),
-            (Frame::Goaway(GoawayFrame { last_stream_id: 0, error_code: 0, debug_data: vec![] }), 0x07),
+            (Frame::Goaway(GoawayFrame { last_stream_id: StreamId::Connection, error_code: 0, debug_data: vec![] }), 0x07),
             (Frame::WindowUpdate(WindowUpdateFrame { stream_id, window_size_increment: 1 }), 0x08),
             (Frame::Continuation(ContinuationFrame { stream_id, end_headers: true, header_block_fragment: data.clone() }), 0x09),
             (Frame::PriorityUpdate(PriorityUpdateFrame { prioritized_element_id: stream_id, priority_field_value: vec![] }), 0x10),
@@ -1283,9 +1288,9 @@ proptest! {
     ) {
         let mut encoder = FrameEncoder::new();
 
-        for (stream_id, data) in &frames {
+        for &(stream_id, ref data) in &frames {
             let frame = Frame::Data(DataFrame {
-                stream_id: *stream_id,
+                stream_id,
                 end_stream: false,
                 data: data.clone(),
                 pad_length: None,
@@ -1328,10 +1333,10 @@ proptest! {
         ),
     ) {
         // 複数の WINDOW_UPDATE フレームを生成
-        let frames: Vec<Frame> = frame_params.iter().map(|(sid, inc)| {
+        let frames: Vec<Frame> = frame_params.iter().map(|&(sid, inc)| {
             Frame::WindowUpdate(WindowUpdateFrame {
-                stream_id: *sid,
-                window_size_increment: *inc,
+                stream_id: sid,
+                window_size_increment: inc,
             })
         }).collect();
 
@@ -1468,7 +1473,7 @@ proptest! {
     /// 数学的意義: stream_id の範囲保存性
     #[test]
     fn prop_stream_id_31bit_range(
-        stream_id in 0..=0x7FFF_FFFFu32,
+        stream_id in (0..=0x7FFF_FFFFu32).prop_map(StreamId::from_wire),
     ) {
         let frame = Frame::WindowUpdate(WindowUpdateFrame {
             stream_id,
@@ -1486,7 +1491,7 @@ proptest! {
             | (u32::from(encoded[7]) << 8)
             | u32::from(encoded[8]);
 
-        prop_assert_eq!(encoded_stream_id, stream_id);
+        prop_assert_eq!(encoded_stream_id, stream_id.as_u32());
 
         // 最上位ビット (R ビット) は 0
         prop_assert_eq!(encoded[5] & 0x80, 0, "R bit must be 0");

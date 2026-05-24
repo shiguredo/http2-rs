@@ -21,7 +21,9 @@ use std::net::SocketAddr;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
-use tokio_http2::{Event, HeaderField, Limits, Server, ServerConnection, TlsServerConfig};
+use tokio_http2::{
+    Event, HeaderField, Limits, Server, ServerConnection, StreamId, TlsServerConfig,
+};
 
 const LISTEN_ADDR: &str = "127.0.0.1:8443";
 
@@ -164,7 +166,7 @@ fn find_header(headers: &[HeaderField], name: &str) -> Option<String> {
 
 async fn send_response(
     conn: &mut ServerConnection,
-    stream_id: u32,
+    stream_id: StreamId,
     path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (status, body) = match path {

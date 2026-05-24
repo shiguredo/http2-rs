@@ -144,7 +144,7 @@ impl WtServerRequest {
         });
 
         Ok(WtServerSession {
-            session_id: u64::from(stream_id),
+            session_id: u64::from(stream_id.as_u32()),
             cmd_tx,
             bidi_rx,
             uni_rx,

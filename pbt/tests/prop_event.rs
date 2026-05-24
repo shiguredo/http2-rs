@@ -3,11 +3,11 @@
 //! Event 型のプロパティをテストする。
 
 use proptest::prelude::*;
-use shiguredo_http2::{ErrorCode, Event, HeaderField};
+use shiguredo_http2::{ErrorCode, Event, HeaderField, StreamId};
 
-/// 有効なストリーム ID を生成する（1 以上）
-fn valid_stream_id() -> impl Strategy<Value = u32> {
-    1u32..=u32::MAX
+/// 有効なストリーム ID を生成する（1 以上、31 ビット範囲内）
+fn valid_stream_id() -> impl Strategy<Value = StreamId> {
+    (1u32..=0x7FFF_FFFFu32).prop_map(StreamId::from_wire)
 }
 
 /// ErrorCode を生成する Strategy
@@ -110,7 +110,7 @@ fn connection_level_event() -> impl Strategy<Value = Event> {
             .prop_map(|(opaque_data, ack)| { Event::PingReceived { opaque_data, ack } }),
         // GoawayReceived
         (
-            any::<u32>(),
+            (0..=0x7FFF_FFFFu32).prop_map(StreamId::from_wire),
             error_code_strategy(),
             prop::collection::vec(any::<u8>(), 0..50)
         )
@@ -124,7 +124,7 @@ fn connection_level_event() -> impl Strategy<Value = Event> {
         // WindowUpdateReceived (stream_id == 0)
         (1u32..=u32::MAX).prop_map(|increment| {
             Event::WindowUpdateReceived {
-                stream_id: 0,
+                stream_id: StreamId::Connection,
                 increment,
             }
         }),
@@ -169,12 +169,12 @@ proptest! {
     /// stream_id == 0 なら接続レベル、それ以外はストリームレベル
     #[test]
     fn prop_window_update_classification(
-        stream_id in any::<u32>(),
+        stream_id in (0..=0x7FFF_FFFFu32).prop_map(StreamId::from_wire),
         increment in 1u32..=u32::MAX,
     ) {
         let event = Event::WindowUpdateReceived { stream_id, increment };
 
-        if stream_id == 0 {
+        if matches!(stream_id, StreamId::Connection) {
             prop_assert!(event.is_connection_level());
             prop_assert!(event.stream_id().is_none());
         } else {
@@ -230,10 +230,10 @@ mod tests {
     #[test]
     fn test_priority_update_is_stream_level() {
         let event = Event::PriorityUpdateReceived {
-            stream_id: 1,
+            stream_id: StreamId::from_wire(1),
             priority_field_value: vec![],
         };
-        assert_eq!(event.stream_id(), Some(1));
+        assert_eq!(event.stream_id(), Some(StreamId::from_wire(1)));
         assert!(!event.is_connection_level());
     }
 
@@ -249,12 +249,12 @@ mod tests {
                 ack: false,
             },
             Event::GoawayReceived {
-                last_stream_id: 0,
+                last_stream_id: StreamId::Connection,
                 error_code: ErrorCode::NoError,
                 debug_data: vec![],
             },
             Event::WindowUpdateReceived {
-                stream_id: 0,
+                stream_id: StreamId::Connection,
                 increment: 1000,
             },
             Event::ConnectionError {
