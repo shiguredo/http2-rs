@@ -1,8 +1,3 @@
-//! `src/webtransport/mod.rs` の WebTransport sans I/O API に対する単体テスト
-//!
-//! `#[cfg(test)] mod tests` と PBT でカバーできないエラーパス / 境界値を対象にする。
-//! draft-ietf-webtrans-http2-14 の MUST 要件を固定するのが主目的。
-
 use shiguredo_http2::webtransport::{
     Capsule, CapsuleDecoder, CapsuleEncoder, WtConfig, WtEvent, WtSession, WtStreamId,
     stream::stream_id as wt_stream_id,

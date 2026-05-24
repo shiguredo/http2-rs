@@ -1,0 +1,110 @@
+use shiguredo_http2::webtransport::stream::{RecvState, SendState, WtStream, stream_id};
+
+#[test]
+fn test_stream_id_client_bidi() {
+    let id = stream_id::first(true, true);
+    assert_eq!(id, 0);
+    assert!(stream_id::is_client_initiated(id));
+    assert!(stream_id::is_bidirectional(id));
+
+    let next = stream_id::next(id);
+    assert_eq!(next, 4);
+    assert!(stream_id::is_client_initiated(next));
+    assert!(stream_id::is_bidirectional(next));
+}
+
+#[test]
+fn test_stream_id_server_bidi() {
+    let id = stream_id::first(false, true);
+    assert_eq!(id, 1);
+    assert!(stream_id::is_server_initiated(id));
+    assert!(stream_id::is_bidirectional(id));
+}
+
+#[test]
+fn test_stream_id_client_uni() {
+    let id = stream_id::first(true, false);
+    assert_eq!(id, 2);
+    assert!(stream_id::is_client_initiated(id));
+    assert!(stream_id::is_unidirectional(id));
+}
+
+#[test]
+fn test_stream_id_server_uni() {
+    let id = stream_id::first(false, false);
+    assert_eq!(id, 3);
+    assert!(stream_id::is_server_initiated(id));
+    assert!(stream_id::is_unidirectional(id));
+}
+
+#[test]
+fn test_stream_creation() {
+    let stream = WtStream::new(0, 65536, true);
+    assert_eq!(stream.id(), 0);
+    assert!(stream.is_bidirectional());
+    assert_eq!(stream.send_state(), SendState::Ready);
+    assert_eq!(stream.recv_state(), RecvState::Recv);
+    assert!(stream.can_send());
+    assert!(stream.can_recv());
+}
+
+#[test]
+fn test_send_data() {
+    let mut stream = WtStream::new(0, 65536, true);
+
+    stream.send_data(100, false).unwrap();
+    assert_eq!(stream.send_state(), SendState::Send);
+    assert_eq!(stream.send_offset(), 100);
+    assert!(stream.can_send());
+
+    stream.send_data(100, true).unwrap();
+    assert_eq!(stream.send_state(), SendState::DataSent);
+    assert_eq!(stream.send_offset(), 200);
+    assert!(!stream.can_send());
+}
+
+#[test]
+fn test_recv_data() {
+    let mut stream = WtStream::new(0, 65536, true);
+
+    stream.recv_data(100, false).unwrap();
+    assert_eq!(stream.recv_state(), RecvState::Recv);
+    assert_eq!(stream.recv_offset(), 100);
+    assert!(stream.can_recv());
+
+    stream.recv_data(100, true).unwrap();
+    assert_eq!(stream.recv_state(), RecvState::SizeKnown);
+    assert_eq!(stream.recv_offset(), 200);
+}
+
+#[test]
+fn test_send_reset() {
+    let mut stream = WtStream::new(0, 65536, true);
+
+    stream.send_data(100, false).unwrap();
+    stream.send_reset();
+    assert_eq!(stream.send_state(), SendState::ResetSent);
+    assert!(!stream.can_send());
+}
+
+#[test]
+fn test_recv_reset() {
+    let mut stream = WtStream::new(0, 65536, true);
+
+    stream.recv_data(100, false).unwrap();
+    stream.recv_reset();
+    assert_eq!(stream.recv_state(), RecvState::ResetRecvd);
+    assert!(!stream.can_recv());
+}
+
+#[test]
+fn test_update_send_max() {
+    let mut stream = WtStream::new(0, 65536, true);
+    assert_eq!(stream.send_available(), 65536);
+
+    stream.update_send_max(131072).unwrap();
+    assert_eq!(stream.send_available(), 131072);
+
+    // draft-ietf-webtrans-http2-14 Section 6.6: 減少はエラー
+    assert!(stream.update_send_max(32768).is_err());
+}
