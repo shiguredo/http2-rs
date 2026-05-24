@@ -1,4 +1,7 @@
 //! フロー制御の PBT
+//!
+//! 本 PBT は `src/flow_control.rs` (接続/ストリームレベル) に対応する。
+//! `src/webtransport/flow_control.rs` 用の PBT は将来 `pbt/tests/prop_webtransport/flow_control.rs` に配置する。
 
 use proptest::prelude::*;
 use shiguredo_http2::FlowControl;

@@ -131,4 +131,4 @@ Phase ごとに blocking 関係が異なるため Phase 別に列挙する。
   - [[0034-refactor-consolidate-field-syntax-module]] (`validate_*` テストの crate path が `crate::syntax::` に確定している必要がある)
 - **Phase 4**: blocking 依存なし (webtransport は `pub(crate)` 直接参照ゼロ)
 - **`src/hpack/bytes.rs`**: [[0035-refactor-replace-header-bytes-with-cow]] (ファイル削除により本 issue のスコープから自動除外)
-- 関連: [[0039-fix-pbt-naming-convention]] (PBT 側の同種命名整備。tests/ の命名規約と PBT 命名規約は CLAUDE.md で対応関係にあり、両 issue 完了で全テスト命名が規約準拠する)
+- 関連: [[0039-refactor-pbt-naming-convention]] (PBT 側の同種命名整備。tests/ の命名規約と PBT 命名規約は CLAUDE.md で対応関係にあり、両 issue 完了で全テスト命名が規約準拠する)
