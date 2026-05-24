@@ -1,4 +1,8 @@
-//! HPACK エンコード/デコードの PBT
+//! HPACK モジュール群の PBT
+//!
+//! `src/hpack/` ディレクトリモジュール配下のサブモジュールに対応する PBT を集約する。
+
+mod dynamic_table;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};

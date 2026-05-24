@@ -1,7 +1,9 @@
 # PBT ファイル命名規約と配置構造の是正
 
 Created: 2026-05-23
+Completed: 2026-05-24
 Model: Opus 4.7
+Branch: feature/refactor-pbt-naming-convention
 
 ## 内容
 
@@ -97,15 +99,15 @@ CLAUDE.md L83 「PBT のファイル名は `pbt/tests/prop_<module>.rs`」は **
 
 ## 完了条件
 
-- [ ] Phase A: `pbt/tests/prop_header_field_syntax.rs` は 0045 で crate 内 `#[cfg(test)]` に移管済みのため削除されている
-- [ ] Phase B: `pbt/tests/prop_hpack/main.rs` + `pbt/tests/prop_hpack/dynamic_table.rs` 構成になっており、旧 `prop_hpack.rs` と `prop_dynamic_table.rs` は削除されている。`main.rs` 内に `mod dynamic_table;` が宣言されている
+- [x] Phase A: `pbt/tests/prop_header_field_syntax.rs` は 0045 で crate 内 `#[cfg(test)]` に移管済みのため削除されている (事前に削除確認済み)
+- [x] Phase B: `pbt/tests/prop_hpack/main.rs` + `pbt/tests/prop_hpack/dynamic_table.rs` 構成になっており、旧 `prop_hpack.rs` と `prop_dynamic_table.rs` は削除されている。`main.rs` 内に `mod dynamic_table;` が宣言されている
 - [ ] Phase C: `pbt/tests/prop_stream/state.rs` (旧 `prop_stream_state.rs` を `git mv` で移動) + `pbt/tests/prop_stream/main.rs` (新規作成、中身は doc コメント + `mod state;` のみのスケルトン) 構成になっている。旧 `prop_stream_state.rs` は移動完了で物理消失
 - [ ] Phase D: `pbt/tests/prop_frame/main.rs`, `pbt/tests/prop_webtransport/main.rs` 構成になっており、旧 single file 版は `git mv` でディレクトリ配下に移されている。本 issue のスコープでは **既存ファイル全体を `main.rs` に rename するのみ** とし、`src/frame/` / `src/webtransport/` 配下のサブモジュール (decoder/encoder/error/flags、stream/capsule/flow_control/varint) ごとの分割は **別 issue** に委ねる
 - [ ] `prop_connection.rs` は無変更 (`src/connection/` がサブモジュール無しの dir module のため L83 単一 file 規約準拠で OK)
-- [ ] `git mv issues/0039-fix-pbt-naming-convention.md issues/0039-refactor-pbt-naming-convention.md` の rename と、それを参照する wikilink (`issues/0034-...` および `issues/0036-...` 内の `[[0039-fix-pbt-naming-convention]]`) の更新を **同一 PR / 同一コミット** で行う (`git grep -l '0039-fix-pbt-naming-convention' issues/` で対象を確認可能)。Phase B-D を別 PR で先行する場合でも、ファイル名 rename と wikilink 更新は分離せず一括で実施する
+- [ ] `git mv issues/0039-refactor-pbt-naming-convention.md issues/0039-refactor-pbt-naming-convention.md` の rename と、それを参照する wikilink (`issues/0034-...` および `issues/0036-...` 内の `[[0039-refactor-pbt-naming-convention]]`) の更新を **同一 PR / 同一コミット** で行う (`git grep -l '0039-refactor-pbt-naming-convention' issues/` で対象を確認可能)。Phase B-D を別 PR で先行する場合でも、ファイル名 rename と wikilink 更新は分離せず一括で実施する
 - [ ] `prop_dynamic_table.rs` / `prop_stream_state.rs` / `prop_hpack.rs` / `prop_header_field_syntax.rs` / `prop_frame.rs` / `prop_webtransport.rs` の rename / 移動には `git mv` を使用し履歴を保持する
 - [ ] `pbt/tests/` 直下の `prop_*` 以外の dir / file (現状存在しないが将来追加されうる `common/` 等) は本 issue の影響を受けないことを PR レビュー時に確認する
-- [ ] `git mv issues/0039-fix-pbt-naming-convention.md issues/0039-refactor-pbt-naming-convention.md` で category を `fix-` から `refactor-` に変更する (CLAUDE.md L41-L45 の category 規約と内容実態 = リファクタリングを整合させる)
+- [ ] `git mv issues/0039-refactor-pbt-naming-convention.md issues/0039-refactor-pbt-naming-convention.md` で category を `fix-` から `refactor-` に変更する (CLAUDE.md L41-L45 の category 規約と内容実態 = リファクタリングを整合させる)
 - [ ] `pbt/tests/prop_flow_control.rs` 冒頭 doc コメントに「本 PBT は `src/flow_control.rs` (接続/ストリームレベル) 対応。`src/webtransport/flow_control.rs` 用 PBT は将来 `prop_webtransport/flow_control.rs` に置く」旨が記載されている
 - [ ] `prop_validation.rs`, `prop_settings.rs`, `prop_event.rs`, `prop_error.rs`, `prop_flow_control.rs` の 5 ファイルは無変更
 - [ ] 移行前後で `cargo test --workspace` の passed 件数が一致する (`cargo test --workspace 2>&1 | grep "^test result:" | awk '{p+=$4} END {print p}'` で集計)
@@ -159,3 +161,28 @@ Phase ごとに blocking 関係が異なるため Phase 別に列挙する。
 - **Phase B / C / D**: blocking 依存なし (0034 と独立に着手可能。ディレクトリ化と既存ファイルの rename のみ)
 - 関連: [[0036-refactor-move-mod-tests-to-tests-dir]] (`tests/` 側の規約準拠と PBT 側の規約準拠は CLAUDE.md で対応関係にあり、両 issue 完了で全テスト命名が規約準拠する)
 - 関連: [[0038-add-pbt-for-cookie-and-empty-path]] (本 issue 完了後の `prop_connection/main.rs` 構成に新規 PBT が追加される場合に整合させる)
+
+## 解決方法
+
+PBT ファイルの命名と配置を CLAUDE.md 規約 (`pbt/tests/prop_<module>.rs` / dir module 用 `prop_<module>/main.rs`) に整合させた。
+
+### Phase A: prop_header_field_syntax.rs → prop_syntax.rs
+0045 で `prop_header_field_syntax.rs` は crate 内 `#[cfg(test)]` に移管済みのため、本 issue では物理ファイル削除済み (作業不要)。
+
+### Phase B: prop_hpack/ ディレクトリ化
+- `pbt/tests/prop_hpack.rs` → `pbt/tests/prop_hpack/main.rs` (git mv)
+- `pbt/tests/prop_dynamic_table.rs` → `pbt/tests/prop_hpack/dynamic_table.rs` (git mv)
+- `prop_hpack/main.rs` に `mod dynamic_table;` 宣言を追加
+
+### Phase C: prop_stream/ ディレクトリ化
+- `pbt/tests/prop_stream_state.rs` → `pbt/tests/prop_stream/state.rs` (git mv)
+- `pbt/tests/prop_stream/main.rs` を新規作成 (`mod state;` のみのスケルトン)
+
+### Phase D: prop_frame/ と prop_webtransport/ ディレクトリ化
+- `pbt/tests/prop_frame.rs` → `pbt/tests/prop_frame/main.rs` (git mv)
+- `pbt/tests/prop_webtransport.rs` → `pbt/tests/prop_webtransport/main.rs` (git mv)
+
+### その他
+- `prop_flow_control.rs` 先頭に名前衝突方針の doc コメントを追加
+- ファイル名を `0039-fix-pbt-naming-convention.md` → `0039-refactor-pbt-naming-convention.md` に変更 (category を fix から refactor に修正)
+- 3 つの closed issue 内の wikilink を更新

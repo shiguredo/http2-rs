@@ -145,7 +145,7 @@ PBT は `__test_helpers` 経由で呼ぶため crate path 変更の影響を受�
 
 ## 依存
 
-- 本 issue を blocking 依存とする後続 issue: [[0035-refactor-replace-header-bytes-with-cow]] (本 issue 完了で `bytes.rs` 内の検査関数が消えた後に `HeaderBytes` Cow 化を行う必要があるため、0035 は 0034 完了が必須前提)、[[0039-fix-pbt-naming-convention]] (本 issue 完了後の `src/syntax.rs` 新設を受けて `prop_header_field_syntax.rs` → `prop_syntax.rs` に rename するため)
+- 本 issue を blocking 依存とする後続 issue: [[0035-refactor-replace-header-bytes-with-cow]] (本 issue 完了で `bytes.rs` 内の検査関数が消えた後に `HeaderBytes` Cow 化を行う必要があるため、0035 は 0034 完了が必須前提)、[[0039-refactor-pbt-naming-convention]] (本 issue 完了後の `src/syntax.rs` 新設を受けて `prop_header_field_syntax.rs` → `prop_syntax.rs` に rename するため)
 - 関連: [[0033-refactor-test-helpers-module-and-bytes-mod-name]] (本 issue で `__test_helpers.rs` 内の検査関数 crate path を `crate::syntax::` に更新する。`__test_helpers` モジュールの公開層整理自体は 0033 のスコープ)
 - 本 issue 自体の前提: なし (独立着手可能)
 

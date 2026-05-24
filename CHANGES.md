@@ -135,5 +135,7 @@
   - @voluntas
 - [UPDATE] `src/<module>` 内の `#[cfg(test)] mod tests` ブロックを `tests/test_<module>.rs` (および `tests/test_<module>/main.rs`) に分離する (issue 0036)
   - @voluntas
+- [UPDATE] PBT ファイルの命名と配置を CLAUDE.md 規約 (`pbt/tests/prop_<module>.rs` および dir module 用 `prop_<module>/main.rs` 形式) に整合させる (issue 0039)
+  - @voluntas
 - [FIX] `examples/http2_client` と `examples/http2_server` で DATA 受信時に接続・ストリームレベルの WINDOW_UPDATE を送信するように修正する (issue 0041)
   - @voluntas

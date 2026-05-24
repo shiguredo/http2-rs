@@ -153,7 +153,7 @@ fn encode_string(buf: &mut Vec<u8>, data: &[u8]) {
 
 - `issues/0036-refactor-move-mod-tests-to-tests-dir.md`: L46 の「例外として `__test_helpers`...」記述を削除、L92-L93 の `--features __test_helpers` 確認条件を削除、L121 の CI 確認記述から `--features __test_helpers` を削除
 - `issues/0037-add-fuzz-build-check-to-ci.md`: L45 の `__test_helpers` feature 経由再 check の記述を削除、L47-L49 の「`__test_helpers` feature の自動 ON」節を削除
-- `issues/0039-fix-pbt-naming-convention.md`: L98-L100 の `__test_helpers.rs` の扱い節を削除、L115/L117 の `--features __test_helpers` 完了条件を更新、L140 の `src/__test_helpers.rs` スコープ外記述を削除
+- `issues/0039-refactor-pbt-naming-convention.md`: L98-L100 の `__test_helpers.rs` の扱い節を削除、L115/L117 の `--features __test_helpers` 完了条件を更新、L140 の `src/__test_helpers.rs` スコープ外記述を削除
 
 ### 6. CHANGES.md
 
@@ -215,4 +215,4 @@ fn encode_string(buf: &mut Vec<u8>, data: &[u8]) {
 - [[0033-refactor-dedupe-from-validated-parts-cfg]] (公開層を `__test_helpers` に集約)
 - [[0036-refactor-move-mod-tests-to-tests-dir]] (`__test_helpers` 例外条項が本 issue で削除対象)
 - [[0037-add-fuzz-build-check-to-ci]] (`__test_helpers` 記述が本 issue で更新対象)
-- [[0039-fix-pbt-naming-convention]] (`__test_helpers` 完了条件が本 issue で更新対象)
+- [[0039-refactor-pbt-naming-convention]] (`__test_helpers` 完了条件が本 issue で更新対象)
