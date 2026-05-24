@@ -1,7 +1,9 @@
 # field syntax 検査関数を `src/syntax.rs` に集約する
 
 Created: 2026-05-23
+Completed: 2026-05-24
 Model: Opus 4.7
+Branch: feature/refactor-consolidate-field-syntax-module
 
 ## 内容
 
@@ -146,3 +148,30 @@ PBT は `__test_helpers` 経由で呼ぶため crate path 変更の影響を受�
 - 本 issue を blocking 依存とする後続 issue: [[0035-refactor-replace-header-bytes-with-cow]] (本 issue 完了で `bytes.rs` 内の検査関数が消えた後に `HeaderBytes` Cow 化を行う必要があるため、0035 は 0034 完了が必須前提)、[[0039-fix-pbt-naming-convention]] (本 issue 完了後の `src/syntax.rs` 新設を受けて `prop_header_field_syntax.rs` → `prop_syntax.rs` に rename するため)
 - 関連: [[0033-refactor-test-helpers-module-and-bytes-mod-name]] (本 issue で `__test_helpers.rs` 内の検査関数 crate path を `crate::syntax::` に更新する。`__test_helpers` モジュールの公開層整理自体は 0033 のスコープ)
 - 本 issue 自体の前提: なし (独立着手可能)
+
+## 解決方法
+
+以下の手順で field syntax 検査関数を `src/syntax.rs` に集約した。
+
+### 新規作成
+
+- `src/syntax.rs`: const fn 版 (`check_field_name_const`, `check_field_value_const`, `check_pseudo_header_const`) と runtime 版 (`validate_field_name`, `validate_field_value`, `validate_pseudo_header`) の全検査関数を同一ファイルに配置。内部ヘルパ (`is_token_char_lower`, `is_token_char_case_insensitive`, `bytes_eq`, `check_token_nonempty_const`, `check_scheme_const`, `check_path_const`, `is_valid_token_case_insensitive`, `is_valid_scheme`) も集約。const fn 版と runtime 版で重複していたヘルパ関数 (`is_token_char_lower_const` / `is_token_char_lower`, `is_tchar_const` / `is_token_char_case_insensitive`) はそれぞれ 1 つに統一した。
+- `src/syntax.rs` の `#[cfg(test)] mod tests` に `const_check_accepts_valid_pseudo` / `const_check_accepts_valid_regular` テストと `syntax_equivalence` PBT を配置。
+
+### 削除
+
+- `src/hpack/bytes.rs` から const fn 検査関数群 (L54-L277) と `const_check_*` テスト (L319-L335) を削除。`HeaderBytes` 型と impl と `header_bytes_*` テストのみ残存。
+- `src/hpack/table.rs` から runtime 検査関数群 (L145-L304) と `syntax_equivalence` PBT (L909-L1062) を削除。
+
+### 変更
+
+- `src/lib.rs`: `pub mod webtransport;` の次行に `pub(crate) mod syntax;` を追加。
+- `src/hpack/table.rs`: import を `crate::syntax::{check_*_const, validate_*}` に変更。モジュール doc コメントに `crate::syntax` への参照を追記。
+- `src/validation.rs`: `check_field` 内の import を `crate::syntax::{validate_*}` に変更。モジュール doc コメントの参照先を `crate::syntax` に修正。
+
+### テスト
+
+- `cargo test --workspace` 全件通過
+- `cargo clippy --workspace --all-targets -- -D warnings` 通過
+- `cargo fmt --all -- --check` 通過
+- `cargo build --manifest-path fuzz/Cargo.toml` 通過

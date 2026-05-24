@@ -36,6 +36,8 @@ pub mod stream_id;
 pub mod validation;
 pub mod webtransport;
 
+pub(crate) mod syntax;
+
 pub use connection::{Connection, ConnectionState, Role};
 pub use decode_error::DecodeError;
 pub use error::{Error, ErrorCode, ErrorKind, Result};

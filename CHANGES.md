@@ -123,5 +123,7 @@
   - @voluntas
 - [UPDATE] decoder 内部で構築時検査型を組み立てる際に `pub(crate) from_validated_parts` を経由するようにし、二重検査を排除する (issue 0030)
   - @voluntas
+- [UPDATE] field-name / field-value / 疑似ヘッダーの構文検査関数を `src/syntax.rs` に集約し、HPACK 非依存のモジュールに分離する (issue 0034)
+  - @voluntas
 - [FIX] `examples/http2_client` と `examples/http2_server` で DATA 受信時に接続・ストリームレベルの WINDOW_UPDATE を送信するように修正する (issue 0041)
   - @voluntas
