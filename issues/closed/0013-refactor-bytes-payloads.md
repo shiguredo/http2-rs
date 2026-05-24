@@ -1,20 +1,29 @@
 # HTTP/2 ペイロードを Bytes 化する
 
 - Created: 2026-05-07
+- Completed: 2026-05-25
 - Model: Opus 4.7
 
-## Pending 理由
+## 解決方法
+
+`bytes` クレートの採用を見送り、本 issue を実装せずに close する。
+
+- **判断**: ルートクレートの依存ゼロ方針を維持し、`bytes` クレート (1.x) による `Vec<u8>` → `Bytes` 置換は今は実施しない。
+- **代替**: `HeaderField` は issue 0024 / 0035 により `Cow<'static, [u8]>` ベースで対応済み。relay 用途の zero-copy 化は現時点では優先度が低い。
+- **再検討**: 将来 N 宛 relay 等で性能がボトルネックになった場合は、新規 issue として再検討する。
+
+## Pending 理由 (履歴)
 
 2026-05-23 時点で `issues/pending/` に退避。
 
 `shiguredo_http2` ルートクレートに `bytes` クレート (1.x) を依存追加する設計判断が
-保留となったため、本 issue 全体を一時的に pending とする。
+保留となったため、本 issue 全体を一時的に pending とした。
 
-`bytes` 依存が決定したタイミングで reopen する。なお、本 issue で対象としていた
-`HeaderField` の `Vec<u8>` → `Bytes` 置換のうち、`from_static` を const fn 化する
-要求は issue 0024 で `enum HeaderBytes { Static(&'static [u8]), Owned(Vec<u8>) }`
-として依存ゼロで実装する方針となったため、本 issue を reopen する際は
-スコープから `HeaderField` 関連を除外する必要がある。
+なお、本 issue で対象としていた `HeaderField` の `Vec<u8>` → `Bytes` 置換のうち、
+`from_static` を const fn 化する要求は issue 0024 で `enum HeaderBytes { Static(&'static [u8]), Owned(Vec<u8>) }`
+として依存ゼロで実装する方針となり、issue 0035 で `Cow<'static, [u8]>` に置換済み。
+本 issue を reopen する場合はスコープから `HeaderField` 関連を除外する必要があったが、
+2026-05-25 に `bytes` 採用自体を見送る判断となり close した。
 
 ## 概要
 
