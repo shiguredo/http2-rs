@@ -77,6 +77,69 @@ name = "fuzz_hpack_integer"
 path = "fuzz_targets/fuzz_hpack_integer.rs"
 test = false
 
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_frame_encoder"
+path = "fuzz_targets/fuzz_frame_encoder.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_connection_client"
+path = "fuzz_targets/fuzz_connection_client.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_connection_preface"
+path = "fuzz_targets/fuzz_connection_preface.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_connection_interactive"
+path = "fuzz_targets/fuzz_connection_interactive.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_capsule_encoder"
+path = "fuzz_targets/fuzz_capsule_encoder.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_header_field"
+path = "fuzz_targets/fuzz_header_field.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_hpack_sequential"
+path = "fuzz_targets/fuzz_hpack_sequential.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_flow_control"
+path = "fuzz_targets/fuzz_flow_control.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_wt_flow_control"
+path = "fuzz_targets/fuzz_wt_flow_control.rs"
+test = false
+
 [dependencies]
 arbitrary = { version = "1", features = ["derive"] }
 libfuzzer-sys = "0.4"

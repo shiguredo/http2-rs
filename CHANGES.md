@@ -111,6 +111,8 @@
   - @voluntas
 - [ADD] `issues/` ディレクトリと issue 運用を導入する
   - @voluntas
+- [ADD] fuzz target を 9 個追加する (fuzz_frame_encoder, fuzz_connection_client, fuzz_connection_preface, fuzz_connection_interactive, fuzz_capsule_encoder, fuzz_header_field, fuzz_hpack_sequential, fuzz_flow_control, fuzz_wt_flow_control) (issue 0046)
+  - @voluntas
 - [UPDATE] cargo feature `__test_helpers` を廃止し、PBT / fuzz は公開 API と HPACK decoder 経路のみで wire 模擬する (issue 0045)
   - @voluntas
 - [UPDATE] `HeaderField::from_validated_parts` の cfg 排他 2 定義を解消し、テスト向け公開層を `__test_helpers::header_field_from_validated_parts` に集約する (issue 0033)

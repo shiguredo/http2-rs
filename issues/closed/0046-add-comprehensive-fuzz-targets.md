@@ -2,6 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-05-24
+- Completed: 2026-05-24
 - Model: Opus 4.7
 - Branch: feature/add-comprehensive-fuzz-targets
 
@@ -489,7 +490,19 @@ fuzz_target!(|input: FuzzInput| {
 
 ## 解決方法
 
-高優先度 (1-4) → 中優先度 (5-7) → 低優先度 (8-9) の順に実装する。各 fuzz target は独立しているため、実装順序に厳密な依存関係はない。
+以下の 9 個の fuzz target を `fuzz/fuzz_targets/` に追加した:
+
+1. `fuzz_frame_encoder.rs` — `FrameEncoder::encode` に対する構造化入力からのパニック安全性検証
+2. `fuzz_connection_client.rs` — クライアントロールでの任意バイト列受信のパニック安全性検証
+3. `fuzz_connection_preface.rs` — サーバーロールでプリフェイス未処理状態での断片的入力のパニック安全性検証
+4. `fuzz_connection_interactive.rs` — ローカル操作とリモート入力の交互実行による複合状態遷移のパニック安全性検証
+5. `fuzz_capsule_encoder.rs` — `CapsuleEncoder::encode` に対する構造化入力からのパニック安全性検証 (varint 範囲制限つき)
+6. `fuzz_header_field.rs` — `HeaderField::new` / `HeaderField::new_with_sensitive` への任意バイト列入力のパニック安全性検証
+7. `fuzz_hpack_sequential.rs` — 複数ラウンドの HPACK エンコード/デコードでの動的テーブル状態遷移のパニック安全性検証
+8. `fuzz_flow_control.rs` — `FlowControl` の全公開メソッドの任意順序呼び出しによるパニック安全性検証
+9. `fuzz_wt_flow_control.rs` — `WtFlowControl` の全公開メソッドの任意順序呼び出しによるパニック安全性検証
+
+`fuzz/Cargo.toml` に全 `[[bin]]` エントリを追加し、`cargo check` / `cargo clippy` / `cargo fuzz run <target> -- -runs=100` が全て通ることを確認した。
 
 ## 関連
 
