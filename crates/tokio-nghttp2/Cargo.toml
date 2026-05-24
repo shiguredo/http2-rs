@@ -16,7 +16,7 @@ rustls = {
   ]
 }
 rustls-pki-types = { version = "1.14", features = ["std"] }
-rustls-platform-verifier = "0.6"
+rustls-platform-verifier = "0.7"
 shiguredo_nghttp2 = { path = "../shiguredo_nghttp2" }
 tokio = {
   version = "1.52",

@@ -99,6 +99,8 @@
 
 ### misc
 
+- [UPDATE] 依存ライブラリを更新する (nghttp2 1.69.0, rustls-platform-verifier 0.7, shiguredo_toml 2026.2)
+  - @voluntas
 - [CHANGE] issue 0013 (HTTP/2 ペイロードを Bytes 化する) を `bytes` クレート依存追加の保留に伴い `issues/pending/` に退避する
   - @voluntas
 - [ADD] 構築時検査の `*::from_static` API に `compile_fail` doctest を追加し、不正リテラル検出のリグレッションを CI で防止する (issue 0032)

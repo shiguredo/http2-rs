@@ -10,7 +10,7 @@ publish = false
 # 以降は外部ライブラリビルド用のメタデータ
 # (この内容は build.rs の中からのみ参照される)
 [package.metadata.external-dependencies]
-nghttp2 = { git = "https://github.com/nghttp2/nghttp2", version = "1.68.0" }
+nghttp2 = { git = "https://github.com/nghttp2/nghttp2", version = "1.69.0" }
 
 [lib]
 # bindings.rs は自動生成されたファイルで C のコード例を含むため doctest を無効化
@@ -23,7 +23,7 @@ libc = "0.2"
 # overwrite feature でのみ使用 (通常ビルドでは libclang 不要)
 bindgen = { version = "0.72", optional = true }
 cmake = "0.1"
-shiguredo_toml = "2026.1"
+shiguredo_toml = "2026.2"
 
 [features]
 # bindings.rs を再生成するための feature
