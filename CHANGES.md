@@ -82,6 +82,8 @@
   - @voluntas
 - [ADD] `tokio-http2::Client` と `tokio-http2::ServerConnection` に `send_window_update` メソッドを追加する (issue 0041)
   - @voluntas
+- [FIX] `Connection::reset_stream` に `StreamId::Connection` (stream_id = 0) を渡した場合にパニックする問題を、接続エラー (PROTOCOL_ERROR) を返すように修正する (issue 0047)
+  - @voluntas
 - [FIX] `shiguredo_http2::Connection` の接続レベル `FlowControl` の `send_window` を、ピアのデフォルト値を反映して `DEFAULT_INITIAL_WINDOW_SIZE` (65535) で初期化するように修正する (従来は `connection_window_size` で初期化していた) (issue 0041)
   - @voluntas
 - [FIX] `connection_window_size` をデフォルトより大きく設定した場合に、接続確立時に接続レベル WINDOW_UPDATE を送信して受信ウィンドウを広告するように修正する (`initiate()` および `send_settings()` の両経路) (issue 0041)

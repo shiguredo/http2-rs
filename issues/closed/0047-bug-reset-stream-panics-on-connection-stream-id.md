@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-05-24
+- Completed: 2026-05-24
 - Model: Opus 4.7
 - Branch: feature/fix-reset-stream-panic
 
@@ -53,4 +54,8 @@ RFC 9113 §6.4: RST_STREAM は非ゼロストリーム ID に関連付けなけ�
 
 ## 解決方法
 
-`src/connection/mod.rs` の `reset_stream` メソッドで `.expect()` を `ok_or_else(|| ...)` に置き換える。
+`src/connection/mod.rs` の `reset_stream` メソッドで `.expect("RST_STREAM requires non-zero stream ID")` を `.ok_or_else(|| Error::connection_error(ErrorCode::ProtocolError, "RST_STREAM requires non-zero stream ID"))` に置き換えた。
+
+検証をメソッド冒頭に移動し、ストリーム状態変更よりも前にエラーを返すようにした (ただし `StreamId::Connection` の場合は `self.streams.get_mut(&0)` が常に `None` を返すため、実質的な挙動の変更はない)。
+
+`fuzz_connection_interactive` のクラッシュアーティファクトで再実行し、パニックしないことを確認した。
