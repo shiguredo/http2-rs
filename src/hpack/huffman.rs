@@ -1065,7 +1065,10 @@ pub fn encoded_len(data: &[u8]) -> usize {
 pub fn encode(buf: &mut [u8], data: &[u8]) -> Result<usize> {
     let required = encoded_len(data);
     if buf.len() < required {
-        return Err(Error::buffer_too_short());
+        return Err(Error::hpack_error(format!(
+            "Huffman encode buffer too short: required {required} bytes, available {} bytes",
+            buf.len()
+        )));
     }
 
     let mut acc: u64 = 0;

@@ -1,11 +1,6 @@
-//! ストリーム ID 構築時検査型 (issue 0025 / 0029)
+//! HTTP/2 ストリーム識別子 (RFC 9113 §5.1.1)
 //!
-//! HTTP/2 ストリーム識別子 (RFC 9113 §5.1.1) の奇偶ルールと値範囲を
-//! 型レベルで強制するための newtype 群。
-//!
-//! 本ファイルは issue 0025 構築時検査リファクタリングの Phase 1 として追加された。
-//! 既存の `pub type StreamId = u32` ([`crate::frame::StreamId`]) は Phase 2 で
-//! 本モジュールの enum 型に置き換えられる予定。
+//! 奇偶ルールと値範囲を型レベルで強制するための newtype 群。
 
 use core::num::NonZeroU32;
 
@@ -23,7 +18,6 @@ pub enum Parity {
 /// RFC 9113 §5.1.1: stream identifier は unsigned 31-bit integer、
 /// クライアント開始は奇数、サーバー開始は偶数、0 は接続制御用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum StreamIdError {
     /// 0 が指定された (本来許可しない構築点で)
     Reserved,
@@ -125,7 +119,6 @@ impl ClientStreamId {
     }
 
     /// 検証済み値から構築する (crate 内部専用)
-    #[allow(dead_code)] // issue 0030 Phase 2 で decoder から呼ばれる予定
     pub(crate) fn from_validated_parts(id: NonZeroU32) -> Self {
         debug_assert!(
             id.get() <= STREAM_ID_MAX,
@@ -207,7 +200,6 @@ impl ServerStreamId {
     }
 
     /// 検証済み値から構築する (crate 内部専用)
-    #[allow(dead_code)] // issue 0030 Phase 2 で decoder から呼ばれる予定
     pub(crate) fn from_validated_parts(id: NonZeroU32) -> Self {
         debug_assert!(
             id.get() <= STREAM_ID_MAX,
@@ -285,6 +277,21 @@ impl NonZeroStreamId {
         }
     }
 
+    /// decoder 内部で検証済みの値から構築する
+    ///
+    /// 呼び出し側が「非ゼロかつ 31-bit 範囲」を保証していること。
+    pub(crate) fn from_validated_parts(id: NonZeroU32) -> Self {
+        debug_assert!(
+            id.get() <= STREAM_ID_MAX,
+            "NonZeroStreamId::from_validated_parts: id must be <= 2^31-1"
+        );
+        if id.get().is_multiple_of(2) {
+            Self::Server(ServerStreamId::from_validated_parts(id))
+        } else {
+            Self::Client(ClientStreamId::from_validated_parts(id))
+        }
+    }
+
     /// `u32` として取得する
     pub const fn as_u32(self) -> u32 {
         match self {
@@ -319,6 +326,97 @@ impl From<ClientStreamId> for NonZeroStreamId {
 impl From<ServerStreamId> for NonZeroStreamId {
     fn from(id: ServerStreamId) -> Self {
         Self::Server(id)
+    }
+}
+
+impl std::fmt::Display for NonZeroStreamId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_u32())
+    }
+}
+
+/// HTTP/2 ストリーム識別子 (RFC 9113 §5.1.1)
+///
+/// 接続制御用 (0) / クライアント開始 (奇数) / サーバー開始 (偶数) の 3 分類を型で表現する。
+///
+/// `PartialOrd` / `Ord` は意図的に derive しない。variant をまたいだ順序比較は
+/// 意味的に不適切であり、順序比較が必要な箇所では `as_u32()` 経由で行う。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StreamId {
+    /// 接続レベル制御用 (0)
+    Connection,
+    /// クライアント開始ストリーム (奇数)
+    Client(ClientStreamId),
+    /// サーバー開始ストリーム (偶数)
+    Server(ServerStreamId),
+}
+
+impl StreamId {
+    /// wire 上の u32 を分類する
+    ///
+    /// 呼び出し元が 31-bit マスク済み (id < 2^31) であることを前提とする。
+    /// decoder の `decode_header` が上位 1 ビットをマスクするため、この前提は常に成立する。
+    pub fn from_wire(id: u32) -> Self {
+        debug_assert!(
+            id <= STREAM_ID_MAX,
+            "StreamId::from_wire: id must be <= 2^31-1, got {id}"
+        );
+        if id == 0 {
+            Self::Connection
+        } else if id.is_multiple_of(2) {
+            Self::Server(ServerStreamId::from_validated_parts(
+                NonZeroU32::new(id).expect("non-zero checked above"),
+            ))
+        } else {
+            Self::Client(ClientStreamId::from_validated_parts(
+                NonZeroU32::new(id).expect("non-zero checked above"),
+            ))
+        }
+    }
+
+    /// `u32` として取得する
+    pub const fn as_u32(self) -> u32 {
+        match self {
+            Self::Connection => 0,
+            Self::Client(id) => id.as_u32(),
+            Self::Server(id) => id.as_u32(),
+        }
+    }
+
+    /// `NonZeroStreamId` として取得する (`Connection` の場合は `None`)
+    pub const fn non_zero(self) -> Option<NonZeroStreamId> {
+        match self {
+            Self::Connection => None,
+            Self::Client(id) => Some(NonZeroStreamId::Client(id)),
+            Self::Server(id) => Some(NonZeroStreamId::Server(id)),
+        }
+    }
+}
+
+impl std::fmt::Display for StreamId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_u32())
+    }
+}
+
+impl From<ClientStreamId> for StreamId {
+    fn from(id: ClientStreamId) -> Self {
+        Self::Client(id)
+    }
+}
+
+impl From<ServerStreamId> for StreamId {
+    fn from(id: ServerStreamId) -> Self {
+        Self::Server(id)
+    }
+}
+
+impl From<NonZeroStreamId> for StreamId {
+    fn from(id: NonZeroStreamId) -> Self {
+        match id {
+            NonZeroStreamId::Client(c) => Self::Client(c),
+            NonZeroStreamId::Server(s) => Self::Server(s),
+        }
     }
 }
 
@@ -452,6 +550,61 @@ mod tests {
     }
 
     #[test]
+    fn stream_id_from_wire_connection() {
+        let id = StreamId::from_wire(0);
+        assert_eq!(id, StreamId::Connection);
+        assert_eq!(id.as_u32(), 0);
+        assert!(id.non_zero().is_none());
+    }
+
+    #[test]
+    fn stream_id_from_wire_client() {
+        let id = StreamId::from_wire(1);
+        assert!(matches!(id, StreamId::Client(_)));
+        assert_eq!(id.as_u32(), 1);
+        assert!(id.non_zero().is_some());
+    }
+
+    #[test]
+    fn stream_id_from_wire_server() {
+        let id = StreamId::from_wire(2);
+        assert!(matches!(id, StreamId::Server(_)));
+        assert_eq!(id.as_u32(), 2);
+        assert!(id.non_zero().is_some());
+    }
+
+    #[test]
+    fn stream_id_display() {
+        assert_eq!(StreamId::Connection.to_string(), "0");
+        assert_eq!(StreamId::from_wire(7).to_string(), "7");
+        assert_eq!(StreamId::from_wire(4).to_string(), "4");
+    }
+
+    #[test]
+    fn stream_id_from_conversions() {
+        let c = ClientStreamId::from_static(3);
+        let id: StreamId = c.into();
+        assert_eq!(id.as_u32(), 3);
+
+        let s = ServerStreamId::from_static(4);
+        let id: StreamId = s.into();
+        assert_eq!(id.as_u32(), 4);
+
+        let nz = NonZeroStreamId::from_static(5);
+        let id: StreamId = nz.into();
+        assert_eq!(id.as_u32(), 5);
+    }
+
+    #[test]
+    fn stream_id_no_partial_ord() {
+        // StreamId は PartialOrd を derive しない (variant をまたいだ順序比較は不適切)
+        // as_u32() 経由で比較する
+        let a = StreamId::from_wire(1);
+        let b = StreamId::from_wire(3);
+        assert!(a.as_u32() < b.as_u32());
+    }
+
+    #[test]
     fn stream_id_error_display() {
         assert_eq!(
             StreamIdError::Reserved.to_string(),
@@ -491,5 +644,49 @@ mod tests {
         let raw = NonZeroU32::new(6).unwrap();
         let id = ServerStreamId::from_validated_parts(raw);
         assert_eq!(id.as_u32(), 6);
+    }
+
+    mod validated_parts {
+        use proptest::prelude::*;
+
+        use super::{ClientStreamId, NonZeroStreamId, NonZeroU32, STREAM_ID_MAX, ServerStreamId};
+
+        proptest! {
+            #[test]
+            fn client_stream_id_validated_matches_new(
+                id in (1u32..=STREAM_ID_MAX).prop_filter(
+                    "奇数のみ",
+                    |id| id % 2 == 1,
+                ),
+            ) {
+                let via_new = ClientStreamId::new(id).unwrap();
+                let nz = NonZeroU32::new(id).unwrap();
+                let via_validated = ClientStreamId::from_validated_parts(nz);
+                prop_assert_eq!(via_new, via_validated);
+            }
+
+            #[test]
+            fn server_stream_id_validated_matches_new(
+                id in (2u32..=STREAM_ID_MAX).prop_filter(
+                    "偶数のみ",
+                    |id| id % 2 == 0,
+                ),
+            ) {
+                let via_new = ServerStreamId::new(id).unwrap();
+                let nz = NonZeroU32::new(id).unwrap();
+                let via_validated = ServerStreamId::from_validated_parts(nz);
+                prop_assert_eq!(via_new, via_validated);
+            }
+
+            #[test]
+            fn non_zero_stream_id_validated_matches_new(
+                id in 1u32..=STREAM_ID_MAX,
+            ) {
+                let via_new = NonZeroStreamId::new(id).unwrap();
+                let nz = NonZeroU32::new(id).unwrap();
+                let via_validated = NonZeroStreamId::from_validated_parts(nz);
+                prop_assert_eq!(via_new, via_validated);
+            }
+        }
     }
 }

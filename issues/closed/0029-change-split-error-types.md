@@ -1,6 +1,8 @@
 # エラー型を構築点ごとのドメイン特化型に分割する
 
 Created: 2026-05-23
+Completed: 2026-05-24
+Priority: High
 Model: Opus 4.7
 
 ## 概要
@@ -169,17 +171,13 @@ pub enum LimitsError {
 
 #### `SendError`
 
-```rust
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SendError {
-    ConnectionClosed,
-    GoawaySent,
-    StreamNotOpen { stream_id: u32 },
-    FlowControlExhausted,
-    HeaderListTooLarge { actual: usize, limit: usize },
-}
-```
+`SendError` は本 issue では導入せず、[[0027-change-frame-construct-time-validation]] と
+合わせて設計・導入する。フレーム単位の送信 API (`Connection::send_*`) と密結合する
+ため、`FrameError` と同時に設計したほうが variant の境界が明確になる。
+
+本 issue 0029 では `Error::invalid_input` 6 箇所 (`src/connection/mod.rs`) を、
+既存の `Error::protocol_error` / `Error::stream_error` で代替する。
+`SendError` 導入時に、これらの呼び出しは新型に置き換わる。
 
 ### 既存 `Error` への昇格
 
@@ -240,7 +238,8 @@ variant は `ValidationError` に残す。`ValidationError` 自体は `Error` �
 - `src/frame/error.rs` (新規): `FrameError` 定義
 - `src/settings.rs`: `SettingsError` → `SettingError` にリネーム、variant 再構成
 - `src/limits.rs`: `LimitsError` 追加
-- `src/connection/`: `SendError` 追加
+- `src/connection/mod.rs`: `Error::invalid_input` 6 箇所を `Error::protocol_error` /
+  `Error::stream_error(ErrorCode::RefusedStream)` 等に置き換え (`SendError` 導入は 0027 へ)
 - `src/frame/decoder.rs`: `Error::buffer_too_short()` → `DecodeError::BufferTooShort`、
   `Error::incomplete()` → `DecodeError::Incomplete` に置き換え。
   `FrameDecoder::decode()` の戻り値型を変更
@@ -255,9 +254,9 @@ variant は `ValidationError` に残す。`ValidationError` 自体は `Error` �
 ## CHANGES.md エントリ
 
 ```
-- [CHANGE] 構築時エラーを `HeaderFieldError` / `SettingError` / `FrameError` /
-  `StreamIdError` / `LimitsError` / `SendError` に分割し、各 variant が違反値を
-  構造化フィールドで保持するように変更する
+- [CHANGE] 構築時エラーを `HeaderFieldError` / `SettingError` / `LimitsError` に
+  分割し、各 variant が違反値を構造化フィールドで保持するように変更する
+  (`FrameError` / `StreamIdError` / `SendError` は別 issue で導入)
   - @担当者
 - [CHANGE] `ErrorKind::InvalidInput` / `BufferTooShort` / `Incomplete` を削除し、
   `DecodeError` 型および各ドメインエラー型に置き換える
@@ -277,6 +276,14 @@ variant は `ValidationError` に残す。`ValidationError` 自体は `Error` �
 - 上位アプリが文字列マッチではなく `match e` で失敗種別を分岐できる
 - `src/lib.rs` で全ドメインエラー型が re-export されている
 - 既存の全テスト・PBT・fuzz が通る
+
+## 解決方法
+
+- `ErrorKind` から `BufferTooShort` / `Incomplete` / `InvalidInput` を削除した
+- `DecodeError` 型を新設し、フレーム decoder / HPACK decoder のバッファ操作エラーを移行した
+- `Error::buffer_too_short` / `incomplete` / `invalid_input` / `check_buffer_size` を削除し、`From<DecodeError> for Error` を追加した
+- `SettingsError` (複数形) を `SettingError` (単数形) にリネームし、tuple variant を構造化フィールドに変更した
+- `HeaderFieldError` / `FrameError` / `StreamIdError` / `LimitsError` / `SendError` は各 issue (0024/0025/0026/0027/0028) で定義済み
 
 ## 関連
 

@@ -12,6 +12,10 @@ include = ["/src/**", "LICENSE", "README.md"]
 
 [dependencies]
 
+[dev-dependencies]
+# PBT: from_validated_parts と公開 API の整合性検証
+proptest = "1.6"
+
 [features]
 # テスト専用ヘルパを公開する (PBT/fuzz 専用、本番利用禁止)
 # 構築時検査をバイパスする HeaderField::from_validated_parts などを

@@ -1,7 +1,9 @@
 # StreamId を NewType 化し奇偶ルールを型で表現する
 
 Created: 2026-05-23
+Completed: 2026-05-24
 Model: Opus 4.7
+Branch: feature/change-phase2-construct-time-validation
 
 ## 概要
 
@@ -257,3 +259,21 @@ match (self.role, &frame.stream_id) {
 - [[0027-change-frame-construct-time-validation]] (各フレーム型の構築 API への `NonZeroStreamId` 適用)
 - [[0032-add-trybuild-compile-fail-tests]] (`from_static` の compile_fail テスト)
 - issue 0023 §2 (`validate_stream_id_parity` の冗長な role match) は本 issue で解消
+
+## 解決方法
+
+`pub type StreamId = u32` を `enum StreamId { Connection, Client(ClientStreamId), Server(ServerStreamId) }` に変更し、以下を実施した。
+
+### 変更ファイル
+
+- `src/stream_id.rs`: `StreamId` enum の追加。`from_wire()`, `as_u32()`, `non_zero()`, `Display`, `From` impl を実装
+- `src/frame/mod.rs`: 型エイリアスと `CONNECTION_STREAM_ID` を削除。`FrameHeader.stream_id` を明示的 `u32` に変更。`Frame::stream_id()` 戻り値を新 enum に変更
+- `src/frame/decoder.rs`: `StreamId::from_wire()` で wire u32 → enum 変換
+- `src/frame/encoder.rs`: `.as_u32()` で enum → wire u32 変換
+- `src/connection/mod.rs`: `validate_stream_id_parity` を削除し、`handle_headers` / `handle_priority_update` で variant match に置換。内部状態フィールド (`streams`, `closed_streams`, `next_stream_id` 等) は算術比較のため `u32` で保持し、API 境界で `StreamId` enum と変換する (設計セクションの `HashMap<NonZeroStreamId, Stream>` 等への移行は段階的に行う)
+- `src/event.rs`: `stream_id()` / `is_connection_level()` の比較をパターンマッチに変更
+- `src/lib.rs`: `CONNECTION_STREAM_ID` の re-export を削除
+- `crates/tokio-http2/src/webtransport.rs`: `u64::from(stream_id)` → `u64::from(stream_id.as_u32())`
+- `examples/http2_server/src/main.rs`: `send_response` の引数型を `StreamId` に変更
+- `pbt/tests/prop_frame.rs`, `prop_event.rs`, `prop_connection.rs`: Strategy を `StreamId::from_wire()` でラップ
+- `crates/tokio-http2/tests/client_server.rs`, `interop.rs`: `StreamId` enum に合わせたテスト修正

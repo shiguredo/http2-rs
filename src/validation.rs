@@ -41,7 +41,6 @@ pub const TE_ALLOWED_VALUE: &[u8] = b"trailers";
 /// 受信経路で発生したフィールド単位のエラーは
 /// [`Self::InvalidHeaderField`] でラップして報告する。
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum ValidationError {
     /// 個別フィールドの構築時検査エラー (HPACK decoder 経路で wire データから検出)
     InvalidHeaderField(HeaderFieldError),

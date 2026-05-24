@@ -1,5 +1,6 @@
 //! HTTP/2 フレームエンコーダー
 
+use crate::decode_error::DecodeError;
 use crate::error::{Error, Result};
 use crate::frame::{
     ContinuationFrame, DataFrame, FRAME_HEADER_SIZE, Frame, FrameFlags, FrameHeader, FrameType,
@@ -94,7 +95,8 @@ impl FrameEncoder {
             (frame.data.len() as u32, None)
         };
 
-        let header = FrameHeader::new(FrameType::Data, flags, frame.stream_id).with_length(length);
+        let header =
+            FrameHeader::new(FrameType::Data, flags, frame.stream_id.as_u32()).with_length(length);
 
         self.encode_header(&header);
 
@@ -139,8 +141,8 @@ impl FrameEncoder {
             (frame.header_block_fragment.len() as u32, None)
         };
 
-        let header =
-            FrameHeader::new(FrameType::Headers, flags, frame.stream_id).with_length(length);
+        let header = FrameHeader::new(FrameType::Headers, flags, frame.stream_id.as_u32())
+            .with_length(length);
 
         self.encode_header(&header);
 
@@ -174,8 +176,12 @@ impl FrameEncoder {
 
     /// RST_STREAM フレームをエンコードする
     fn encode_rst_stream(&mut self, frame: &RstStreamFrame) -> Result<()> {
-        let header = FrameHeader::new(FrameType::RstStream, FrameFlags::empty(), frame.stream_id)
-            .with_length(4);
+        let header = FrameHeader::new(
+            FrameType::RstStream,
+            FrameFlags::empty(),
+            frame.stream_id.as_u32(),
+        )
+        .with_length(4);
 
         self.encode_header(&header);
         self.buf.extend_from_slice(&frame.error_code.to_be_bytes());
@@ -185,24 +191,25 @@ impl FrameEncoder {
     /// SETTINGS フレームをエンコードする
     fn encode_settings(&mut self, frame: &SettingsFrame) -> Result<()> {
         let mut flags = FrameFlags::empty();
-        if frame.ack {
+        if frame.is_ack() {
             flags = flags.set(FrameFlags::ACK);
         }
 
-        let length = if frame.ack {
+        let length = if frame.is_ack() {
             0
         } else {
-            (frame.settings.len() * 6) as u32
+            (frame.settings().len() * 6) as u32
         };
 
         let header = FrameHeader::new(FrameType::Settings, flags, 0).with_length(length);
 
         self.encode_header(&header);
 
-        if !frame.ack {
-            for setting in &frame.settings {
-                self.buf.extend_from_slice(&setting.id.to_be_bytes());
-                self.buf.extend_from_slice(&setting.value.to_be_bytes());
+        if !frame.is_ack() {
+            for setting in frame.settings() {
+                let (id, value) = setting.as_wire();
+                self.buf.extend_from_slice(&id.to_be_bytes());
+                self.buf.extend_from_slice(&value.to_be_bytes());
             }
         }
         Ok(())
@@ -230,10 +237,11 @@ impl FrameEncoder {
 
         self.encode_header(&header);
         // Last-Stream-ID (31 bits, R bit is reserved)
-        self.buf.push(((frame.last_stream_id >> 24) & 0x7f) as u8);
-        self.buf.push(((frame.last_stream_id >> 16) & 0xff) as u8);
-        self.buf.push(((frame.last_stream_id >> 8) & 0xff) as u8);
-        self.buf.push((frame.last_stream_id & 0xff) as u8);
+        let last_stream_id = frame.last_stream_id.get();
+        self.buf.push(((last_stream_id >> 24) & 0x7f) as u8);
+        self.buf.push(((last_stream_id >> 16) & 0xff) as u8);
+        self.buf.push(((last_stream_id >> 8) & 0xff) as u8);
+        self.buf.push((last_stream_id & 0xff) as u8);
         // Error Code
         self.buf.extend_from_slice(&frame.error_code.to_be_bytes());
         // Debug Data
@@ -246,19 +254,17 @@ impl FrameEncoder {
         let header = FrameHeader::new(
             FrameType::WindowUpdate,
             FrameFlags::empty(),
-            frame.stream_id,
+            frame.stream_id.as_u32(),
         )
         .with_length(4);
 
         self.encode_header(&header);
         // Window Size Increment (31 bits, R bit is reserved)
-        self.buf
-            .push(((frame.window_size_increment >> 24) & 0x7f) as u8);
-        self.buf
-            .push(((frame.window_size_increment >> 16) & 0xff) as u8);
-        self.buf
-            .push(((frame.window_size_increment >> 8) & 0xff) as u8);
-        self.buf.push((frame.window_size_increment & 0xff) as u8);
+        let increment = frame.window_size_increment.as_u32();
+        self.buf.push(((increment >> 24) & 0x7f) as u8);
+        self.buf.push(((increment >> 16) & 0xff) as u8);
+        self.buf.push(((increment >> 8) & 0xff) as u8);
+        self.buf.push((increment & 0xff) as u8);
         Ok(())
     }
 
@@ -270,8 +276,8 @@ impl FrameEncoder {
         }
 
         let length = frame.header_block_fragment.len() as u32;
-        let header =
-            FrameHeader::new(FrameType::Continuation, flags, frame.stream_id).with_length(length);
+        let header = FrameHeader::new(FrameType::Continuation, flags, frame.stream_id.as_u32())
+            .with_length(length);
 
         self.encode_header(&header);
         self.buf.extend_from_slice(&frame.header_block_fragment);
@@ -287,13 +293,11 @@ impl FrameEncoder {
 
         self.encode_header(&header);
         // Prioritized Element ID (31 bits, R bit is reserved)
-        self.buf
-            .push(((frame.prioritized_element_id >> 24) & 0x7f) as u8);
-        self.buf
-            .push(((frame.prioritized_element_id >> 16) & 0xff) as u8);
-        self.buf
-            .push(((frame.prioritized_element_id >> 8) & 0xff) as u8);
-        self.buf.push((frame.prioritized_element_id & 0xff) as u8);
+        let element_id = frame.prioritized_element_id.as_u32();
+        self.buf.push(((element_id >> 24) & 0x7f) as u8);
+        self.buf.push(((element_id >> 16) & 0xff) as u8);
+        self.buf.push(((element_id >> 8) & 0xff) as u8);
+        self.buf.push((element_id & 0xff) as u8);
         // Priority Field Value
         self.buf.extend_from_slice(&frame.priority_field_value);
         Ok(())
@@ -320,7 +324,7 @@ impl Default for FrameEncoder {
 ///
 /// バッファが 9 バイト未満の場合は `Err` を返す。
 pub fn encode_header(buf: &mut [u8], header: &FrameHeader) -> Result<()> {
-    Error::check_buffer_size(FRAME_HEADER_SIZE, buf)?;
+    DecodeError::check_buffer_size(FRAME_HEADER_SIZE, buf)?;
 
     // Length (24 bits)
     buf[0] = ((header.length >> 16) & 0xff) as u8;
@@ -350,7 +354,7 @@ pub fn encode_frame(buf: &mut [u8], frame: &Frame) -> Result<usize> {
     let mut encoder = FrameEncoder::new();
     encoder.encode(frame)?;
     let encoded = encoder.buffer();
-    Error::check_buffer_size(encoded.len(), buf)?;
+    DecodeError::check_buffer_size(encoded.len(), buf)?;
     buf[..encoded.len()].copy_from_slice(encoded);
     Ok(encoded.len())
 }

@@ -4,17 +4,18 @@
 
 use proptest::prelude::*;
 use shiguredo_http2::{
-    Connection, ErrorCode, HeaderField, HpackEncoder, Limits,
+    Connection, ErrorCode, HeaderField, HpackEncoder, LastStreamId, Limits, NonZeroStreamId,
+    WindowIncrement,
     frame::{
         ContinuationFrame, DataFrame, Frame, FrameEncoder, GoawayFrame, HeadersFrame, PingFrame,
         RstStreamFrame, SettingsFrame, StreamId, WindowUpdateFrame,
     },
-    settings::{MAX_INITIAL_WINDOW_SIZE, Setting, SettingId},
+    settings::{MAX_INITIAL_WINDOW_SIZE, Setting},
 };
 
 /// 有効なストリーム ID を生成する（クライアント開始: 奇数）
-fn client_stream_id() -> impl Strategy<Value = StreamId> {
-    (1u32..=100).prop_map(|n| n * 2 + 1) // 1, 3, 5, ...
+fn client_stream_id() -> impl Strategy<Value = NonZeroStreamId> {
+    (1u32..=100).prop_map(|n| NonZeroStreamId::new(n * 2 + 1).expect("odd value is always valid"))
 }
 
 /// フレームをバイト列にエンコードする
@@ -25,7 +26,10 @@ fn encode_frame(frame: &Frame) -> Vec<u8> {
 }
 
 /// HEADERS フレームを作成する（END_HEADERS なし）
-fn create_headers_without_end_headers(stream_id: StreamId, fragment: Vec<u8>) -> HeadersFrame {
+fn create_headers_without_end_headers(
+    stream_id: NonZeroStreamId,
+    fragment: Vec<u8>,
+) -> HeadersFrame {
     HeadersFrame::new(stream_id, fragment)
         .with_end_stream(false)
         .with_end_headers(false)
@@ -48,7 +52,7 @@ fn encode_valid_request_headers() -> Vec<u8> {
 
 /// CONTINUATION フレームを作成する
 fn create_continuation(
-    stream_id: StreamId,
+    stream_id: NonZeroStreamId,
     fragment: Vec<u8>,
     end_headers: bool,
 ) -> ContinuationFrame {
@@ -133,7 +137,8 @@ proptest! {
         server.process().unwrap();
 
         // idle ストリームに RST_STREAM を送信
-        let rst_frame = Frame::RstStream(RstStreamFrame::new(stream_id, ErrorCode::Cancel.as_u32()));
+        let rst_frame =
+            Frame::RstStream(RstStreamFrame::new(stream_id, ErrorCode::Cancel.as_u32()));
         let rst_bytes = encode_frame(&rst_frame);
         server.feed(&rst_bytes).unwrap();
 
@@ -147,7 +152,7 @@ proptest! {
 
     /// サーバーが偶数のストリーム ID を受信した場合、PROTOCOL_ERROR
     #[test]
-    fn prop_server_rejects_even_stream_id(stream_id in (1u32..=100).prop_map(|n| n * 2)) {
+    fn prop_server_rejects_even_stream_id(stream_id in (1u32..=100).prop_map(|n| NonZeroStreamId::new(n * 2).expect("even non-zero is valid"))) {
         let mut server = Connection::server(Limits::default());
         server.mark_preface_received();
         server.initiate().unwrap();
@@ -182,7 +187,7 @@ proptest! {
 
         // サーバーから ENABLE_PUSH=1 の SETTINGS を受信
         let mut settings = SettingsFrame::new();
-        settings.add_setting(Setting::new(0x02, 1)); // ENABLE_PUSH=1
+        settings.add(Setting::EnablePush(true));
         let settings_bytes = encode_frame(&Frame::Settings(settings));
         client.feed(&settings_bytes).unwrap();
 
@@ -197,9 +202,12 @@ proptest! {
     /// ストリーム ID が単調増加しない場合、PROTOCOL_ERROR
     #[test]
     fn prop_non_monotonic_stream_id_is_error(
-        first_id in (5u32..=100).prop_map(|n| n * 2 + 1),
+        first_id_raw in (5u32..=100).prop_map(|n| n * 2 + 1),
     ) {
-        let second_id = first_id - 2; // 単調増加していない
+        let first_id = NonZeroStreamId::new(first_id_raw)
+            .expect("odd non-zero is valid");
+        let second_id = NonZeroStreamId::new(first_id_raw - 2)
+            .expect("odd non-zero is valid"); // 単調増加していない
 
         let mut server = Connection::server(Limits::default());
         server.mark_preface_received();
@@ -301,7 +309,10 @@ proptest! {
         server.process().unwrap();
 
         // idle ストリームに WINDOW_UPDATE を送信
-        let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::new(stream_id, 1000));
+        let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::for_stream(
+            stream_id,
+            WindowIncrement::from_static(1000),
+        ));
         let wu_bytes = encode_frame(&wu_frame);
         server.feed(&wu_bytes).unwrap();
 
@@ -328,7 +339,10 @@ proptest! {
         client.process().unwrap();
 
         // サーバーから GOAWAY を受信
-        let goaway_frame = Frame::Goaway(GoawayFrame::new(0, ErrorCode::NoError.as_u32()));
+        let goaway_frame = Frame::Goaway(GoawayFrame::new(
+            LastStreamId::from_static(0),
+            ErrorCode::NoError.as_u32(),
+        ));
         let goaway_bytes = encode_frame(&goaway_frame);
         client.feed(&goaway_bytes).unwrap();
         client.process().unwrap();
@@ -360,9 +374,13 @@ proptest! {
         client.initiate().unwrap();
 
         // サーバーから無効な INITIAL_WINDOW_SIZE の SETTINGS を受信
-        let mut settings = SettingsFrame::new();
-        settings.add_setting(Setting::from_setting_id(SettingId::InitialWindowSize, invalid_size));
-        let settings_bytes = encode_frame(&Frame::Settings(settings));
+        // decoder が Setting::from_wire で検証するため、raw バイト列を直接構築
+        let mut settings_bytes = Vec::new();
+        // フレームヘッダー: length=6, type=0x04 (SETTINGS), flags=0, stream_id=0
+        settings_bytes.extend_from_slice(&[0x00, 0x00, 0x06, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        // SETTINGS パラメータ: id=0x0004, value=invalid_size
+        settings_bytes.extend_from_slice(&0x0004u16.to_be_bytes());
+        settings_bytes.extend_from_slice(&invalid_size.to_be_bytes());
         client.feed(&settings_bytes).unwrap();
 
         let result = client.process();
@@ -385,10 +403,7 @@ proptest! {
 
         // サーバーから max_concurrent_streams の SETTINGS を受信
         let mut settings = SettingsFrame::new();
-        settings.add_setting(Setting::from_setting_id(
-            SettingId::MaxConcurrentStreams,
-            max_streams,
-        ));
+        settings.add(Setting::MaxConcurrentStreams(max_streams));
         let settings_bytes = encode_frame(&Frame::Settings(settings));
         client.feed(&settings_bytes).unwrap();
         client.process().unwrap();
@@ -466,20 +481,14 @@ proptest! {
 
         // サーバーから NO_RFC7540_PRIORITIES の SETTINGS を受信
         let mut settings1 = SettingsFrame::new();
-        settings1.add_setting(Setting::from_setting_id(
-            SettingId::NoRfc7540Priorities,
-            u32::from(initial_value),
-        ));
+        settings1.add(Setting::NoRfc7540Priorities(initial_value));
         let settings1_bytes = encode_frame(&Frame::Settings(settings1));
         client.feed(&settings1_bytes).unwrap();
         client.process().unwrap();
 
         // サーバーから異なる値の NO_RFC7540_PRIORITIES を受信
         let mut settings2 = SettingsFrame::new();
-        settings2.add_setting(Setting::from_setting_id(
-            SettingId::NoRfc7540Priorities,
-            u32::from(!initial_value),
-        ));
+        settings2.add(Setting::NoRfc7540Priorities(!initial_value));
         let settings2_bytes = encode_frame(&Frame::Settings(settings2));
         client.feed(&settings2_bytes).unwrap();
 
@@ -644,7 +653,7 @@ proptest! {
             HeaderField::new(":authority", "example.com").unwrap(),
         ];
         let stream_id = client.start_stream(request_headers, true).unwrap();
-        prop_assert_eq!(stream_id, 1); // 最初のクライアントストリーム
+        prop_assert_eq!(stream_id, StreamId::from_wire(1)); // 最初のクライアントストリーム
 
         // クライアントの出力をサーバーに送信
         if let Some(client_output) = client.poll_output() {
@@ -657,7 +666,8 @@ proptest! {
         while let Some(event) = server.poll_event() {
             if matches!(
                 &event,
-                shiguredo_http2::Event::HeadersReceived { stream_id: 1, end_stream: true, .. }
+                shiguredo_http2::Event::HeadersReceived { stream_id, end_stream: true, .. }
+                    if stream_id.as_u32() == 1
             ) {
                 found_headers = true;
                 break;
@@ -690,7 +700,7 @@ proptest! {
 
         // ストリーム ID は奇数で単調増加
         for (i, &id) in stream_ids.iter().enumerate() {
-            let expected = i as u32 * 2 + 1; // 1, 3, 5, ...
+            let expected = StreamId::from_wire(i as u32 * 2 + 1); // 1, 3, 5, ...
             prop_assert_eq!(id, expected);
         }
     }
@@ -727,11 +737,16 @@ proptest! {
     ///
     /// RFC 9113 Section 6.9: WINDOW_UPDATE でフロー制御ウィンドウを増加させる
     #[test]
-    fn prop_window_update_increases_window(increment in 1u32..=0x7FFF_FFFF) {
+    fn prop_window_update_increases_window(
+        // 初期ウィンドウサイズ (65535) との合計が 2^31-1 を超えないよう上限を制限する
+        // (RFC 9113 §6.9.1: 上限超過は FLOW_CONTROL_ERROR)
+        increment in 1u32..=(0x7FFF_FFFFu32 - 65535),
+    ) {
         let (_client, mut server) = setup_client_server();
 
         // クライアント: 接続レベルの WINDOW_UPDATE を送信
-        let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::new(0, increment));
+        let wi = WindowIncrement::new(increment).expect("1..=0x7FFF_FFFF is valid");
+        let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::for_connection(wi));
         let wu_bytes = encode_frame(&wu_frame);
         server.feed(&wu_bytes).unwrap();
         server.process().unwrap();
@@ -739,7 +754,7 @@ proptest! {
         // サーバー: WindowUpdateReceived イベントを確認
         let mut found_window_update = false;
         while let Some(event) = server.poll_event() {
-            if matches!(&event, shiguredo_http2::Event::WindowUpdateReceived { stream_id: 0, .. }) {
+            if matches!(&event, shiguredo_http2::Event::WindowUpdateReceived { stream_id: StreamId::Connection, .. }) {
                 found_window_update = true;
                 break;
             }
@@ -755,7 +770,10 @@ proptest! {
         let (mut client, _server) = setup_client_server();
 
         // サーバー: GOAWAY を送信
-        let goaway_frame = Frame::Goaway(GoawayFrame::new(0, ErrorCode::NoError.as_u32()));
+        let goaway_frame = Frame::Goaway(GoawayFrame::new(
+            LastStreamId::from_static(0),
+            ErrorCode::NoError.as_u32(),
+        ));
         let goaway_bytes = encode_frame(&goaway_frame);
         client.feed(&goaway_bytes).unwrap();
         client.process().unwrap();
@@ -793,7 +811,10 @@ proptest! {
         while server.poll_event().is_some() {}
 
         // サーバー: RST_STREAM を送信
-        let rst_frame = Frame::RstStream(RstStreamFrame::new(1, error_code));
+        let rst_frame = Frame::RstStream(RstStreamFrame::new(
+            NonZeroStreamId::from_static(1),
+            error_code,
+        ));
         let rst_bytes = encode_frame(&rst_frame);
         client.feed(&rst_bytes).unwrap();
         client.process().unwrap();
@@ -801,7 +822,7 @@ proptest! {
         // クライアント: StreamReset イベントを確認
         let mut found_reset = false;
         while let Some(event) = client.poll_event() {
-            if matches!(&event, shiguredo_http2::Event::StreamReset { stream_id: 1, .. }) {
+            if matches!(&event, shiguredo_http2::Event::StreamReset { stream_id, .. } if stream_id.as_u32() == 1) {
                 found_reset = true;
                 break;
             }
@@ -827,7 +848,7 @@ mod tests {
         server.process().unwrap();
 
         // HEADERS なしで CONTINUATION を送信
-        let continuation = create_continuation(1, vec![0x82], true);
+        let continuation = create_continuation(NonZeroStreamId::from_static(1), vec![0x82], true);
         let continuation_bytes = encode_frame(&Frame::Continuation(continuation));
         server.feed(&continuation_bytes).unwrap();
 
@@ -852,7 +873,10 @@ mod tests {
         server.process().unwrap();
 
         // idle ストリームに RST_STREAM を送信
-        let rst_frame = Frame::RstStream(RstStreamFrame::new(1, ErrorCode::Cancel.as_u32()));
+        let rst_frame = Frame::RstStream(RstStreamFrame::new(
+            NonZeroStreamId::from_static(1),
+            ErrorCode::Cancel.as_u32(),
+        ));
         let rst_bytes = encode_frame(&rst_frame);
         server.feed(&rst_bytes).unwrap();
 
@@ -871,7 +895,7 @@ mod tests {
 
         // サーバーから ENABLE_PUSH=1 の SETTINGS を受信
         let mut settings = SettingsFrame::new();
-        settings.add_setting(Setting::new(0x02, 1)); // ENABLE_PUSH=1
+        settings.add(Setting::EnablePush(true));
         let settings_bytes = encode_frame(&Frame::Settings(settings));
         client.feed(&settings_bytes).unwrap();
 

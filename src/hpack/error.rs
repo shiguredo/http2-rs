@@ -2,9 +2,6 @@
 //!
 //! [`crate::hpack::HeaderField`] の構築時検査で使用される構造化エラー型。
 //! 文字列ベースの [`crate::error::Error`] とは分離し、違反値を構造化フィールドで保持する。
-//!
-//! 本ファイルは issue 0024 構築時検査リファクタリングの Phase 1 として追加された。
-//! Phase 2 で [`crate::hpack::HeaderField`] の構築 API (`new` / `from_static`) と統合される予定。
 
 /// HPACK ヘッダーフィールド構築時検査エラー
 ///
@@ -13,7 +10,6 @@
 ///
 /// `Vec<u8>` フィールドを持つため [`Copy`] は導出不可能。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum HeaderFieldError {
     /// field-name が空
     ///

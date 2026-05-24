@@ -1,6 +1,8 @@
 # 各 Frame 型を構築時検査型に変更する
 
 Created: 2026-05-23
+Completed: 2026-05-24
+Priority: High
 Model: Opus 4.7
 
 ## 概要
@@ -239,5 +241,44 @@ impl HeadersFrame {
 
 - [[0025-change-stream-id-newtype]] (`NonZeroStreamId` を提供)
 - [[0024-change-header-field-construct-time-validation]] (`HeaderField` 構築時検査)
-- [[0029-change-split-error-types]] (`FrameError`)
+- [[0029-change-split-error-types]] (基盤の `DecodeError` / `SettingError` を提供)
 - [[0013-refactor-bytes-payloads]] (Bytes 化と統合)
+
+## 0029 から引き継ぐ作業
+
+`SendError` の定義および `src/connection/mod.rs` のクライアント側送信前検査
+(`Error::protocol_error` / `Error::stream_error` の一部) を `SendError` に置き換える
+作業は、本 issue 0027 で `FrameError` と同時に設計・実装する。
+
+`SendError` は当初 issue 0029 で導入する設計だったが、フレーム送信 API の
+コンテキストに密接しているため、`FrameError` と同時に決定する方が境界が明確になる。
+
+variant 候補 (実コードに対応する):
+
+- `ServerCannotInitiateStream` (server push 不許可、`connection/mod.rs:401`)
+- `MaxConcurrentStreamsExceeded { current: usize, limit: u32 }` (`connection/mod.rs:422`)
+- `ExtendedConnectNotEnabled` (`connection/mod.rs:435`、RFC 8441 §3)
+- `HeaderListTooLarge { actual: usize, limit: u32 }`
+  (`connection/mod.rs:444 / 787 / 869`、RFC 9113 §10.5.1)
+
+最終的な variant は本 issue 着手時に再評価する。
+
+## 解決方法
+
+各フレーム構造体のフィールド型を RFC 9113 の制約に合わせた newtype に変更した。
+
+### 変更内容
+
+- `DataFrame` / `HeadersFrame` / `RstStreamFrame` / `ContinuationFrame` / `PriorityUpdateFrame` / `PriorityFrame` の `stream_id` を `StreamId` から `NonZeroStreamId` に変更
+- `WindowUpdateFrame` の `window_size_increment` を `u32` から `WindowIncrement` に変更し、コンストラクタを `for_connection` / `for_stream` に分割
+- `GoawayFrame` の `last_stream_id` を `StreamId` から `LastStreamId` に変更
+- `PriorityFields` / `PriorityFrame` の `weight` を `u8` から `Weight` に変更
+- decoder (`src/frame/decoder.rs`) を新しい型に対応させ、`require_non_zero_stream_id` ヘルパーで stream_id = 0 の検査を共通化
+- `Connection` の送信系メソッドを新しい型に対応
+
+### 今回見送った項目
+
+- `SendError` の `Connection::send_*` への統合 (別 issue として分離が妥当)
+- `error_code` の `u32` → `ErrorCode` 変更 (wire 上の未知エラーコードを保持する必要があるため `u32` を維持)
+- `from_static` (`const fn`) の追加 (Bytes 化 issue 0013 と同時に実施が妥当)
+- `PriorityFrame` の `pub` フィールド制限 (deprecated であり、PBT テストでの利用に影響が大きいため据え置き)

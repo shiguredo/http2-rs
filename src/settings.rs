@@ -35,127 +35,105 @@ pub const MAX_MAX_FRAME_SIZE: u32 = 16_777_215;
 /// SETTINGS_INITIAL_WINDOW_SIZE の最大値
 pub const MAX_INITIAL_WINDOW_SIZE: u32 = 2_147_483_647;
 
-// === 拡張 SETTINGS (RFC 8441 + draft-ietf-webtrans-http2-14) ===
-
-/// SETTINGS_ENABLE_CONNECT_PROTOCOL (RFC 8441)
-/// Extended CONNECT Protocol を有効にする
-pub const SETTINGS_ENABLE_CONNECT_PROTOCOL: u16 = 0x08;
-
-/// SETTINGS_WT_INITIAL_MAX_DATA (draft-ietf-webtrans-http2-14 Section 11.2)
-/// WebTransport セッションの初期最大データ量
-pub const SETTINGS_WT_INITIAL_MAX_DATA: u16 = 0x2b61;
-
-/// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (draft-ietf-webtrans-http2-14 Section 11.2)
-/// WebTransport 単方向ストリームの初期最大データ量
-pub const SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI: u16 = 0x2b62;
-
-/// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (draft-ietf-webtrans-http2-14 Section 11.2)
-/// WebTransport 双方向ストリームの初期最大データ量 (送信者が開始したストリーム)
-pub const SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL: u16 = 0x2b63;
-
-/// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (draft-ietf-webtrans-http2-14 Section 11.2)
-/// WebTransport 単方向ストリームの初期最大数
-pub const SETTINGS_WT_INITIAL_MAX_STREAMS_UNI: u16 = 0x2b64;
-
-/// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (draft-ietf-webtrans-http2-14 Section 11.2)
-/// WebTransport 双方向ストリームの初期最大数
-pub const SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI: u16 = 0x2b65;
-
-/// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (draft-ietf-webtrans-http2-14 Section 11.2)
-/// WebTransport 双方向ストリームの初期最大データ量 (受信者が開始したストリーム)
-pub const SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE: u16 = 0x2b66;
-
-/// SETTINGS パラメータの識別子
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u16)]
-pub enum SettingId {
-    /// SETTINGS_HEADER_TABLE_SIZE (0x01)
-    HeaderTableSize = 0x01,
-    /// SETTINGS_ENABLE_PUSH (0x02)
-    EnablePush = 0x02,
-    /// SETTINGS_MAX_CONCURRENT_STREAMS (0x03)
-    MaxConcurrentStreams = 0x03,
-    /// SETTINGS_INITIAL_WINDOW_SIZE (0x04)
-    InitialWindowSize = 0x04,
-    /// SETTINGS_MAX_FRAME_SIZE (0x05)
-    MaxFrameSize = 0x05,
-    /// SETTINGS_MAX_HEADER_LIST_SIZE (0x06)
-    MaxHeaderListSize = 0x06,
-    /// SETTINGS_ENABLE_CONNECT_PROTOCOL (0x08) (RFC 8441)
-    ///
-    /// Extended CONNECT Protocol を有効にする。
-    /// 値が 1 の場合、CONNECT メソッドで :protocol 疑似ヘッダーを使用可能。
-    EnableConnectProtocol = 0x08,
-    /// SETTINGS_NO_RFC7540_PRIORITIES (0x09) (RFC 9218 Section 2.1)
-    ///
-    /// RFC 9218 で定義される設定パラメータ。
-    /// 値が 1 の場合、RFC 9113 Section 5.3.1/5.3.2 で非推奨となった RFC 7540 由来の
-    /// 優先度シグナリングを使用しないことを示す。
-    NoRfc7540Priorities = 0x09,
-    /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61) (draft-ietf-webtrans-http2-14 Section 11.2)
-    WtInitialMaxData = 0x2b61,
-    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62)
-    WtInitialMaxStreamDataUni = 0x2b62,
-    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63)
-    WtInitialMaxStreamDataBidiLocal = 0x2b63,
-    /// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64)
-    WtInitialMaxStreamsUni = 0x2b64,
-    /// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65)
-    WtInitialMaxStreamsBidi = 0x2b65,
-    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66)
-    WtInitialMaxStreamDataBidiRemote = 0x2b66,
-}
-
-impl SettingId {
-    /// u16 から `SettingId` を生成する
-    #[must_use]
-    pub const fn from_u16(value: u16) -> Option<Self> {
-        match value {
-            0x01 => Some(Self::HeaderTableSize),
-            0x02 => Some(Self::EnablePush),
-            0x03 => Some(Self::MaxConcurrentStreams),
-            0x04 => Some(Self::InitialWindowSize),
-            0x05 => Some(Self::MaxFrameSize),
-            0x06 => Some(Self::MaxHeaderListSize),
-            0x08 => Some(Self::EnableConnectProtocol),
-            0x09 => Some(Self::NoRfc7540Priorities),
-            0x2b61 => Some(Self::WtInitialMaxData),
-            0x2b62 => Some(Self::WtInitialMaxStreamDataUni),
-            0x2b63 => Some(Self::WtInitialMaxStreamDataBidiLocal),
-            0x2b64 => Some(Self::WtInitialMaxStreamsUni),
-            0x2b65 => Some(Self::WtInitialMaxStreamsBidi),
-            0x2b66 => Some(Self::WtInitialMaxStreamDataBidiRemote),
-            _ => None,
-        }
-    }
-
-    /// `SettingId` を u16 に変換する
-    #[must_use]
-    pub const fn as_u16(self) -> u16 {
-        self as u16
-    }
-}
-
-/// 単一の SETTINGS パラメータ
+/// 既知の SETTINGS パラメータ (RFC 9113 §6.5.2)
+///
+/// wire 上の (id, value) ペアから `Setting::from_wire` で構築する。
+/// 既知パラメータの値が範囲外の場合は `Err(SettingError)` を返す。
+/// 未知 ID は `Setting::Unknown { id, value }` として保持する
+/// (RFC 9113 §6.5.2: 未知パラメータは MUST ignore)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Setting {
-    /// パラメータ識別子
-    pub id: u16,
-    /// パラメータ値
-    pub value: u32,
+pub enum Setting {
+    /// SETTINGS_HEADER_TABLE_SIZE (0x01)
+    HeaderTableSize(u32),
+    /// SETTINGS_ENABLE_PUSH (0x02)
+    EnablePush(bool),
+    /// SETTINGS_MAX_CONCURRENT_STREAMS (0x03)
+    MaxConcurrentStreams(u32),
+    /// SETTINGS_INITIAL_WINDOW_SIZE (0x04)
+    InitialWindowSize(WindowSize),
+    /// SETTINGS_MAX_FRAME_SIZE (0x05)
+    MaxFrameSize(MaxFrameSize),
+    /// SETTINGS_MAX_HEADER_LIST_SIZE (0x06)
+    MaxHeaderListSize(u32),
+    /// SETTINGS_ENABLE_CONNECT_PROTOCOL (0x08) (RFC 8441)
+    EnableConnectProtocol(bool),
+    /// SETTINGS_NO_RFC7540_PRIORITIES (0x09) (RFC 9218 Section 2.1)
+    NoRfc7540Priorities(bool),
+    /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61) (draft-ietf-webtrans-http2-14 Section 11.2)
+    WtInitialMaxData(u32),
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62)
+    WtInitialMaxStreamDataUni(u32),
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63)
+    WtInitialMaxStreamDataBidiLocal(u32),
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64)
+    WtInitialMaxStreamsUni(u32),
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65)
+    WtInitialMaxStreamsBidi(u32),
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66)
+    WtInitialMaxStreamDataBidiRemote(u32),
+    /// 未知の SETTINGS パラメータ (RFC 9113 §6.5.2: MUST ignore)
+    Unknown { id: u16, value: u32 },
 }
 
 impl Setting {
-    /// 新しい `Setting` を生成する
-    #[must_use]
-    pub const fn new(id: u16, value: u32) -> Self {
-        Self { id, value }
+    /// wire 上の (id, value) ペアから構築する
+    ///
+    /// 既知パラメータの値が範囲外の場合は `Err(SettingError)` を返す。
+    /// 未知の ID の場合は `Ok(Setting::Unknown { id, value })` を返す。
+    pub fn from_wire(id: u16, value: u32) -> Result<Self, SettingError> {
+        match id {
+            0x01 => Ok(Self::HeaderTableSize(value)),
+            0x02 => {
+                if value > 1 {
+                    return Err(SettingError::EnablePushNotBoolean { value });
+                }
+                Ok(Self::EnablePush(value == 1))
+            }
+            0x03 => Ok(Self::MaxConcurrentStreams(value)),
+            0x04 => Ok(Self::InitialWindowSize(WindowSize::new(value)?)),
+            0x05 => Ok(Self::MaxFrameSize(MaxFrameSize::new(value)?)),
+            0x06 => Ok(Self::MaxHeaderListSize(value)),
+            0x08 => {
+                if value > 1 {
+                    return Err(SettingError::EnableConnectProtocolNotBoolean { value });
+                }
+                Ok(Self::EnableConnectProtocol(value == 1))
+            }
+            0x09 => {
+                if value > 1 {
+                    return Err(SettingError::NoRfc7540PrioritiesNotBoolean { value });
+                }
+                Ok(Self::NoRfc7540Priorities(value == 1))
+            }
+            0x2b61 => Ok(Self::WtInitialMaxData(value)),
+            0x2b62 => Ok(Self::WtInitialMaxStreamDataUni(value)),
+            0x2b63 => Ok(Self::WtInitialMaxStreamDataBidiLocal(value)),
+            0x2b64 => Ok(Self::WtInitialMaxStreamsUni(value)),
+            0x2b65 => Ok(Self::WtInitialMaxStreamsBidi(value)),
+            0x2b66 => Ok(Self::WtInitialMaxStreamDataBidiRemote(value)),
+            _ => Ok(Self::Unknown { id, value }),
+        }
     }
 
-    /// 既知の `SettingId` を使用して `Setting` を生成する
-    #[must_use]
-    pub const fn from_setting_id(id: SettingId, value: u32) -> Self {
-        Self::new(id.as_u16(), value)
+    /// wire 上の (id, value) ペアに変換する
+    pub const fn as_wire(self) -> (u16, u32) {
+        match self {
+            Self::HeaderTableSize(v) => (0x01, v),
+            Self::EnablePush(b) => (0x02, b as u32),
+            Self::MaxConcurrentStreams(v) => (0x03, v),
+            Self::InitialWindowSize(ws) => (0x04, ws.get()),
+            Self::MaxFrameSize(mfs) => (0x05, mfs.get()),
+            Self::MaxHeaderListSize(v) => (0x06, v),
+            Self::EnableConnectProtocol(b) => (0x08, b as u32),
+            Self::NoRfc7540Priorities(b) => (0x09, b as u32),
+            Self::WtInitialMaxData(v) => (0x2b61, v),
+            Self::WtInitialMaxStreamDataUni(v) => (0x2b62, v),
+            Self::WtInitialMaxStreamDataBidiLocal(v) => (0x2b63, v),
+            Self::WtInitialMaxStreamsUni(v) => (0x2b64, v),
+            Self::WtInitialMaxStreamsBidi(v) => (0x2b65, v),
+            Self::WtInitialMaxStreamDataBidiRemote(v) => (0x2b66, v),
+            Self::Unknown { id, value } => (id, value),
+        }
     }
 }
 
@@ -177,18 +155,22 @@ pub struct Settings {
     /// ヘッダーリストの最大サイズ
     pub max_header_list_size: Option<u32>,
     /// Extended CONNECT Protocol の有効/無効 (RFC 8441)
-    ///
-    /// true の場合、CONNECT メソッドで :protocol 疑似ヘッダーを使用可能。
-    /// WebSocket over HTTP/2 や WebTransport で必要。
     pub enable_connect_protocol: bool,
     /// RFC 9113 Section 5.3.1/5.3.2 で非推奨となった RFC 7540 由来の優先度シグナリングを
     /// 使用しない (RFC 9218)
-    ///
-    /// true の場合、RFC 7540 由来の優先度シグナリング (PRIORITY フレーム、
-    /// HEADERS フレームの優先度フィールド) を使用しないことを示す。
     pub no_rfc7540_priorities: bool,
-    /// WebTransport 初期設定 (draft-ietf-webtrans-http2-14 Section 11.2)
-    pub wt_initial: WtInitialSettings,
+    /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61)
+    pub wt_initial_max_data: Option<u32>,
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62)
+    pub wt_initial_max_stream_data_uni: Option<u32>,
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63)
+    pub wt_initial_max_stream_data_bidi_local: Option<u32>,
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64)
+    pub wt_initial_max_streams_uni: Option<u32>,
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65)
+    pub wt_initial_max_streams_bidi: Option<u32>,
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66)
+    pub wt_initial_max_stream_data_bidi_remote: Option<u32>,
 }
 
 impl Default for Settings {
@@ -202,7 +184,12 @@ impl Default for Settings {
             max_header_list_size: DEFAULT_MAX_HEADER_LIST_SIZE,
             enable_connect_protocol: false,
             no_rfc7540_priorities: false,
-            wt_initial: WtInitialSettings::default(),
+            wt_initial_max_data: None,
+            wt_initial_max_stream_data_uni: None,
+            wt_initial_max_stream_data_bidi_local: None,
+            wt_initial_max_streams_uni: None,
+            wt_initial_max_streams_bidi: None,
+            wt_initial_max_stream_data_bidi_remote: None,
         }
     }
 }
@@ -214,186 +201,88 @@ impl Settings {
         Self::default()
     }
 
-    /// 設定パラメータを適用する
+    /// 検証済み `Setting` を適用する
     ///
-    /// 無効な値の場合は `Err` を返す。
-    pub fn apply(&mut self, setting: Setting) -> Result<(), SettingsError> {
-        match SettingId::from_u16(setting.id) {
-            Some(SettingId::HeaderTableSize) => {
-                self.header_table_size = setting.value;
+    /// `Setting` は `from_wire` で構築済みのため値検査は不要。
+    /// `Setting::Unknown` は RFC 9113 §6.5.2 に従い無視する。
+    pub fn apply(&mut self, setting: Setting) {
+        match setting {
+            Setting::HeaderTableSize(v) => self.header_table_size = v,
+            Setting::EnablePush(b) => self.enable_push = b,
+            Setting::MaxConcurrentStreams(v) => self.max_concurrent_streams = Some(v),
+            Setting::InitialWindowSize(ws) => self.initial_window_size = ws.get(),
+            Setting::MaxFrameSize(mfs) => self.max_frame_size = mfs.get(),
+            Setting::MaxHeaderListSize(v) => self.max_header_list_size = Some(v),
+            Setting::EnableConnectProtocol(b) => self.enable_connect_protocol = b,
+            Setting::NoRfc7540Priorities(b) => self.no_rfc7540_priorities = b,
+            Setting::WtInitialMaxData(v) => self.wt_initial_max_data = Some(v),
+            Setting::WtInitialMaxStreamDataUni(v) => {
+                self.wt_initial_max_stream_data_uni = Some(v);
             }
-            Some(SettingId::EnablePush) => {
-                if setting.value > 1 {
-                    return Err(SettingsError::InvalidEnablePush(setting.value));
-                }
-                self.enable_push = setting.value == 1;
+            Setting::WtInitialMaxStreamDataBidiLocal(v) => {
+                self.wt_initial_max_stream_data_bidi_local = Some(v);
             }
-            Some(SettingId::MaxConcurrentStreams) => {
-                self.max_concurrent_streams = Some(setting.value);
+            Setting::WtInitialMaxStreamsUni(v) => self.wt_initial_max_streams_uni = Some(v),
+            Setting::WtInitialMaxStreamsBidi(v) => self.wt_initial_max_streams_bidi = Some(v),
+            Setting::WtInitialMaxStreamDataBidiRemote(v) => {
+                self.wt_initial_max_stream_data_bidi_remote = Some(v);
             }
-            Some(SettingId::InitialWindowSize) => {
-                if setting.value > MAX_INITIAL_WINDOW_SIZE {
-                    return Err(SettingsError::InvalidInitialWindowSize(setting.value));
-                }
-                self.initial_window_size = setting.value;
-            }
-            Some(SettingId::MaxFrameSize) => {
-                if setting.value < MIN_MAX_FRAME_SIZE || setting.value > MAX_MAX_FRAME_SIZE {
-                    return Err(SettingsError::InvalidMaxFrameSize(setting.value));
-                }
-                self.max_frame_size = setting.value;
-            }
-            Some(SettingId::MaxHeaderListSize) => {
-                self.max_header_list_size = Some(setting.value);
-            }
-            Some(SettingId::EnableConnectProtocol) => {
-                // RFC 8441: 0 または 1 のみ有効
-                if setting.value > 1 {
-                    return Err(SettingsError::InvalidEnableConnectProtocol(setting.value));
-                }
-                self.enable_connect_protocol = setting.value == 1;
-            }
-            Some(SettingId::NoRfc7540Priorities) => {
-                // RFC 9218 Section 2.1: 0 または 1 のみ有効
-                if setting.value > 1 {
-                    return Err(SettingsError::InvalidNoRfc7540Priorities(setting.value));
-                }
-                self.no_rfc7540_priorities = setting.value == 1;
-            }
-            Some(SettingId::WtInitialMaxData) => {
-                self.wt_initial.initial_max_data = Some(setting.value);
-            }
-            Some(SettingId::WtInitialMaxStreamDataUni) => {
-                self.wt_initial.initial_max_stream_data_uni = Some(setting.value);
-            }
-            Some(SettingId::WtInitialMaxStreamDataBidiLocal) => {
-                self.wt_initial.initial_max_stream_data_bidi_local = Some(setting.value);
-            }
-            Some(SettingId::WtInitialMaxStreamsUni) => {
-                self.wt_initial.initial_max_streams_uni = Some(setting.value);
-            }
-            Some(SettingId::WtInitialMaxStreamsBidi) => {
-                self.wt_initial.initial_max_streams_bidi = Some(setting.value);
-            }
-            Some(SettingId::WtInitialMaxStreamDataBidiRemote) => {
-                self.wt_initial.initial_max_stream_data_bidi_remote = Some(setting.value);
-            }
-            None => {
-                // RFC 9113 Section 6.5.2: unknown settings MUST be ignored
+            Setting::Unknown { .. } => {
+                // RFC 9113 §6.5.2: 未知の SETTINGS は無視
             }
         }
-        Ok(())
     }
 
     /// 設定を `Setting` のリストとして取得する
     #[must_use]
     pub fn to_settings_list(&self) -> Vec<Setting> {
-        let mut list = Vec::with_capacity(8);
-        list.push(Setting::from_setting_id(
-            SettingId::HeaderTableSize,
-            self.header_table_size,
-        ));
-        list.push(Setting::from_setting_id(
-            SettingId::EnablePush,
-            u32::from(self.enable_push),
-        ));
+        let mut list = Vec::new();
+        list.push(Setting::HeaderTableSize(self.header_table_size));
+        list.push(Setting::EnablePush(self.enable_push));
         if let Some(max) = self.max_concurrent_streams {
-            list.push(Setting::from_setting_id(
-                SettingId::MaxConcurrentStreams,
-                max,
-            ));
+            list.push(Setting::MaxConcurrentStreams(max));
         }
-        list.push(Setting::from_setting_id(
-            SettingId::InitialWindowSize,
+        list.push(Setting::InitialWindowSize(WindowSize::from_static(
             self.initial_window_size,
-        ));
-        list.push(Setting::from_setting_id(
-            SettingId::MaxFrameSize,
+        )));
+        list.push(Setting::MaxFrameSize(MaxFrameSize::from_static(
             self.max_frame_size,
-        ));
+        )));
         if let Some(max) = self.max_header_list_size {
-            list.push(Setting::from_setting_id(SettingId::MaxHeaderListSize, max));
+            list.push(Setting::MaxHeaderListSize(max));
         }
-        // RFC 8441: 初期値は 0。有効にする場合のみ送信
         if self.enable_connect_protocol {
-            list.push(Setting::from_setting_id(
-                SettingId::EnableConnectProtocol,
-                1,
-            ));
+            list.push(Setting::EnableConnectProtocol(true));
         }
-        // RFC 9218 Section 2.1: RFC 9113 Section 5.3.1/5.3.2 で非推奨となった優先度シグナリングを
-        // 使用しない場合のみ送信
-        // この設定は最初の SETTINGS フレームで送信し、以後変更できない
         if self.no_rfc7540_priorities {
-            list.push(Setting::from_setting_id(SettingId::NoRfc7540Priorities, 1));
+            list.push(Setting::NoRfc7540Priorities(true));
         }
-        // draft-ietf-webtrans-http2-14 Section 11.2: WebTransport 関連 SETTINGS
-        list.extend(self.wt_initial.to_settings_list());
+        if let Some(v) = self.wt_initial_max_data {
+            list.push(Setting::WtInitialMaxData(v));
+        }
+        if let Some(v) = self.wt_initial_max_stream_data_uni {
+            list.push(Setting::WtInitialMaxStreamDataUni(v));
+        }
+        if let Some(v) = self.wt_initial_max_stream_data_bidi_local {
+            list.push(Setting::WtInitialMaxStreamDataBidiLocal(v));
+        }
+        if let Some(v) = self.wt_initial_max_streams_uni {
+            list.push(Setting::WtInitialMaxStreamsUni(v));
+        }
+        if let Some(v) = self.wt_initial_max_streams_bidi {
+            list.push(Setting::WtInitialMaxStreamsBidi(v));
+        }
+        if let Some(v) = self.wt_initial_max_stream_data_bidi_remote {
+            list.push(Setting::WtInitialMaxStreamDataBidiRemote(v));
+        }
         list
     }
 }
 
-/// SETTINGS パラメータのバリデーションエラー
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SettingsError {
-    /// ENABLE_PUSH の値が無効（0 または 1 以外）
-    InvalidEnablePush(u32),
-    /// INITIAL_WINDOW_SIZE の値が無効（2^31-1 を超える）
-    InvalidInitialWindowSize(u32),
-    /// MAX_FRAME_SIZE の値が無効（16384 未満または 16777215 を超える）
-    InvalidMaxFrameSize(u32),
-    /// ENABLE_CONNECT_PROTOCOL の値が無効（0 または 1 以外）
-    InvalidEnableConnectProtocol(u32),
-    /// NO_RFC7540_PRIORITIES の値が無効（0 または 1 以外）
-    InvalidNoRfc7540Priorities(u32),
-}
-
-impl std::fmt::Display for SettingsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InvalidEnablePush(v) => {
-                write!(f, "invalid ENABLE_PUSH value: {v} (must be 0 or 1)")
-            }
-            Self::InvalidInitialWindowSize(v) => {
-                write!(
-                    f,
-                    "invalid INITIAL_WINDOW_SIZE value: {v} (must be <= 2147483647)"
-                )
-            }
-            Self::InvalidMaxFrameSize(v) => {
-                write!(
-                    f,
-                    "invalid MAX_FRAME_SIZE value: {v} (must be 16384..=16777215)"
-                )
-            }
-            Self::InvalidEnableConnectProtocol(v) => {
-                write!(
-                    f,
-                    "invalid ENABLE_CONNECT_PROTOCOL value: {v} (must be 0 or 1)"
-                )
-            }
-            Self::InvalidNoRfc7540Priorities(v) => {
-                write!(
-                    f,
-                    "invalid NO_RFC7540_PRIORITIES value: {v} (must be 0 or 1)"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for SettingsError {}
-
-// === issue 0026 / 0029: 構築時検査用エラー・補助型 (Phase 1) ===
-//
-// 既存の `SettingsError` は Phase 2 でリネームし、各構築 API と統合される予定。
-// Phase 1 では新型を追加するだけに留め、既存 API は変更しない。
-
-/// SETTINGS 構築時検査エラー (issue 0026 / 0029)
+/// SETTINGS 値範囲検査エラー
 ///
-/// `WindowSize::new` / `MaxFrameSize::new` / 各 `Setting` 値範囲検査で使用される。
+/// `Setting::from_wire` / `WindowSize::new` / `MaxFrameSize::new` の戻り値で使用される。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum SettingError {
     /// `SETTINGS_ENABLE_PUSH` が 0/1 以外
     ///
@@ -515,6 +404,23 @@ impl WindowSize {
         Self(size)
     }
 
+    /// decoder 内部で検証済みの値から構築する
+    ///
+    /// 呼び出し側が「0..=2^31-1 の範囲」を保証していること。
+    /// 現時点では `Setting::from_wire` が `new` 経由で検査するため未使用だが、
+    /// 他の構築時検査型との API 一貫性のために用意する。
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "構築時検査型 API の一貫性のために用意")
+    )]
+    pub(crate) fn from_validated_parts(size: u32) -> Self {
+        debug_assert!(
+            size <= Self::MAX,
+            "WindowSize::from_validated_parts: size must be <= 2^31-1"
+        );
+        Self(size)
+    }
+
     /// 値を取得する
     pub const fn get(self) -> u32 {
         self.0
@@ -580,116 +486,54 @@ impl MaxFrameSize {
         Self(size)
     }
 
+    /// decoder 内部で検証済みの値から構築する
+    ///
+    /// 呼び出し側が「16384..=16777215 の範囲」を保証していること。
+    /// 現時点では `Setting::from_wire` が `new` 経由で検査するため未使用だが、
+    /// 他の構築時検査型との API 一貫性のために用意する。
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "構築時検査型 API の一貫性のために用意")
+    )]
+    pub(crate) fn from_validated_parts(size: u32) -> Self {
+        debug_assert!(
+            (Self::MIN..=Self::MAX).contains(&size),
+            "MaxFrameSize::from_validated_parts: size must be in 16384..=16777215"
+        );
+        Self(size)
+    }
+
     /// 値を取得する
     pub const fn get(self) -> u32 {
         self.0
     }
 }
 
-// === WebTransport SETTINGS 統合 (draft-ietf-webtrans-http2-14 Section 11.2) ===
+#[cfg(test)]
+mod tests {
+    mod validated_parts {
+        use proptest::prelude::*;
 
-/// WebTransport 初期設定
-///
-/// draft-ietf-webtrans-http2-14 Section 11.2 で定義される WebTransport 関連の
-/// HTTP/2 SETTINGS パラメータ。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct WtInitialSettings {
-    /// セッションレベルの初期最大データ量
-    ///
-    /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61)
-    /// HTTP/2 SETTINGS の値は 32-bit に制限される (RFC 9113 Section 6.5.1)。
-    pub initial_max_data: Option<u32>,
-    /// 単方向ストリームの初期最大データ量
-    ///
-    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62)
-    /// HTTP/2 SETTINGS の値は 32-bit に制限される (RFC 9113 Section 6.5.1)。
-    pub initial_max_stream_data_uni: Option<u32>,
-    /// 双方向ストリームの初期最大データ量 (送信者が開始したストリーム)
-    ///
-    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63)
-    /// HTTP/2 SETTINGS の値は 32-bit に制限される (RFC 9113 Section 6.5.1)。
-    pub initial_max_stream_data_bidi_local: Option<u32>,
-    /// 双方向ストリームの初期最大データ量 (受信者が開始したストリーム)
-    ///
-    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66)
-    /// HTTP/2 SETTINGS の値は 32-bit に制限される (RFC 9113 Section 6.5.1)。
-    pub initial_max_stream_data_bidi_remote: Option<u32>,
-    /// 単方向ストリームの初期最大数
-    ///
-    /// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64)
-    /// HTTP/2 SETTINGS の値は 32-bit に制限される (RFC 9113 Section 6.5.1)。
-    pub initial_max_streams_uni: Option<u32>,
-    /// 双方向ストリームの初期最大数
-    ///
-    /// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65)
-    /// HTTP/2 SETTINGS の値は 32-bit に制限される (RFC 9113 Section 6.5.1)。
-    pub initial_max_streams_bidi: Option<u32>,
-}
+        use crate::settings::{MaxFrameSize, WindowSize};
 
-impl WtInitialSettings {
-    /// 新しい `WtInitialSettings` を生成する
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
+        proptest! {
+            #[test]
+            fn window_size_validated_matches_new(
+                size in 0u32..=WindowSize::MAX,
+            ) {
+                let via_new = WindowSize::new(size).unwrap();
+                let via_validated = WindowSize::from_validated_parts(size);
+                prop_assert_eq!(via_new, via_validated);
+            }
 
-    /// 設定パラメータを適用する
-    ///
-    /// WebTransport 関連の SETTINGS のみを処理し、その他は無視する。
-    pub fn apply(&mut self, setting: Setting) {
-        match setting.id {
-            SETTINGS_WT_INITIAL_MAX_DATA => {
-                self.initial_max_data = Some(setting.value);
-            }
-            SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI => {
-                self.initial_max_stream_data_uni = Some(setting.value);
-            }
-            SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL => {
-                self.initial_max_stream_data_bidi_local = Some(setting.value);
-            }
-            SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE => {
-                self.initial_max_stream_data_bidi_remote = Some(setting.value);
-            }
-            SETTINGS_WT_INITIAL_MAX_STREAMS_UNI => {
-                self.initial_max_streams_uni = Some(setting.value);
-            }
-            SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI => {
-                self.initial_max_streams_bidi = Some(setting.value);
-            }
-            _ => {
-                // WebTransport 関連以外の SETTINGS は無視
+            #[test]
+            fn max_frame_size_validated_matches_new(
+                size in MaxFrameSize::MIN..=MaxFrameSize::MAX,
+            ) {
+                let via_new = MaxFrameSize::new(size).unwrap();
+                let via_validated = MaxFrameSize::from_validated_parts(size);
+                prop_assert_eq!(via_new, via_validated);
             }
         }
-    }
-
-    /// 設定を `Setting` のリストとして取得する
-    #[must_use]
-    pub fn to_settings_list(&self) -> Vec<Setting> {
-        let mut list = Vec::new();
-        if let Some(v) = self.initial_max_data {
-            list.push(Setting::new(SETTINGS_WT_INITIAL_MAX_DATA, v));
-        }
-        if let Some(v) = self.initial_max_stream_data_uni {
-            list.push(Setting::new(SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI, v));
-        }
-        if let Some(v) = self.initial_max_stream_data_bidi_local {
-            list.push(Setting::new(
-                SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL,
-                v,
-            ));
-        }
-        if let Some(v) = self.initial_max_stream_data_bidi_remote {
-            list.push(Setting::new(
-                SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE,
-                v,
-            ));
-        }
-        if let Some(v) = self.initial_max_streams_uni {
-            list.push(Setting::new(SETTINGS_WT_INITIAL_MAX_STREAMS_UNI, v));
-        }
-        if let Some(v) = self.initial_max_streams_bidi {
-            list.push(Setting::new(SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI, v));
-        }
-        list
     }
 }

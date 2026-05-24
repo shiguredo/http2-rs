@@ -2,9 +2,6 @@
 //!
 //! 各 HTTP/2 フレーム型の構築 API で発生する検査エラーを表現する。
 //! 文字列ベースの [`crate::error::Error`] とは分離し、違反値を構造化フィールドで保持する。
-//!
-//! 本ファイルは issue 0027 構築時検査リファクタリングの Phase 1 として追加された。
-//! Phase 2 で各 [`crate::frame::DataFrame`] 等の構築 API と統合される予定。
 
 use crate::frame::FrameType;
 
@@ -13,7 +10,6 @@ use crate::frame::FrameType;
 /// RFC 9113 §6 各フレーム定義における stream_id / payload / window-increment 等の
 /// 制約を構築点で検出した結果を表現する。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum FrameError {
     /// stream_id = 0 を許可しないフレーム種別で 0 が指定された
     ///
@@ -140,7 +136,7 @@ impl WindowIncrement {
         if increment > Self::MAX {
             return Err(FrameError::WindowIncrementOutOfRange { value: increment });
         }
-        // SAFETY: 直前で 0 を弾いている
+        // 直前で 0 を弾いているため NonZeroU32::new は必ず Some を返す
         Ok(Self(
             core::num::NonZeroU32::new(increment).expect("non-zero checked above"),
         ))
@@ -175,6 +171,17 @@ impl WindowIncrement {
             Some(v) => Self(v),
             None => panic!("WindowIncrement::from_static: increment must not be 0 (RFC 9113 §6.9)"),
         }
+    }
+
+    /// decoder 内部で検証済みの値から構築する
+    ///
+    /// 呼び出し側が「非ゼロかつ 31-bit 範囲」を保証していること。
+    pub(crate) fn from_validated_parts(increment: core::num::NonZeroU32) -> Self {
+        debug_assert!(
+            increment.get() <= Self::MAX,
+            "WindowIncrement::from_validated_parts: increment must be <= 2^31-1"
+        );
+        Self(increment)
     }
 
     /// 値を取得する
@@ -228,6 +235,13 @@ impl Weight {
         Self(wire_value as u8)
     }
 
+    /// decoder 内部で検証済みの値から構築する
+    ///
+    /// 呼び出し側が「0..=255 の範囲」を保証していること。
+    pub(crate) fn from_validated_parts(wire_value: u8) -> Self {
+        Self(wire_value)
+    }
+
     /// wire 表現 (0..=255) を取得する
     pub const fn as_wire(self) -> u8 {
         self.0
@@ -275,6 +289,17 @@ impl LastStreamId {
         assert!(
             id <= Self::MAX,
             "LastStreamId::from_static: id must be <= 2^31-1 (RFC 9113 §6.8)"
+        );
+        Self(id)
+    }
+
+    /// decoder 内部で検証済みの値から構築する
+    ///
+    /// 呼び出し側が「0..=2^31-1 の範囲」を保証していること。
+    pub(crate) fn from_validated_parts(id: u32) -> Self {
+        debug_assert!(
+            id <= Self::MAX,
+            "LastStreamId::from_validated_parts: id must be <= 2^31-1"
         );
         Self(id)
     }
@@ -439,5 +464,41 @@ mod tests {
     fn frame_error_display_last_stream_id_out_of_range() {
         let err = FrameError::LastStreamIdOutOfRange { value: u32::MAX };
         assert!(err.to_string().contains("exceeds maximum"));
+    }
+
+    mod validated_parts {
+        use proptest::prelude::*;
+
+        use super::{LastStreamId, Weight, WindowIncrement};
+
+        proptest! {
+            #[test]
+            fn window_increment_validated_matches_new(
+                v in 1u32..=WindowIncrement::MAX,
+            ) {
+                let via_new = WindowIncrement::new(v).unwrap();
+                let nz = core::num::NonZeroU32::new(v).unwrap();
+                let via_validated = WindowIncrement::from_validated_parts(nz);
+                prop_assert_eq!(via_new, via_validated);
+            }
+
+            #[test]
+            fn weight_validated_matches_new(
+                w in 0u16..=255,
+            ) {
+                let via_new = Weight::new(w).unwrap();
+                let via_validated = Weight::from_validated_parts(w as u8);
+                prop_assert_eq!(via_new, via_validated);
+            }
+
+            #[test]
+            fn last_stream_id_validated_matches_new(
+                id in 0u32..=LastStreamId::MAX,
+            ) {
+                let via_new = LastStreamId::new(id).unwrap();
+                let via_validated = LastStreamId::from_validated_parts(id);
+                prop_assert_eq!(via_new, via_validated);
+            }
+        }
     }
 }

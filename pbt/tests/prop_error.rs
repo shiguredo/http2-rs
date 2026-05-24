@@ -86,9 +86,6 @@ fn error_kind_strategy() -> impl Strategy<Value = ErrorKind> {
     prop_oneof![
         error_code_strategy().prop_map(ErrorKind::ConnectionError),
         error_code_strategy().prop_map(ErrorKind::StreamError),
-        Just(ErrorKind::BufferTooShort),
-        Just(ErrorKind::Incomplete),
-        Just(ErrorKind::InvalidInput),
         Just(ErrorKind::HpackError),
     ]
 }

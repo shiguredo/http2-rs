@@ -4,14 +4,38 @@
 
 use proptest::prelude::*;
 use shiguredo_http2::frame::{ContinuationFrame, FrameFlags, FrameHeader, PriorityUpdateFrame};
+use shiguredo_http2::settings::{MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, MIN_MAX_FRAME_SIZE};
 use shiguredo_http2::{
-    DataFrame, Frame, FrameDecoder, FrameEncoder, GoawayFrame, HeadersFrame, PingFrame,
-    RstStreamFrame, Setting, SettingsFrame, WindowUpdateFrame,
+    DataFrame, Frame, FrameDecoder, FrameEncoder, GoawayFrame, HeadersFrame, LastStreamId,
+    MaxFrameSize, NonZeroStreamId, PingFrame, RstStreamFrame, Setting, SettingsFrame, StreamId,
+    Weight, WindowIncrement, WindowSize, WindowUpdateFrame,
 };
 
 /// 有効なストリーム ID を生成する（0 以外）
-fn valid_stream_id() -> impl Strategy<Value = u32> {
-    1..=0x7FFF_FFFFu32
+fn valid_stream_id() -> impl Strategy<Value = NonZeroStreamId> {
+    (1..=0x7FFF_FFFFu32).prop_map(|id| NonZeroStreamId::new(id).expect("valid non-zero stream ID"))
+}
+
+/// 有効な Setting を生成する
+fn valid_setting() -> impl Strategy<Value = Setting> {
+    prop_oneof![
+        any::<u32>().prop_map(Setting::HeaderTableSize),
+        prop::bool::ANY.prop_map(Setting::EnablePush),
+        any::<u32>().prop_map(Setting::MaxConcurrentStreams),
+        (0..=MAX_INITIAL_WINDOW_SIZE)
+            .prop_map(|v| Setting::InitialWindowSize(WindowSize::new(v).unwrap())),
+        (MIN_MAX_FRAME_SIZE..=MAX_MAX_FRAME_SIZE)
+            .prop_map(|v| Setting::MaxFrameSize(MaxFrameSize::new(v).unwrap())),
+        any::<u32>().prop_map(Setting::MaxHeaderListSize),
+        prop::bool::ANY.prop_map(Setting::EnableConnectProtocol),
+        prop::bool::ANY.prop_map(Setting::NoRfc7540Priorities),
+        any::<u32>().prop_map(Setting::WtInitialMaxData),
+        any::<u32>().prop_map(Setting::WtInitialMaxStreamDataUni),
+        any::<u32>().prop_map(Setting::WtInitialMaxStreamDataBidiLocal),
+        any::<u32>().prop_map(Setting::WtInitialMaxStreamsUni),
+        any::<u32>().prop_map(Setting::WtInitialMaxStreamsBidi),
+        any::<u32>().prop_map(Setting::WtInitialMaxStreamDataBidiRemote),
+    ]
 }
 
 /// 任意のバイト列を生成する
@@ -116,15 +140,14 @@ proptest! {
     /// SETTINGS フレームのエンコード/デコード往復テスト
     #[test]
     fn prop_settings_frame_roundtrip(ack in any::<bool>()) {
-        let frame = Frame::Settings(SettingsFrame {
-            ack,
-            settings: if ack { vec![] } else {
-                vec![
-                    shiguredo_http2::Setting::new(0x01, 4096),
-                    shiguredo_http2::Setting::new(0x04, 65535),
-                ]
-            },
-        });
+        let frame = if ack {
+            Frame::Settings(SettingsFrame::ack())
+        } else {
+            let mut sf = SettingsFrame::new();
+            sf.add(Setting::HeaderTableSize(4096));
+            sf.add(Setting::InitialWindowSize(shiguredo_http2::WindowSize::from_static(65535)));
+            Frame::Settings(sf)
+        };
 
         let mut encoder = FrameEncoder::new();
         encoder.encode(&frame).unwrap();
@@ -135,7 +158,7 @@ proptest! {
         let decoded = decoder.decode().unwrap().unwrap();
 
         if let Frame::Settings(sf) = decoded {
-            prop_assert_eq!(sf.ack, ack);
+            prop_assert_eq!(sf.is_ack(), ack);
         } else {
             panic!("expected SETTINGS frame");
         }
@@ -168,7 +191,8 @@ proptest! {
     /// GOAWAY フレームのエンコード/デコード往復テスト
     #[test]
     fn prop_goaway_frame_roundtrip(
-        last_stream_id in 0..=0x7FFF_FFFFu32,
+        last_stream_id in (0..=0x7FFF_FFFFu32)
+            .prop_map(|id| LastStreamId::new(id).expect("valid last stream ID")),
         error_code in any::<u32>(),
         debug_data in arbitrary_bytes(128),
     ) {
@@ -195,17 +219,14 @@ proptest! {
         }
     }
 
-    /// WINDOW_UPDATE フレームのエンコード/デコード往復テスト
+    /// WINDOW_UPDATE フレームのエンコード/デコード往復テスト（接続レベル）
     #[test]
-    fn prop_window_update_frame_roundtrip(
-        stream_id in 0..=0x7FFF_FFFFu32,
+    fn prop_window_update_frame_connection_roundtrip(
         // WINDOW_UPDATE の increment は 1 以上でなければならない
-        window_size_increment in 1..=0x7FFF_FFFFu32,
+        increment in (1..=0x7FFF_FFFFu32)
+            .prop_map(|v| WindowIncrement::new(v).expect("valid window increment")),
     ) {
-        let frame = Frame::WindowUpdate(WindowUpdateFrame {
-            stream_id,
-            window_size_increment,
-        });
+        let frame = Frame::WindowUpdate(WindowUpdateFrame::for_connection(increment));
 
         let mut encoder = FrameEncoder::new();
         encoder.encode(&frame).unwrap();
@@ -216,8 +237,34 @@ proptest! {
         let decoded = decoder.decode().unwrap().unwrap();
 
         if let Frame::WindowUpdate(wuf) = decoded {
-            prop_assert_eq!(wuf.stream_id, stream_id);
-            prop_assert_eq!(wuf.window_size_increment, window_size_increment);
+            prop_assert_eq!(wuf.stream_id, StreamId::Connection);
+            prop_assert_eq!(wuf.window_size_increment, increment);
+        } else {
+            panic!("expected WINDOW_UPDATE frame");
+        }
+    }
+
+    /// WINDOW_UPDATE フレームのエンコード/デコード往復テスト（ストリームレベル）
+    #[test]
+    fn prop_window_update_frame_stream_roundtrip(
+        stream_id in valid_stream_id(),
+        // WINDOW_UPDATE の increment は 1 以上でなければならない
+        increment in (1..=0x7FFF_FFFFu32)
+            .prop_map(|v| WindowIncrement::new(v).expect("valid window increment")),
+    ) {
+        let frame = Frame::WindowUpdate(WindowUpdateFrame::for_stream(stream_id, increment));
+
+        let mut encoder = FrameEncoder::new();
+        encoder.encode(&frame).unwrap();
+        let encoded = encoder.take();
+
+        let mut decoder = FrameDecoder::new(16384);
+        decoder.feed(&encoded);
+        let decoded = decoder.decode().unwrap().unwrap();
+
+        if let Frame::WindowUpdate(wuf) = decoded {
+            prop_assert_eq!(wuf.stream_id, StreamId::from(stream_id));
+            prop_assert_eq!(wuf.window_size_increment, increment);
         } else {
             panic!("expected WINDOW_UPDATE frame");
         }
@@ -274,7 +321,8 @@ proptest! {
     /// PRIORITY_UPDATE フレームのエンコード/デコード往復テスト
     #[test]
     fn prop_priority_update_frame_roundtrip(
-        prioritized_element_id in 0..=0x7FFF_FFFFu32,
+        prioritized_element_id in (1..=0x7FFF_FFFFu32)
+            .prop_map(|id| NonZeroStreamId::new(id).expect("valid non-zero stream ID")),
         priority_field_value in arbitrary_bytes(128),
     ) {
         let frame = Frame::PriorityUpdate(PriorityUpdateFrame {
@@ -434,11 +482,9 @@ proptest! {
         let mut encoder = FrameEncoder::new();
 
         // 複数フレームをエンコード
-        let frames: Vec<Frame> = stream_ids.iter().take(frame_count).map(|&sid| {
-            Frame::WindowUpdate(WindowUpdateFrame {
-                stream_id: sid,
-                window_size_increment: 1000,
-            })
+        let increment = WindowIncrement::new(1000).expect("valid window increment");
+        let frames: Vec<Frame> = stream_ids.iter().take(frame_count).map(|sid| {
+            Frame::WindowUpdate(WindowUpdateFrame::for_stream(*sid, increment))
         }).collect();
 
         for frame in &frames {
@@ -511,7 +557,7 @@ proptest! {
 
         // 全バイト feed 後はデコードできる
         let decoded = decoder.decode().unwrap().unwrap();
-        prop_assert_eq!(decoded.stream_id(), stream_id);
+        prop_assert_eq!(decoded.stream_id(), StreamId::from(stream_id));
     }
 
     // ========================================
@@ -521,20 +567,9 @@ proptest! {
     /// SETTINGS フレームの設定値エンコード/デコード
     #[test]
     fn prop_settings_frame_values_roundtrip(
-        settings_count in 1..10usize,
-        ids in prop::collection::vec(1..=6u16, 1..10),
-        values in prop::collection::vec(any::<u32>(), 1..10),
+        settings in prop::collection::vec(valid_setting(), 1..10),
     ) {
-        let settings: Vec<Setting> = ids.iter()
-            .zip(values.iter())
-            .take(settings_count)
-            .map(|(&id, &value)| Setting::new(id, value))
-            .collect();
-
-        let frame = Frame::Settings(SettingsFrame {
-            ack: false,
-            settings: settings.clone(),
-        });
+        let frame = Frame::Settings(SettingsFrame::from_settings(settings.clone()));
 
         let mut encoder = FrameEncoder::new();
         encoder.encode(&frame).unwrap();
@@ -545,11 +580,10 @@ proptest! {
         let decoded = decoder.decode().unwrap().unwrap();
 
         if let Frame::Settings(sf) = decoded {
-            prop_assert!(!sf.ack);
-            prop_assert_eq!(sf.settings.len(), settings.len());
-            for (orig, decoded) in settings.iter().zip(sf.settings.iter()) {
-                prop_assert_eq!(orig.id, decoded.id);
-                prop_assert_eq!(orig.value, decoded.value);
+            prop_assert!(!sf.is_ack());
+            prop_assert_eq!(sf.settings().len(), settings.len());
+            for (orig, decoded) in settings.iter().zip(sf.settings().iter()) {
+                prop_assert_eq!(orig.as_wire(), decoded.as_wire());
             }
         } else {
             panic!("expected SETTINGS frame");
@@ -571,7 +605,7 @@ proptest! {
         prop_assume!(data_len > max_frame_size as usize);
 
         let frame = Frame::Data(DataFrame {
-            stream_id: 1,
+            stream_id: NonZeroStreamId::from_static(1),
             end_stream: false,
             data: vec![0u8; data_len],
             pad_length: None,
@@ -621,12 +655,13 @@ proptest! {
     /// RFC 9113 Section 4.1: R ビットは予約済み (0)
     #[test]
     fn prop_stream_id_reserved_bit(
-        stream_id in 0..=0x7FFF_FFFFu32,
+        stream_id in (0..=0x7FFF_FFFFu32).prop_map(StreamId::from_wire),
     ) {
-        let frame = Frame::WindowUpdate(WindowUpdateFrame {
-            stream_id,
-            window_size_increment: 1000,
-        });
+        let increment = WindowIncrement::new(1000).expect("valid window increment");
+        let frame = match stream_id.non_zero() {
+            Some(nz) => Frame::WindowUpdate(WindowUpdateFrame::for_stream(nz, increment)),
+            None => Frame::WindowUpdate(WindowUpdateFrame::for_connection(increment)),
+        };
 
         let mut encoder = FrameEncoder::new();
         encoder.encode(&frame).unwrap();
@@ -737,15 +772,16 @@ proptest! {
     fn prop_settings_non_zero_stream_id_error(
         stream_id in valid_stream_id(),
     ) {
+        let sid = stream_id.as_u32();
         let mut buf = Vec::new();
         buf.extend_from_slice(&[0, 0, 0]);  // length = 0 (ACK)
         buf.push(0x04);  // SETTINGS frame type
         buf.push(0x01);  // ACK flag
         // stream_id (非ゼロ)
-        buf.push(((stream_id >> 24) & 0x7f) as u8);
-        buf.push(((stream_id >> 16) & 0xff) as u8);
-        buf.push(((stream_id >> 8) & 0xff) as u8);
-        buf.push((stream_id & 0xff) as u8);
+        buf.push(((sid >> 24) & 0x7f) as u8);
+        buf.push(((sid >> 16) & 0xff) as u8);
+        buf.push(((sid >> 8) & 0xff) as u8);
+        buf.push((sid & 0xff) as u8);
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&buf);
@@ -760,15 +796,16 @@ proptest! {
         stream_id in valid_stream_id(),
         opaque_data in any::<[u8; 8]>(),
     ) {
+        let sid = stream_id.as_u32();
         let mut buf = Vec::new();
         buf.extend_from_slice(&[0, 0, 8]);  // length = 8
         buf.push(0x06);  // PING frame type
         buf.push(0x00);  // flags
         // stream_id (非ゼロ)
-        buf.push(((stream_id >> 24) & 0x7f) as u8);
-        buf.push(((stream_id >> 16) & 0xff) as u8);
-        buf.push(((stream_id >> 8) & 0xff) as u8);
-        buf.push((stream_id & 0xff) as u8);
+        buf.push(((sid >> 24) & 0x7f) as u8);
+        buf.push(((sid >> 16) & 0xff) as u8);
+        buf.push(((sid >> 8) & 0xff) as u8);
+        buf.push((sid & 0xff) as u8);
         buf.extend_from_slice(&opaque_data);
 
         let mut decoder = FrameDecoder::new(16384);
@@ -785,15 +822,16 @@ proptest! {
         last_stream_id in 0..=0x7FFF_FFFFu32,
         error_code in any::<u32>(),
     ) {
+        let sid = stream_id.as_u32();
         let mut buf = Vec::new();
         buf.extend_from_slice(&[0, 0, 8]);  // length = 8
         buf.push(0x07);  // GOAWAY frame type
         buf.push(0x00);  // flags
         // stream_id (非ゼロ)
-        buf.push(((stream_id >> 24) & 0x7f) as u8);
-        buf.push(((stream_id >> 16) & 0xff) as u8);
-        buf.push(((stream_id >> 8) & 0xff) as u8);
-        buf.push((stream_id & 0xff) as u8);
+        buf.push(((sid >> 24) & 0x7f) as u8);
+        buf.push(((sid >> 16) & 0xff) as u8);
+        buf.push(((sid >> 8) & 0xff) as u8);
+        buf.push((sid & 0xff) as u8);
         // last_stream_id
         buf.push(((last_stream_id >> 24) & 0x7f) as u8);
         buf.push(((last_stream_id >> 16) & 0xff) as u8);
@@ -814,15 +852,16 @@ proptest! {
         stream_id in valid_stream_id(),
         prioritized_element_id in 0..=0x7FFF_FFFFu32,
     ) {
+        let sid = stream_id.as_u32();
         let mut buf = Vec::new();
         buf.extend_from_slice(&[0, 0, 4]);  // length = 4
         buf.push(0x10);  // PRIORITY_UPDATE frame type
         buf.push(0x00);  // flags
         // stream_id (非ゼロ)
-        buf.push(((stream_id >> 24) & 0x7f) as u8);
-        buf.push(((stream_id >> 16) & 0xff) as u8);
-        buf.push(((stream_id >> 8) & 0xff) as u8);
-        buf.push((stream_id & 0xff) as u8);
+        buf.push(((sid >> 24) & 0x7f) as u8);
+        buf.push(((sid >> 16) & 0xff) as u8);
+        buf.push(((sid >> 8) & 0xff) as u8);
+        buf.push((sid & 0xff) as u8);
         // prioritized_element_id
         buf.push(((prioritized_element_id >> 24) & 0x7f) as u8);
         buf.push(((prioritized_element_id >> 16) & 0xff) as u8);
@@ -1040,8 +1079,8 @@ proptest! {
     /// PRIORITY フレームのデコードテスト (非推奨、受信は処理する)
     #[test]
     fn prop_priority_frame_decode(
-        stream_id in valid_stream_id(),
-        stream_dependency in 0..=0x7FFF_FFFFu32,
+        stream_id_raw in 1..=0x7FFF_FFFFu32,
+        stream_dependency_raw in 0..=0x7FFF_FFFFu32,
         weight in any::<u8>(),
         exclusive in any::<bool>(),
     ) {
@@ -1051,16 +1090,16 @@ proptest! {
         buf.push(0x02);  // PRIORITY frame type
         buf.push(0x00);  // flags
         // stream_id
-        buf.push(((stream_id >> 24) & 0x7f) as u8);
-        buf.push(((stream_id >> 16) & 0xff) as u8);
-        buf.push(((stream_id >> 8) & 0xff) as u8);
-        buf.push((stream_id & 0xff) as u8);
+        buf.push(((stream_id_raw >> 24) & 0x7f) as u8);
+        buf.push(((stream_id_raw >> 16) & 0xff) as u8);
+        buf.push(((stream_id_raw >> 8) & 0xff) as u8);
+        buf.push((stream_id_raw & 0xff) as u8);
         // payload: exclusive + stream_dependency + weight
         let e_bit = if exclusive { 0x80 } else { 0x00 };
-        buf.push(((stream_dependency >> 24) & 0x7f) as u8 | e_bit);
-        buf.push(((stream_dependency >> 16) & 0xff) as u8);
-        buf.push(((stream_dependency >> 8) & 0xff) as u8);
-        buf.push((stream_dependency & 0xff) as u8);
+        buf.push(((stream_dependency_raw >> 24) & 0x7f) as u8 | e_bit);
+        buf.push(((stream_dependency_raw >> 16) & 0xff) as u8);
+        buf.push(((stream_dependency_raw >> 8) & 0xff) as u8);
+        buf.push((stream_dependency_raw & 0xff) as u8);
         buf.push(weight);
 
         let mut decoder = FrameDecoder::new(16384);
@@ -1068,9 +1107,13 @@ proptest! {
         let result = decoder.decode().unwrap().unwrap();
 
         if let Frame::Priority(pf) = result {
-            prop_assert_eq!(pf.stream_id, stream_id);
-            prop_assert_eq!(pf.stream_dependency, stream_dependency);
-            prop_assert_eq!(pf.weight, weight);
+            let expected_stream_id = NonZeroStreamId::new(stream_id_raw)
+                .expect("valid non-zero stream ID");
+            prop_assert_eq!(pf.stream_id, expected_stream_id);
+            prop_assert_eq!(pf.stream_dependency, StreamId::from_wire(stream_dependency_raw));
+            let expected_weight = Weight::new(weight as u16)
+                .expect("valid weight");
+            prop_assert_eq!(pf.weight, expected_weight);
             prop_assert_eq!(pf.exclusive, exclusive);
         } else {
             panic!("expected PRIORITY frame");
@@ -1107,6 +1150,7 @@ proptest! {
         stream_id in valid_stream_id(),
         payload_len in prop_oneof![0..5usize, 6..20usize],
     ) {
+        let sid = stream_id.as_u32();
         let mut buf = Vec::new();
         let length = payload_len as u32;
         buf.push(((length >> 16) & 0xff) as u8);
@@ -1114,10 +1158,10 @@ proptest! {
         buf.push((length & 0xff) as u8);
         buf.push(0x02);  // PRIORITY frame type
         buf.push(0x00);  // flags
-        buf.push(((stream_id >> 24) & 0x7f) as u8);
-        buf.push(((stream_id >> 16) & 0xff) as u8);
-        buf.push(((stream_id >> 8) & 0xff) as u8);
-        buf.push((stream_id & 0xff) as u8);
+        buf.push(((sid >> 24) & 0x7f) as u8);
+        buf.push(((sid >> 16) & 0xff) as u8);
+        buf.push(((sid >> 8) & 0xff) as u8);
+        buf.push((sid & 0xff) as u8);
         buf.extend(std::iter::repeat_n(0u8, payload_len));
 
         let mut decoder = FrameDecoder::new(16384);
@@ -1186,14 +1230,16 @@ proptest! {
         stream_id in valid_stream_id(),
         data in arbitrary_bytes(100),
     ) {
+        let increment = WindowIncrement::new(1).expect("valid window increment");
+        let last_stream_id = LastStreamId::new(0).expect("valid last stream ID");
         let test_cases: Vec<(Frame, u8)> = vec![
             (Frame::Data(DataFrame { stream_id, end_stream: false, data: data.clone(), pad_length: None }), 0x00),
             (Frame::Headers(HeadersFrame { stream_id, end_stream: false, end_headers: true, priority_fields: None, header_block_fragment: data.clone(), pad_length: None }), 0x01),
             (Frame::RstStream(RstStreamFrame { stream_id, error_code: 0 }), 0x03),
-            (Frame::Settings(SettingsFrame { ack: false, settings: vec![] }), 0x04),
+            (Frame::Settings(SettingsFrame::new()), 0x04),
             (Frame::Ping(PingFrame { ack: false, opaque_data: [0; 8] }), 0x06),
-            (Frame::Goaway(GoawayFrame { last_stream_id: 0, error_code: 0, debug_data: vec![] }), 0x07),
-            (Frame::WindowUpdate(WindowUpdateFrame { stream_id, window_size_increment: 1 }), 0x08),
+            (Frame::Goaway(GoawayFrame { last_stream_id, error_code: 0, debug_data: vec![] }), 0x07),
+            (Frame::WindowUpdate(WindowUpdateFrame::for_stream(stream_id, increment)), 0x08),
             (Frame::Continuation(ContinuationFrame { stream_id, end_headers: true, header_block_fragment: data.clone() }), 0x09),
             (Frame::PriorityUpdate(PriorityUpdateFrame { prioritized_element_id: stream_id, priority_field_value: vec![] }), 0x10),
         ];
@@ -1283,9 +1329,9 @@ proptest! {
     ) {
         let mut encoder = FrameEncoder::new();
 
-        for (stream_id, data) in &frames {
+        for &(stream_id, ref data) in &frames {
             let frame = Frame::Data(DataFrame {
-                stream_id: *stream_id,
+                stream_id,
                 end_stream: false,
                 data: data.clone(),
                 pad_length: None,
@@ -1328,11 +1374,9 @@ proptest! {
         ),
     ) {
         // 複数の WINDOW_UPDATE フレームを生成
-        let frames: Vec<Frame> = frame_params.iter().map(|(sid, inc)| {
-            Frame::WindowUpdate(WindowUpdateFrame {
-                stream_id: *sid,
-                window_size_increment: *inc,
-            })
+        let frames: Vec<Frame> = frame_params.iter().map(|&(sid, inc)| {
+            let increment = WindowIncrement::new(inc).expect("valid window increment");
+            Frame::WindowUpdate(WindowUpdateFrame::for_stream(sid, increment))
         }).collect();
 
         // 個別にエンコード
@@ -1468,12 +1512,13 @@ proptest! {
     /// 数学的意義: stream_id の範囲保存性
     #[test]
     fn prop_stream_id_31bit_range(
-        stream_id in 0..=0x7FFF_FFFFu32,
+        stream_id in (0..=0x7FFF_FFFFu32).prop_map(StreamId::from_wire),
     ) {
-        let frame = Frame::WindowUpdate(WindowUpdateFrame {
-            stream_id,
-            window_size_increment: 1000,
-        });
+        let increment = WindowIncrement::new(1000).expect("valid window increment");
+        let frame = match stream_id.non_zero() {
+            Some(nz) => Frame::WindowUpdate(WindowUpdateFrame::for_stream(nz, increment)),
+            None => Frame::WindowUpdate(WindowUpdateFrame::for_connection(increment)),
+        };
 
         let mut encoder = FrameEncoder::new();
         encoder.encode(&frame).unwrap();
@@ -1486,7 +1531,7 @@ proptest! {
             | (u32::from(encoded[7]) << 8)
             | u32::from(encoded[8]);
 
-        prop_assert_eq!(encoded_stream_id, stream_id);
+        prop_assert_eq!(encoded_stream_id, stream_id.as_u32());
 
         // 最上位ビット (R ビット) は 0
         prop_assert_eq!(encoded[5] & 0x80, 0, "R bit must be 0");
@@ -1520,5 +1565,80 @@ proptest! {
         decoder.feed(&encoded);
         let decoded = decoder.decode().unwrap();
         prop_assert!(decoded.is_some());
+    }
+}
+
+mod from_static_consistency {
+    use proptest::prelude::*;
+    use shiguredo_http2::{
+        ClientStreamId, LastStreamId, NonZeroStreamId, ServerStreamId, Weight, WindowIncrement,
+    };
+
+    proptest! {
+        /// WindowIncrement::from_static と new の一貫性
+        #[test]
+        fn prop_window_increment_static_matches_new(
+            v in 1u32..=WindowIncrement::MAX,
+        ) {
+            let via_new = WindowIncrement::new(v).unwrap();
+            let via_static = WindowIncrement::from_static(v);
+            prop_assert_eq!(via_new, via_static);
+        }
+
+        /// Weight::from_static と new の一貫性
+        #[test]
+        fn prop_weight_static_matches_new(
+            w in 0u16..=255,
+        ) {
+            let via_new = Weight::new(w).unwrap();
+            let via_static = Weight::from_static(w);
+            prop_assert_eq!(via_new, via_static);
+        }
+
+        /// LastStreamId::from_static と new の一貫性
+        #[test]
+        fn prop_last_stream_id_static_matches_new(
+            id in 0u32..=LastStreamId::MAX,
+        ) {
+            let via_new = LastStreamId::new(id).unwrap();
+            let via_static = LastStreamId::from_static(id);
+            prop_assert_eq!(via_new, via_static);
+        }
+
+        /// ClientStreamId::from_static と new の一貫性
+        #[test]
+        fn prop_client_stream_id_static_matches_new(
+            id in (1u32..=(1u32 << 31) - 1).prop_filter(
+                "奇数のみ",
+                |id| id % 2 == 1,
+            ),
+        ) {
+            let via_new = ClientStreamId::new(id).unwrap();
+            let via_static = ClientStreamId::from_static(id);
+            prop_assert_eq!(via_new, via_static);
+        }
+
+        /// ServerStreamId::from_static と new の一貫性
+        #[test]
+        fn prop_server_stream_id_static_matches_new(
+            id in (2u32..=(1u32 << 31) - 1).prop_filter(
+                "偶数のみ",
+                |id| id % 2 == 0,
+            ),
+        ) {
+            let via_new = ServerStreamId::new(id).unwrap();
+            let via_static = ServerStreamId::from_static(id);
+            prop_assert_eq!(via_new, via_static);
+        }
+
+        /// NonZeroStreamId::from_static と new の一貫性
+        #[test]
+        fn prop_non_zero_stream_id_static_matches_new(
+            id in 1u32..=(1u32 << 31) - 1,
+        ) {
+            let via_new = NonZeroStreamId::new(id).unwrap();
+            let via_static = NonZeroStreamId::from_static(id);
+            prop_assert_eq!(via_new, via_static);
+        }
     }
 }

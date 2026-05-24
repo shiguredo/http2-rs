@@ -7,7 +7,6 @@ use std::panic::Location;
 
 /// WebTransport エラーの種類
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum WtErrorKind {
     /// 入力データが不足している
     Incomplete,

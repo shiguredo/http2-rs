@@ -18,9 +18,10 @@ struct FuzzSetting {
 fuzz_target!(|input: FuzzInput| {
     let mut settings = Settings::new();
 
-    // 任意の Setting を連続適用する
-    // 境界値検証の漏れを検出する
+    // 任意の wire 値を Setting::from_wire で検証し、有効なものだけ apply する
     for s in &input.settings {
-        let _ = settings.apply(Setting::new(s.id, s.value));
+        if let Ok(setting) = Setting::from_wire(s.id, s.value) {
+            settings.apply(setting);
+        }
     }
 });

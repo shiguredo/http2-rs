@@ -1,13 +1,61 @@
 # 変更履歴
 
 - CHANGES
-  - [UPDATE]: 後方互換がある変更
-  - [ADD]: 後方互換がある追加
   - [CHANGE]: 後方互換のない変更
+  - [ADD]: 後方互換がある追加
+  - [UPDATE]: 後方互換がある変更
   - [FIX]: バグ修正
 
 ## develop
 
+- [CHANGE] 旧コンストラクタ `HeaderField::new` (`fn(impl Into<String>, impl Into<String>) -> Self`) / `HeaderField::from_str` / `HeaderField::new_sensitive` / `HeaderField::sensitive`(コンストラクタ版) を廃止し、構築時検査つきの `HeaderField::new` (`Result<Self, HeaderFieldError>` 返却) と `HeaderField::new_with_sensitive` に置き換える (issue 0024)。アクセサ `HeaderField::sensitive() -> bool` は引き続き利用可能
+  - @voluntas
+- [CHANGE] `HeaderField` の全フィールドを private 化し、アクセサ `name() -> &[u8]` / `value() -> &[u8]` / `sensitive() -> bool` 経由でのみ読み取れるようにする (issue 0024)
+  - @voluntas
+- [CHANGE] `DynamicTable::insert` のシグネチャを `(impl AsRef<[u8]>, impl AsRef<[u8]>) -> Result<(), HeaderFieldError>` に変更し、構築時検査と整合させる (issue 0024)
+  - @voluntas
+- [CHANGE] `ValidationError` から個別フィールド値検査バリアント (`InvalidHeaderName` / `InvalidHeaderValue` / `InvalidMethodValue` / `InvalidSchemeValue` / `InvalidPathValue` / `InvalidStatusCode` / `InvalidProtocolValue` / `InvalidPseudoHeader`) を削除し、`InvalidHeaderField(HeaderFieldError)` / `DisallowedPseudoHeader` / `PseudoHeaderInTrailers` / `Status101NotSupported` に整理する (issue 0024)
+  - @voluntas
+- [CHANGE] `ValidationError::EmptyPath` の判定を scheme 依存に変更し、`:path` 空は http/https スキームのときのみ malformed として拒否する (RFC 9113 §8.3.1) (issue 0024)
+  - @voluntas
+- [CHANGE] `tokio_http2::WtServerRequest::reject(status)` で status を `100..=599` (RFC 9110 §15) に制限し、範囲外は `Err(Error::Io)` を返す (issue 0024)
+  - @voluntas
+- [CHANGE] `ErrorKind::BufferTooShort` / `Incomplete` / `InvalidInput` を削除し、フレームレベルのバッファ操作エラーは `DecodeError` 型、HPACK エラーは `ErrorKind::HpackError` に統一する (issue 0029)
+  - @voluntas
+- [CHANGE] `Error::buffer_too_short` / `incomplete` / `invalid_input` / `check_buffer_size` を削除し、`From<DecodeError> for Error` を追加する (issue 0029)
+  - @voluntas
+- [CHANGE] `SettingsError` (複数形) を `SettingError` (単数形) にリネームし、tuple variant を構造化フィールドに変更する (issue 0029)
+  - @voluntas
+- [CHANGE] `StreamId` を `u32` 型エイリアスから `enum StreamId { Connection, Client(ClientStreamId), Server(ServerStreamId) }` に変更し、奇偶ルールと接続制御 ID を型で表現する (issue 0025)
+  - @voluntas
+- [CHANGE] `CONNECTION_STREAM_ID` 定数を廃止し、`StreamId::Connection` に置き換える (issue 0025)
+  - @voluntas
+- [CHANGE] `FrameHeader.stream_id` を明示的な `u32` に変更し、wire レベルの raw 値を保持する (issue 0025)
+  - @voluntas
+- [CHANGE] `Setting` を `{ id: u16, value: u32 }` 構造体から既知パラメータの enum に変更し、値範囲を型で制約する (issue 0026)
+  - @voluntas
+- [CHANGE] `DataFrame` / `HeadersFrame` / `RstStreamFrame` / `ContinuationFrame` / `PriorityUpdateFrame` / `PriorityFrame` の `stream_id` を `StreamId` から `NonZeroStreamId` に変更し、stream_id = 0 を構造的に排除する (issue 0027)
+  - @voluntas
+- [CHANGE] `WindowUpdateFrame` の `window_size_increment` を `u32` から `WindowIncrement` に変更し、コンストラクタを `for_connection` / `for_stream` に分割する (issue 0027)
+  - @voluntas
+- [CHANGE] `GoawayFrame` の `last_stream_id` を `StreamId` から `LastStreamId` に変更し、31-bit 範囲を型で強制する (issue 0027)
+  - @voluntas
+- [CHANGE] `PriorityFields` / `PriorityFrame` の `weight` を `u8` から `Weight` に変更し、wire 値範囲を型で表現する (issue 0027)
+  - @voluntas
+- [CHANGE] `SettingId` enum を `Setting` enum に統合し削除する (issue 0026)
+  - @voluntas
+- [CHANGE] `SettingsFrame` のフィールドを private 化し、`add_setting` を `add` にリネームする (issue 0026)
+  - @voluntas
+- [CHANGE] `Settings::apply()` の戻り値を `Result<(), SettingError>` から `()` に変更し、値検査を decoder に移動する (issue 0026)
+  - @voluntas
+- [CHANGE] `WtInitialSettings` 構造体を削除し、`Settings` / `Limits` の個別フィールドに展開する (issue 0026)
+  - @voluntas
+- [CHANGE] `Limits::new()` / `with_*` を `LimitsBuilder` 経由に置き換え、範囲外値で panic していた挙動を `LimitsBuilder::build() -> Result<Limits, LimitsError>` に変更する (issue 0028)
+  - @voluntas
+- [CHANGE] `Limits` のフィールドを private 化し、getter メソッド経由でのみアクセス可能にする (issue 0028)
+  - @voluntas
+- [CHANGE] `Limits` の `initial_window_size` / `connection_window_size` を `WindowSize` 型に、`max_frame_size` を `MaxFrameSize` 型に変更する (issue 0028)
+  - @voluntas
 - [ADD] `HeaderField::from_static` を追加し、リテラル定数の RFC 違反 (大文字 field-name、CR/LF 含む値、未知の疑似ヘッダー、不正な `:status` 値など) を `const fn` 経由でコンパイル時に検出可能にする (issue 0024)
   - @voluntas
 - [ADD] 構築時検査リファクタリング (issues 0024-0032) の Phase 1 として、新規エラー型 (`HeaderFieldError`, `FrameError`, `StreamIdError`, `SettingError`, `LimitsError`, `SendError`, `DecodeError`) と補助型 (`Parity`, `WindowSize`, `MaxFrameSize`, `WindowIncrement`, `Weight`, `LastStreamId`, `ClientStreamId`, `ServerStreamId`, `NonZeroStreamId`) を追加する (既存 API は無変更、Phase 2 で統合予定)
@@ -30,32 +78,26 @@
   - @voluntas
 - [ADD] `examples/wt_server` を追加する (draft-ietf-webtrans-http2-14 対応のエコーサーバーサンプル)
   - @voluntas
-- [CHANGE] 旧コンストラクタ `HeaderField::new` (`fn(impl Into<String>, impl Into<String>) -> Self`) / `HeaderField::from_str` / `HeaderField::new_sensitive` / `HeaderField::sensitive`(コンストラクタ版) を廃止し、構築時検査つきの `HeaderField::new` (`Result<Self, HeaderFieldError>` 返却) と `HeaderField::new_with_sensitive` に置き換える (issue 0024)。アクセサ `HeaderField::sensitive() -> bool` は引き続き利用可能
-  - @voluntas
-- [CHANGE] `HeaderField` の全フィールドを private 化し、アクセサ `name() -> &[u8]` / `value() -> &[u8]` / `sensitive() -> bool` 経由でのみ読み取れるようにする (issue 0024)
-  - @voluntas
-- [CHANGE] `DynamicTable::insert` のシグネチャを `(impl AsRef<[u8]>, impl AsRef<[u8]>) -> Result<(), HeaderFieldError>` に変更し、構築時検査と整合させる (issue 0024)
-  - @voluntas
-- [CHANGE] `ValidationError` から個別フィールド値検査バリアント (`InvalidHeaderName` / `InvalidHeaderValue` / `InvalidMethodValue` / `InvalidSchemeValue` / `InvalidPathValue` / `InvalidStatusCode` / `InvalidProtocolValue` / `InvalidPseudoHeader`) を削除し、`InvalidHeaderField(HeaderFieldError)` / `DisallowedPseudoHeader` / `PseudoHeaderInTrailers` / `Status101NotSupported` に整理する (issue 0024)
-  - @voluntas
-- [CHANGE] `ValidationError::EmptyPath` の判定を scheme 依存に変更し、`:path` 空は http/https スキームのときのみ malformed として拒否する (RFC 9113 §8.3.1) (issue 0024)
-  - @voluntas
-- [CHANGE] `tokio_http2::WtServerRequest::reject(status)` で status を `100..=599` (RFC 9110 §15) に制限し、範囲外は `Err(Error::Io)` を返す (issue 0024)
+- [ADD] `LimitsBuilder::build_static` (`const fn`) を追加し、リテラル定数で構築する `Limits` の制約違反をコンパイル時に検出可能にする (issue 0028)
   - @voluntas
 
 ### misc
 
+- [CHANGE] issue 0013 (HTTP/2 ペイロードを Bytes 化する) を `bytes` クレート依存追加の保留に伴い `issues/pending/` に退避する
+  - @voluntas
 - [ADD] 構築時検査の `*::from_static` API に `compile_fail` doctest を追加し、不正リテラル検出のリグレッションを CI で防止する (issue 0032)
-  - @voluntas
-- [UPDATE] `HeaderField::from_validated_parts` の cfg 排他 2 定義を解消し、テスト向け公開層を `__test_helpers::header_field_from_validated_parts` に集約する (issue 0033)
-  - @voluntas
-- [ADD] `tokio-http2` に WebTransport 統合テスト (`tests/test_webtransport.rs`) を追加する
-  - @voluntas
-- [ADD] `issues/` ディレクトリと issue 運用を導入する
   - @voluntas
 - [ADD] PBT / fuzz クレートから `HeaderField::from_validated_parts` および crate 内部の const fn / runtime 検査関数の panic-catch ラッパを呼ぶための cargo feature `__test_helpers` を追加する (本番利用者は有効化禁止、型不変条件を破壊する) (issue 0024)
   - @voluntas
 - [ADD] HPACK 構築時検査の const fn 版と runtime 版の同値性プロパティテスト (`pbt/tests/prop_header_field_syntax.rs`) を追加する (issue 0024)
   - @voluntas
-- [CHANGE] issue 0013 (HTTP/2 ペイロードを Bytes 化する) を `bytes` クレート依存追加の保留に伴い `issues/pending/` に退避する
+- [ADD] 構築時検査の完全性・健全性・`from_static` 一貫性・`from_validated_parts` 整合性を検証する PBT を整備する (issue 0031)
+  - @voluntas
+- [ADD] `tokio-http2` に WebTransport 統合テスト (`tests/test_webtransport.rs`) を追加する
+  - @voluntas
+- [ADD] `issues/` ディレクトリと issue 運用を導入する
+  - @voluntas
+- [UPDATE] `HeaderField::from_validated_parts` の cfg 排他 2 定義を解消し、テスト向け公開層を `__test_helpers::header_field_from_validated_parts` に集約する (issue 0033)
+  - @voluntas
+- [UPDATE] decoder 内部で構築時検査型を組み立てる際に `pub(crate) from_validated_parts` を経由するようにし、二重検査を排除する (issue 0030)
   - @voluntas

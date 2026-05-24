@@ -40,9 +40,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Connecting to {host}:{port}{path}");
 
     let addr = format!("{host}:{port}").parse()?;
-    let limits = Limits::default()
-        .with_max_concurrent_streams(Some(100))
-        .with_initial_window_size(65535);
+    let limits = Limits::builder()
+        .max_concurrent_streams(Some(100))
+        .build()
+        .expect("valid limits");
 
     let mut client = Client::connect_insecure(addr, host, limits).await?;
 

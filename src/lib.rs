@@ -46,15 +46,15 @@ pub use error::{Error, ErrorCode, ErrorKind, Result};
 pub use event::Event;
 pub use flow_control::{FlowControl, MAX_WINDOW_SIZE};
 pub use frame::{
-    CONNECTION_STREAM_ID, ContinuationFrame, DataFrame, FRAME_HEADER_SIZE, Frame, FrameDecoder,
-    FrameEncoder, FrameError, FrameFlags, FrameHeader, FrameType, GoawayFrame, HeadersFrame,
-    LastStreamId, PingFrame, PriorityUpdateFrame, RstStreamFrame, SettingsFrame, StreamId, Weight,
-    WindowIncrement, WindowUpdateFrame,
+    ContinuationFrame, DataFrame, FRAME_HEADER_SIZE, Frame, FrameDecoder, FrameEncoder, FrameError,
+    FrameFlags, FrameHeader, FrameType, GoawayFrame, HeadersFrame, LastStreamId, PingFrame,
+    PriorityUpdateFrame, RstStreamFrame, SettingsFrame, StreamId, Weight, WindowIncrement,
+    WindowUpdateFrame,
 };
 pub use hpack::{Decoder as HpackDecoder, Encoder as HpackEncoder, HeaderField, HeaderFieldError};
-pub use limits::{Limits, LimitsError};
+pub use limits::{Limits, LimitsBuilder, LimitsError};
 pub use send_error::SendError;
-pub use settings::{MaxFrameSize, Setting, SettingError, SettingId, Settings, WindowSize};
+pub use settings::{MaxFrameSize, Setting, SettingError, Settings, WindowSize};
 pub use stream::{Stream, StreamState};
 pub use stream_id::{ClientStreamId, NonZeroStreamId, Parity, ServerStreamId, StreamIdError};
 

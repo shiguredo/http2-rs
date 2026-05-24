@@ -194,7 +194,7 @@ impl Decoder {
     /// 文字列をデコードする
     fn decode_string(&self, data: &[u8]) -> Result<(Vec<u8>, usize)> {
         if data.is_empty() {
-            return Err(Error::incomplete());
+            return Err(Error::hpack_error("incomplete HPACK string"));
         }
 
         let huffman_encoded = data[0] & 0x80 != 0;
@@ -202,7 +202,7 @@ impl Decoder {
 
         let length = length as usize;
         if data.len() < consumed + length {
-            return Err(Error::incomplete());
+            return Err(Error::hpack_error("incomplete HPACK string"));
         }
 
         let string_data = &data[consumed..consumed + length];
