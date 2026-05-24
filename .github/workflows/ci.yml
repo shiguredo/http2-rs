@@ -33,6 +33,9 @@ jobs:
       - run: cargo check --workspace
       - run: cargo test --workspace
       - run: cargo clippy --workspace -- -D warnings
+      - name: Check fuzz crate
+        if: matrix.os == 'ubuntu-24.04'
+        run: cargo check --manifest-path fuzz/Cargo.toml
 
   slack_notify:
     needs: [ci]
