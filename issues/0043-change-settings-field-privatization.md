@@ -1,10 +1,11 @@
 # Settings 構造体のフィールドを private 化する
 
-Created: 2026-05-24
-Priority: High
-Model: Opus 4.7
+- Priority: High
+- Created: 2026-05-24
+- Model: Opus 4.7
+- Branch: feature/change-settings-field-privatization
 
-## 概要
+## 目的
 
 `Settings` 構造体の全フィールドが `pub` のまま残っている。
 `Limits` は issue 0028 で private 化済みだが、`Settings` は未対応。
@@ -15,13 +16,13 @@ Model: Opus 4.7
 さらに `to_settings_list` で `WindowSize::from_static(self.initial_window_size)` を
 呼んでおり、外部から不正値を代入されると runtime panic する。
 
-## 根拠
+## 優先度根拠
 
 - `Limits` のフィールド private 化 (issue 0028) と同じ方針の一貫性
 - `Setting::from_wire` / `Settings::apply` 経由の型安全性が `Settings` の pub
   フィールドで無効化されている
 
-## 設計
+## 設計方針
 
 - `Settings` の全フィールドを private 化し getter を提供する
 - `initial_window_size` を `WindowSize` 型に、`max_frame_size` を `MaxFrameSize` 型に変更する
@@ -34,7 +35,7 @@ Model: Opus 4.7
 - `src/connection/mod.rs`: フィールドアクセスを getter/setter 経由に変更 (多数箇所)
 - `crates/tokio-http2/`: `Settings` を参照する箇所の追従
 
-## 受け入れ条件
+## 完了条件
 
 - `Settings` の全フィールドが private で getter/setter 経由でのみアクセス可能
 - `initial_window_size` が `WindowSize` 型、`max_frame_size` が `MaxFrameSize` 型

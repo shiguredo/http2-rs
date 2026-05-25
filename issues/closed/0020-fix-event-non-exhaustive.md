@@ -1,8 +1,9 @@
 # Event enum に #[non_exhaustive] を付与し CHANGES.md 種別を修正する
 
-Created: 2026-05-14
-Priority: Medium
-Model: deepseek-v4-pro
+- Priority: Medium
+- Created: 2026-05-14
+- Completed: 2026-05-26
+- Model: deepseek-v4-pro
 
 ## 対象
 
@@ -43,3 +44,9 @@ CHANGES.md の `## develop` セクションには:
 - `cargo test --workspace` が通る
 - `cargo clippy --all-targets -- -D warnings` が通る
 - `Event` enum に `#[non_exhaustive]` が付与されていること
+
+## 解決方法
+
+対応不要として close する。理由:
+
+コミット `189240b` で「全ての enum から #[non_exhaustive] を削除する」が明示的に実行されている。本 issue の「#[non_exhaustive] を付与する」提案はプロジェクトの直近の判断と矛盾するため、実装しない。

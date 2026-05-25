@@ -1,10 +1,11 @@
 # PBT ディレクトリモジュールをサブモジュール単位に分割する
 
-Created: 2026-05-25
-Priority: Low
-Model: deepseek-v4-pro
+- Priority: Low
+- Created: 2026-05-25
+- Model: deepseek-v4-pro
+- Branch: feature/refactor-split-pbt-submodules
 
-## 背景
+## 目的
 
 issue 0039 で PBT ファイルをディレクトリモジュール形式 (`prop_<module>/main.rs`) に移行した。しかし 0039 のスコープは「既存ファイル全体を `main.rs` に rename するのみ」であり、`src/frame/` / `src/webtransport/` 配下のサブモジュールごとの分割は本 issue で行う。
 
@@ -49,14 +50,14 @@ pbt/tests/prop_webtransport/
 └── (必要に応じて追加)
 ```
 
-## 修正方針
+## 設計方針
 
 1. `prop_frame/main.rs` 内の proptest ブロックを、対応する `src/frame/` サブモジュールごとに分類する
 2. 各サブモジュールファイルに移動し、`main.rs` に `mod` 宣言を追加する
 3. `prop_webtransport/main.rs` も同様に分割する
 4. 共通の import や helper は `main.rs` に残すか、各サブモジュールで個別に import する
 
-## 受け入れ基準
+## 完了条件
 
 - `cargo test --workspace` が通る
 - `cargo clippy --all-targets -- -D warnings` が通る

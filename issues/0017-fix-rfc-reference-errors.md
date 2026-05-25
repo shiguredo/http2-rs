@@ -1,66 +1,62 @@
-# RFC/仕様参照の節番号誤りを修正する
+# RFC 参照コメントの CONNECT 言及を修正する
 
-Created: 2026-05-14
-Priority: Low
-Model: deepseek-v4-pro
+- Priority: Low
+- Created: 2026-05-14
+- Model: deepseek-v4-pro
+- Branch: feature/fix-rfc-reference-comment
 
-## 致命的な誤り
+## 目的
 
-### 1. `src/connection/mod.rs:1503, 1531` — RFC 9218 Section 5.1 → Section 2.1
+`src/validation.rs:303` のコメントが RFC 9113 Section 8.3.1 の `:authority` userinfo 禁止を「http/https/CONNECT に限定」と記載しているが、RFC の原文は「"http" or "https" schemed URIs」のみを対象としており、CONNECT には明示的に言及していない。コメントの RFC 帰属を正確にする。
 
-コードコメントで `RFC 9218 Section 5.1` と参照しているが、SETTINGS_NO_RFC7540_PRIORITIES の振る舞い（最初の SETTINGS で送信、以後変更禁止）は **Section 2.1** で定義されている。Section 5 は "The Priority HTTP Header Field" であり Section 5.1 は存在しない。
+## 優先度根拠
 
-RFC 9218 Section 2.1: "If endpoints use SETTINGS_NO_RFC7540_PRIORITIES, they MUST send it in the first SETTINGS frame. Senders MUST NOT change the SETTINGS_NO_RFC7540_PRIORITIES value after the first SETTINGS frame."
+コード動作自体は防御的で妥当（CONNECT リクエストの `:authority` に userinfo を含むことを拒否するのは安全側）。修正対象はコメントのみであり、機能・安全性に影響しない。
 
-### 2. `src/webtransport/capsule.rs:548` — draft Section 6.1 → Section 6.12、バージョン番号欠落
+## 現状
 
-コメントに `draft-ietf-webtrans-http2 Section 6.1` とあるが:
-- バージョン番号 `-14` が欠落している
-- 節番号 `6.1` は "PADDING Capsule" であり、WT_CLOSE_SESSION の reason 長制限 (1024 バイト) は **Section 6.12** で定義されている
+`src/validation.rs:303`:
 
-draft-ietf-webtrans-http2-14 Section 6.12: "The message takes up the remainder of the capsule, and its length MUST NOT exceed 1024 bytes."
+```rust
+// RFC 9113 Section 8.3.1: :authority の userinfo 禁止は http/https/CONNECT に限定
+```
 
-## 重要な誤り
+RFC 9113 Section 8.3.1 (refs/rfc9113.txt L2690-2691) の原文:
 
-### 3. `src/connection/mod.rs:556, 628` — RFC 9113 Section 6.9 → Section 6.9.1
+> ":authority" MUST NOT include the deprecated userinfo subcomponent for "http" or "https" schemed URIs.
 
-空 DATA + END_STREAM がフロー制御ウィンドウ 0 でも送信許可される規定は **Section 6.9.1** ("The Flow-Control Window") にある。Section 6.9 は複数のサブセクションを持つ上位の節。
+CONNECT リクエストは `:scheme` を持たない (RFC 9113 Section 8.3.1, L2640-2641) ため、この MUST NOT の直接の適用対象外。コードが CONNECT でも userinfo を拒否するのは防御的判断であり、RFC の要件ではない。
 
-### 4. `src/validation.rs:224` — RFC 9110 Section 9 → Section 9.1
+## 設計方針
 
-`method = token` の ABNF 定義は **Section 9.1** ("Overview") に存在する。Section 9 は "Methods" の大見出し。
+コメントを以下のように修正する:
 
-### 5. `src/connection/mod.rs:1018-1019` — RFC 9110 Section 6.4.1 → RFC 9113 Section 8.1.1 を併記
+```rust
+// RFC 9113 Section 8.3.1: :authority の userinfo 禁止は http/https に限定
+// CONNECT は RFC の適用対象外だが、防御的に同じく拒否する
+```
 
-DATA フレームと content-length の不一致に関する malformed 規則は **RFC 9113 Section 8.1.1** で定義されている。RFC 9110 Section 6.4.1 は HEAD/204/304 にコンテンツがないことの定義のみ。
+コードの動作（`is_http_scheme || is_connect` の条件）は変更しない。
 
-### 6. `src/validation.rs:331` — コメントの正確性
+## 変更対象ファイル
 
-コメントに「RFC 9113 Section 8.3.1: :authority の userinfo 禁止は http/https と CONNECT に限定」とあるが、RFC 9113 Section 8.3.1 が禁止しているのは `http` または `https` スキームの URI に限定されており、CONNECT は明示的に言及されていない。
+- `src/validation.rs`: コメント修正 (L303)
 
-コードの挙動自体は防御的で妥当だが、コメントを修正する。
+## 完了条件
 
-## 対象ファイル一覧
-
-- `src/connection/mod.rs` (#1, #3, #5)
-- `src/webtransport/capsule.rs` (#2)
-- `src/validation.rs` (#4, #6)
-- `src/settings.rs` (#7)
-- `src/limits.rs` (#7)
-
-## CHANGES.md (実装時に追記)
-
-- `## develop` の `### misc` に以下を追加する:
-  - `[FIX]` ソースコード内の RFC/仕様参照の節番号誤りを修正する
-    - @voluntas
-
-## 受け入れ基準
-
+- `src/validation.rs:303` のコメントが RFC の記述と正確に一致している
+- コードの動作に変更がない
 - `cargo test --workspace` が通る
-- `cargo clippy --all-targets -- -D warnings` が通る
+- `cargo clippy --workspace --all-targets -- -D warnings` が通る
+- `cargo fmt --check` が通る
 
-## 改善
+## 備考: 既に解決済みの項目
 
-### 7. `src/settings.rs:92, 183, 185, 322`, `src/limits.rs:27, 128` — 廃止 RFC 7540 への言及
+本 issue は元々 7 件の RFC 参照誤りを対象としていたが、以下の 6 件は他の issue 対応時に修正済みのため削除した:
 
-"RFC 7540 の優先度シグナリング" という表現を RFC 9113 Section 5.3.2 の併記に更新する。
+1. RFC 9218 Section 5.1 → 2.1 (修正済み)
+2. draft Section 6.1 → 6.12 + バージョン番号 (修正済み)
+3. RFC 9113 Section 6.9 → 6.9.1 (修正済み)
+4. RFC 9110 Section 9 → 9.1 (修正済み)
+5. RFC 9110 Section 6.4.1 → RFC 9113 8.1.1 併記 (修正済み)
+6. RFC 7540 → RFC 9113 Section 5.3.2 併記 (修正済み)

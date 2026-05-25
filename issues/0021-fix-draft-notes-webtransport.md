@@ -1,50 +1,65 @@
 # WebTransport draft 注記を充実させる
 
-Created: 2026-05-14
-Priority: Low
-Model: deepseek-v4-pro
+- Priority: Low
+- Created: 2026-05-14
+- Model: deepseek-v4-pro
+- Branch: feature/fix-draft-notes-webtransport
 
-## 根拠
+## 目的
 
-CLAUDE.md: 「draft 由来の機能を実装する場合は、根拠資料名、節番号、将来変更される可能性があることをコードコメントで明記すること」
+AGENTS.md の「資料を由来の機能を実装する場合は、根拠資料名、節番号、将来変更される可能性があることをコードコメントで明記すること」に従い、WebTransport 関連の draft 由来コードに「暫定値であり将来変更される可能性がある」注記を追加する。
 
-## 対象と内容
+現状、`src/settings.rs` の WebTransport SETTINGS enum バリアントには draft の節番号参照はあるが、暫定性の注記がない。`src/webtransport/` モジュール全体でも同様。
 
-### 1. `src/settings.rs:44-66` — WebTransport SETTINGS 定数群に注記が欠落
+## 優先度根拠
 
-以下の定数は draft-ietf-webtrans-http2-14 由来の暫定 IANA 値だが、「暫定値であり将来変更される可能性がある」の注記がない:
+コードの正確性や動作に影響しないコメント追加。ただし draft が RFC 化される際に変更が必要になる箇所を事前に識別可能にするため、早めに対応すべき。
 
-- `SETTINGS_WT_INITIAL_MAX_DATA` (0x2b61)
-- `SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI` (0x2b62)
-- `SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL` (0x2b63)
-- `SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE` (0x2b66)
-- `SETTINGS_WT_INITIAL_MAX_STREAMS_UNI` (0x2b64)
-- `SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI` (0x2b65)
+## 現状
 
-一方、`src/error.rs:49,56,63` の WebTransport エラーコードには同様の注記が存在しており、不整合がある。
+### `src/settings.rs` の WebTransport SETTINGS
 
-### 2. `src/webtransport/` — サブモジュール全体に注記が不足
+`Setting` enum の WebTransport バリアント (WtInitialMaxData, WtInitialMaxStreamDataUni 等) には `draft-ietf-webtrans-http2-14 Section 11.2` の参照があるが、「暫定値であり将来変更される可能性がある」の注記がない。
 
-- `src/webtransport/mod.rs` — モジュールヘッダーに draft であることの言及はあるが、「将来変更される可能性がある」の注記がない
-- `src/webtransport/flow_control.rs` — `update_send_max` などの暫定仕様に依存する挙動に注記がない
-- `src/webtransport/stream.rs` — `update_send_max` などに注記がない
-- `src/webtransport/capsule.rs` — capsule タイプのエンコード/デコードに注記がない
-- `src/webtransport/error.rs` — エラーコードに注記はあるが、他の場所にも必要
+一方、`src/error.rs` の WebTransport エラーコード (`WebtransportError` 等) にはこの種の注記が存在しており、不整合がある。
 
-## 修正方針
+### `src/webtransport/` モジュール
 
-1. `src/settings.rs` の各 WT SETTINGS 定数に `draft-ietf-webtrans-http2-14 Section 11.2` の参照と「注: この値は暫定値。IANA 登録後に更新される可能性がある。」の注記を追加する
-2. `src/webtransport/mod.rs` のモジュールヘッダーに draft 由来であることと将来変更される可能性があることを明記する
-3. 各サブモジュールの該当メソッドに節番号と注記を追加する
+- `mod.rs`: モジュールヘッダーに draft 名はあるが「将来変更される可能性がある」の一文がない
+- `capsule.rs`: capsule タイプ定数に draft 参照があるが暫定性注記なし
+- `flow_control.rs`, `stream.rs`: 暫定仕様に依存する挙動に注記なし
 
-## CHANGES.md (実装時に追記)
+## 設計方針
 
-- `## develop` の `### misc` に以下を追加する:
-  - `[UPDATE]` WebTransport draft 注記を充実させる
-    - @voluntas
+1. `src/settings.rs` の各 WebTransport SETTINGS バリアントの doc comment に以下を追加:
+   ```
+   /// 注: この値は draft-ietf-webtrans-http2-14 由来の暫定値であり、
+   /// IANA 登録後に変更される可能性がある。
+   ```
 
-## 受け入れ基準
+2. `src/webtransport/mod.rs` のモジュールヘッダー doc comment に以下を追加:
+   ```
+   //! 注: 本モジュールは draft-ietf-webtrans-http2-14 に基づく実装であり、
+   //! draft の改訂や RFC 化に伴い仕様が変更される可能性がある。
+   ```
 
+3. `src/webtransport/capsule.rs` の capsule タイプ定数群に同様の暫定性注記を追加
+
+4. `src/webtransport/flow_control.rs`, `src/webtransport/stream.rs` のメソッドのうち draft 固有の挙動に依存するものに節番号と注記を追加
+
+## 変更対象ファイル
+
+- `src/settings.rs`: WebTransport SETTINGS バリアントの doc comment 追加
+- `src/webtransport/mod.rs`: モジュールヘッダー追加
+- `src/webtransport/capsule.rs`: capsule タイプ定数に注記追加
+- `src/webtransport/flow_control.rs`: 該当メソッドに注記追加
+- `src/webtransport/stream.rs`: 該当メソッドに注記追加
+
+## 完了条件
+
+- 全 WebTransport SETTINGS 定数に暫定性注記がある
+- `src/webtransport/` モジュールヘッダーに draft 由来・変更可能性の注記がある
+- capsule タイプ定数に注記がある
 - `cargo test --workspace` が通る
-- `cargo clippy --all-targets -- -D warnings` が通る
-- 全 WebTransport SETTINGS 定数に draft 注記が追加されていること
+- `cargo clippy --workspace --all-targets -- -D warnings` が通る
+- `cargo fmt --check` が通る

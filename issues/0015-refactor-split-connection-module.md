@@ -1,152 +1,141 @@
 # connection/mod.rs をサブモジュールに分割する
 
-Created: 2026-05-14
-Priority: Low
-Model: deepseek-v4-pro
+- Priority: Low
+- Created: 2026-05-14
+- Model: deepseek-v4-pro
+- Branch: feature/refactor-split-connection-module
 
-## 対象
+## 目的
 
-- `src/connection/mod.rs` (1,974 行) — 分割元
-- `src/connection/headers.rs` — 新設
-- `src/connection/settings.rs` — 新設
-- `src/connection/data.rs` — 新設
-- `pbt/tests/prop_connection.rs` → `pbt/tests/prop_connection/main.rs` に移行して分割
-- `pbt/tests/prop_connection/headers.rs` — 新設
-- `pbt/tests/prop_connection/settings.rs` — 新設
-- `pbt/tests/prop_connection/data.rs` — 新設
+`src/connection/mod.rs` が 2,272 行に肥大化しており、HEADERS 送受信、SETTINGS 処理、DATA 送受信という独立した関心事が 1 ファイルに混在している。新機能追加やバグ修正時にファイル内の位置特定が困難であり、コードレビュー時の認知負荷が高い。AGENTS.md の「テストが長くなるのはモジュール自体が大きすぎるサインなので `src/<module>.rs` 側の分割を検討すること」に沿い、サブモジュールに分割する。
 
-## 内容
+## 優先度根拠
 
-`connection/mod.rs` が 1,974 行と肥大化しており、以下の独立した関心事が 1 ファイルに詰め込まれているため、サブモジュールに分割する。
+機能や正確性に直接影響しないリファクタリングであり、既存テストの通過に問題はない。ただし `pbt/tests/prop_connection.rs` も 1,043 行に達しており、AGENTS.md の分割基準に該当する。今すぐの対応は不要だが、今後の機能追加（WebTransport 拡張等）で connection module がさらに肥大化する前に実施すべきため Low とする。
+
+## 関連 issue
+
+- `issues/0016-refactor-improve-stream-cohesion.md`: Stream 構造体のサブ構造体抽出。両者は独立して実装可能（0015 はファイル分割のみで構造体定義を変更しない、0016 は Stream 構造体の内部構造変更）。実装順序の制約はない
+- `issues/closed/0036-refactor-move-mod-tests-to-tests-dir.md`: `src/` 内の `#[cfg(test)] mod tests` を `tests/` に移管した。本 issue でも同じ原則に従う
+
+## 現状
+
+`src/connection/mod.rs` (2,272 行) に以下の関心事が混在している:
+
+- 構造体定義・コンストラクタ・アクセサ
+- 入出力バッファ管理 (`feed`, `process`, `poll_event`, `poll_output`)
+- フレームルーティング (`handle_frame`)
+- HEADERS 送受信 (`handle_headers`, `process_headers`, `send_response`, `send_trailers`, `send_header_block`, `handle_continuation`)
+- SETTINGS 送受信 (`initiate`, `send_settings`, `handle_settings`, `update_stream_windows`, `send_initial_connection_window_update`)
+- DATA 送受信 (`send_data`, `queue_data`, `flush_stream_data`, `flush_all_stream_data`, `handle_data`)
+- GOAWAY / PING / RST_STREAM / WINDOW_UPDATE / PRIORITY_UPDATE 送受信
+- ストリーム管理 (`start_stream`, `try_remove_closed_stream`, `is_idle_stream`, `is_stream_closed`, `check_not_idle_stream`, `check_concurrent_streams_limit`)
+- ヘルパー関数 (`extract_content_length`, `calculate_header_list_size`, `concatenate_cookies`)
+
+## 設計方針
 
 ### 分割後の構成
 
-`src/connection/` ディレクトリモジュールとし、Rust の `impl Connection` ブロックを複数ファイルに分散するパターンを使用する。
-
 ```
 src/connection/
-  mod.rs         — Connection 構造体定義、handle_frame (ルーティング)、
-                   GOAWAY / PING / RST_STREAM 送受信、ストリーム管理、
-                   接続レベルのフロー制御、send_frame (全サブモジュール共通)
-  headers.rs     — HEADERS 送受信、process_headers、send_header_block、
-                   send_response、send_trailers、ヘッダー継続処理
-  settings.rs    — SETTINGS 送受信、initiate、設定反映
-  data.rs        — DATA 送受信、send_data、handle_data、
-                   フラッシュ処理 (flush_stream_data、flush_all_stream_data)
+  mod.rs       — Connection 構造体定義、コンストラクタ、アクセサ、
+                 入出力バッファ管理、handle_frame (ルーティング)、
+                 GOAWAY / PING / RST_STREAM / WINDOW_UPDATE / PRIORITY_UPDATE 送受信、
+                 ストリーム管理、ヘルパー関数、send_frame
+  headers.rs   — HEADERS 送受信、ヘッダー継続処理
+  settings.rs  — SETTINGS 送受信、initiate、設定反映
+  data.rs      — DATA 送受信、フラッシュ処理
 ```
 
-### メソッドの割り当て詳細
+### メソッド割り当て
 
-#### `mod.rs` に残るもの (構造体定義 + コアロジック + 残存メソッド)
+#### `mod.rs` に残すもの
 
-| カテゴリ | メソッド | およその行 |
-|---|---|---|
-| 構造体定義 | `Connection` struct, `new`, `client`, `server` | L46-171 |
-| アクセサ | `role`, `state`, `local_settings`, `remote_settings`, `is_active`, `is_closed` | L186-226 |
-| 入出力 | `feed`, `mark_preface_received`, `mark_preface_sent` | L264-309 |
-| イベント/出力 | `process`, `poll_event`, `poll_output`, `has_output` | L337-388 |
-| フレームルーティング | `handle_frame` | L907-982 |
-| 共通 | `send_frame` (全サブモジュールから呼ばれる中核メソッド) | L1929-1935 |
-| PING | `send_ping`, `handle_ping` | L691-695, L1596-1609 |
-| GOAWAY | `send_goaway`, `handle_goaway` | L698-704, L1612-1622 |
-| RST_STREAM | `reset_stream`, `handle_rst_stream` | L679-688, L1445-1464 |
-| WINDOW_UPDATE | `send_window_update`, `handle_window_update` | L707-733, L1624-1667 |
-| PRIORITY_UPDATE | `handle_priority_update` | L1725-1755 |
-| ストリーム管理 | `start_stream`, `validate_stream_id_parity`, `is_idle_stream`, `is_stream_closed`, `check_not_idle_stream`, `check_concurrent_streams_limit`, `try_remove_closed_stream` | L391-448, L1761-1862, L665-676 |
-| ヘルパー | `extract_content_length`, `calculate_header_list_size`, `concatenate_cookies` | L1416-1442, L1922-1928, L1942-1973 |
-
-#### `src/connection/headers.rs`
-
-| メソッド | 行 |
+| カテゴリ | メソッド |
 |---|---|
-| `handle_headers` | L1076-1165 |
-| `process_headers` | L1168-1414 |
-| `send_header_block` | L1864-1920 |
-| `send_response` | L738-838 |
-| `send_trailers` | L844-904 |
-| `handle_continuation` | L1669-1723 |
-| `header_continuation_stream` フィールド管理 | L1669-1689 |
+| コンストラクタ・アクセサ | `new`, `client`, `server`, `role`, `state`, `local_settings`, `remote_settings`, `is_active`, `is_closed` |
+| 入出力 | `feed`, `mark_preface_received`, `mark_preface_sent`, `process`, `poll_event`, `poll_output`, `has_output` |
+| フレームルーティング | `handle_frame` |
+| 共通送信 | `send_frame` |
+| PING | `send_ping`, `handle_ping` |
+| GOAWAY | `send_goaway`, `handle_goaway` |
+| RST_STREAM | `reset_stream`, `handle_rst_stream` |
+| WINDOW_UPDATE | `send_window_update`, `handle_window_update` |
+| PRIORITY_UPDATE | `handle_priority_update` |
+| ストリーム管理 | `start_stream`, `try_remove_closed_stream`, `is_idle_stream`, `is_stream_closed`, `check_not_idle_stream`, `check_concurrent_streams_limit` |
+| ヘルパー | `extract_content_length`, `calculate_header_list_size` |
 
-#### `src/connection/settings.rs`
+`concatenate_cookies` は `impl Connection` の外側にあるモジュールレベルの `pub(crate) fn` であり、`mod.rs` に残す。
 
-| メソッド | 行 |
-|---|---|
-| `initiate`, `send_settings` | L232-333 |
-| `handle_settings` (update_stream_windows 含む) | L1467-1593 |
+#### `headers.rs` に移動するもの
 
-#### `src/connection/data.rs`
+| メソッド |
+|---|
+| `handle_headers` |
+| `process_headers` |
+| `send_header_block` |
+| `send_response` |
+| `send_trailers` |
+| `handle_continuation` |
 
-| メソッド | 行 |
-|---|---|
-| `send_data` | L496-524 |
-| `queue_data` | L527-549 |
-| `flush_stream_data` | L552-640 |
-| `flush_all_stream_data` | L643-658 |
-| `handle_data` | L985-1073 |
+#### `settings.rs` に移動するもの
 
-### 実装パターン
+| メソッド |
+|---|
+| `initiate` |
+| `send_settings` |
+| `send_initial_connection_window_update` |
+| `handle_settings` |
+| `update_stream_windows` |
 
-`impl Connection` ブロックは Rust の同一クレート内であれば複数ファイルに分散できる。各サブモジュールは `use super::*` または `use super::Connection` で `Connection` 型をインポートする。
+#### `data.rs` に移動するもの
 
-```rust
-// src/connection/mod.rs
-pub(crate) mod headers;
-pub(crate) mod settings;
-pub(crate) mod data;
+| メソッド |
+|---|
+| `send_data` |
+| `queue_data` |
+| `flush_stream_data` |
+| `flush_all_stream_data` |
+| `handle_data` |
 
-use headers::*;
-use settings::*;
-use data::*;
+### 分割粒度の判断基準
 
-pub struct Connection { ... }
+headers / settings / data の 3 つに分割する理由:
 
-impl Connection {
-    // コアメソッド (send_frame, handle_frame 等)
-}
-```
-
-```rust
-// src/connection/headers.rs
-use super::*;
-
-impl Connection {
-    pub(crate) fn handle_headers(&mut self, frame: HeadersFrame) -> Result<()> { ... }
-    pub fn send_response(...) -> Result<()> { ... }
-}
-```
-
-各サブモジュールから `mod.rs` の `send_frame` メソッドを呼ぶ必要があるが、`impl Connection` のメソッドは同一型の全 `impl` ブロックからアクセス可能なため、循環参照の問題は発生しない。
+- この 3 グループはそれぞれ 300-500 行のまとまったコードであり、独立した責務を持つ
+- mod.rs に残すメソッド群（PING, GOAWAY, RST_STREAM, WINDOW_UPDATE 等）は個々が 10-30 行程度であり、独立サブモジュールにするほどの規模がない
+- ストリーム管理とフレームルーティングは全サブモジュールのメソッドから呼ばれるため、mod.rs に残すのが自然
 
 ### 可視性設計
 
-- 外部公開メソッド (`send_response`, `send_data`, `send_trailers`, `send_ping`, `send_goaway`, `send_window_update`, `send_settings`, `start_stream`, `reset_stream`, `initiate`, `feed`, `process`, `poll_event`, `poll_output`) は `pub fn` のままとする
-- `handle_*` 系の内部メソッドは `pub(crate) fn` または `fn` に変更する
-- `send_frame` は `pub(crate)` または `fn` とする
-- 公開 API は `mod.rs` の `pub use` で一括 re-export する (現在の `src/lib.rs` の再エクスポートが機能し続けるため)
+- Connection 構造体定義（全フィールド）は mod.rs に留まる。サブモジュールにフィールドは分散しない
+- サブモジュール宣言: `mod headers;` / `mod settings;` / `mod data;`（private。クレート外から直接アクセスする必要がないため `pub(crate)` は不要）
+- サブモジュール内のメソッド: `pub(super) fn` とする。Rust では親モジュール (mod.rs) は子モジュールの private アイテムを参照できないため、`handle_frame` から `handle_headers` 等を呼ぶには `pub(super)` が必要
+- mod.rs 内の private メソッド (`fn`): `send_frame`, `is_idle_stream`, `is_stream_closed`, `check_not_idle_stream`, `check_concurrent_streams_limit` 等はすべて private のまま。Rust のモジュール可視性ルールにより、子モジュールは親の private アイテムを参照可能であるため、サブモジュールの `impl Connection` ブロックから直接呼び出せる
+- 公開 API (`pub fn`): `send_response`, `send_data`, `send_trailers`, `initiate`, `send_settings` はサブモジュール内で `pub fn` のまま定義する。`Connection` 型自体が `pub` で re-export されているため、これらのメソッドは外部から利用可能
+- `mod.rs` に `use` 文は不要（`impl Connection` ブロック内のメソッドは型に紐づいており、`use` とは無関係に解決される）
 
-## テストの再構成
+### テスト分割
 
-`pbt/tests/prop_connection.rs` を `pbt/tests/prop_connection/main.rs` に移行し、`src/connection/` のサブモジュール分割に対応して以下に分割する:
+issue 0036 の原則（公開 API 経由でテスト可能なものは `tests/` に配置）に従う。
 
-- `pbt/tests/prop_connection/main.rs` — 接続レベルの PBT (GOAWAY, PING, ステートマシンラウンドトリップ等)
+`pbt/tests/prop_connection.rs` (1,043 行) を `pbt/tests/prop_connection/main.rs` に移行し、サブモジュール対応で分割する:
+
+- `pbt/tests/prop_connection/main.rs` — 接続レベルの PBT (GOAWAY, PING, ステートマシン等)
 - `pbt/tests/prop_connection/headers.rs` — HEADERS 関連 PBT
 - `pbt/tests/prop_connection/settings.rs` — SETTINGS 関連 PBT
 - `pbt/tests/prop_connection/data.rs` — DATA フレーム関連 PBT
 
-`src/connection/` の各サブモジュール (`headers.rs`, `settings.rs`, `data.rs`) には、モジュール固有の `#[cfg(test)] mod tests` を配置する。
+`src/connection/` の各サブモジュールには `#[cfg(test)] mod tests` を配置しない（issue 0036 で移管済みの方針に従う）。
 
-`fuzz/fuzz_targets/fuzz_connection.rs` は分割後もビルド可能であることを確認する。
+現在 mod.rs 末尾に存在する `concatenate_cookies` 用の `#[cfg(test)] mod tests` ブロック（proptest を含む約 190 行）は、`concatenate_cookies` が `impl Connection` 外のモジュールレベル free function であり `pub(crate)` のため、`tests/test_connection.rs` に移動する（公開 API 経由でテスト可能）。
 
-## CHANGES.md (実装時に追記)
+## 完了条件
 
-- `## develop` の `### misc` に以下を追加する:
-  - `[UPDATE]` `connection/mod.rs` を headers/settings/data のサブモジュールに分割する
-    - @voluntas
-
-## 受け入れ基準
-
+- `src/connection/mod.rs` から headers / settings / data のメソッドが分離されている
+- 分割前後で公開 API に変更がない（`Connection` 型の全 `pub fn` メソッドが外部から同じシグネチャで呼び出せる）
+- `pbt/tests/prop_connection/main.rs` + サブモジュールに PBT が分割されている
 - `cargo test --workspace` が通る
-- `cargo clippy --all-targets -- -D warnings` が通る
+- `cargo clippy --workspace --all-targets -- -D warnings` が通る
 - `cargo fmt --check` が通る
-- `cargo +nightly fuzz` ターゲット (`fuzz_connection`) がビルドできる
-- 分割前後で公開 API に変更がない (`pub use` re-export が正しく機能している)
+- fuzz ターゲット (`fuzz_connection`, `fuzz_connection_client`, `fuzz_connection_interactive`, `fuzz_connection_preface`) がビルドできる (`cargo check --manifest-path fuzz/Cargo.toml`)

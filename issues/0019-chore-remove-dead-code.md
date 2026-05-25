@@ -1,62 +1,65 @@
-# 未使用コード・死亡コードを削除する
+# 未使用コードを削除する
 
-Created: 2026-05-14
-Priority: Low
-Model: deepseek-v4-pro
+- Priority: Low
+- Created: 2026-05-14
+- Model: deepseek-v4-pro
+- Branch: feature/fix-remove-dead-code
 
-## 内容
+## 目的
 
-コードベース内の呼び出しのない関数・メソッドを削除する。
+コードベース内に呼び出しのない公開関数・メソッドが残存している。`#[expect(dead_code)]` 等の抑制なしにコンパイルが通る状態（公開 API のため lint 対象外）だが、メンテナンスコストと混乱を生むため削除する。
 
-## 削除候補一覧
+## 優先度根拠
 
-### スタンドアロン関数 (呼び出しなし)
+機能に影響しない純粋なコード整理。削除しなくても動作に支障はないが、不要な公開 API が残ると利用者を誤導する可能性がある。
 
-| # | ファイル:行番号 | 関数 | 備考 |
+## 現状
+
+以下の 6 件が呼び出し元なしで残存している:
+
+| # | ファイル | 関数/メソッド | 備考 |
 |---|---|---|---|
-| 1 | `src/frame/encoder.rs:322-340` | `pub fn encode_header` | `FrameEncoder::encode_header` (同名メソッド) が全エンコードに使用されている |
-| 2 | `src/frame/encoder.rs:349-356` | `pub fn encode_frame` | 呼び出しなし。PBT 内の同名関数は別実装 |
-| 3 | `src/frame/encoder.rs:359-363` | `pub fn encode_frame_to_vec` | 呼び出しなし |
+| 1 | `src/frame/encoder.rs:326` | `pub fn encode_header(buf, header)` | スタンドアロン関数。`FrameEncoder::encode_header` メソッドが全エンコードに使用されており、この関数の呼び出し元はない |
+| 2 | `src/frame/encoder.rs:353` | `pub fn encode_frame(buf, frame)` | スタンドアロン関数。呼び出し元なし |
+| 3 | `src/frame/encoder.rs:363` | `pub fn encode_frame_to_vec(frame)` | スタンドアロン関数。呼び出し元なし |
+| 4 | `src/frame/decoder.rs:44` | `FrameDecoder::set_max_frame_size` | 呼び出し元なし |
+| 5 | `src/frame/flags.rs:68` | `FrameFlags::clear` | 呼び出し元なし |
+| 6 | `src/stream/state.rs:81` | `StreamState::is_idle` | 呼び出し元なし |
 
-### 上記連鎖で死亡する関数
+## 設計方針
 
-| # | ファイル:行番号 | 関数 | 備考 |
-|---|---|---|---|
-| 4 | `src/error.rs:273-280` | `pub fn check_buffer_size` | 上記 1,2 のみが呼び出し |
+上記 6 件を削除する。テストコード (`tests/`, `pbt/`) からの呼び出しも存在しないことを確認済み。
 
-### 未使用メソッド
+#1-3 はいずれも `FrameEncoder` 構造体の登場以前に作られた旧 API と思われる。#4 は Settings 適用経路が変わった際に孤立したメソッド。#5, #6 は将来のために残されたが使われないまま放置されたもの。
 
-| # | ファイル:行番号 | メソッド | 備考 |
-|---|---|---|---|
-| 5 | `src/settings.rs:434-458` | `WtInitialSettings::apply` | `Settings::apply` が直アクセスで代用 |
-| 6 | `src/frame/decoder.rs:40-42` | `FrameDecoder::set_max_frame_size` | 呼び出しなし |
-| 7 | `src/settings.rs:427-429` | `WtInitialSettings::new()` | `default()` のラッパー |
-| 8 | `src/frame/flags.rs:68-70` | `FrameFlags::clear` | 呼び出しなし |
-| 9 | `src/stream/buffer.rs:58-60` | `SendBuffer::remaining` | 呼び出しなし |
-| 10 | `src/stream/buffer.rs:63-65` | `SendBuffer::clear` | 呼び出しなし |
-| 11 | `src/stream/buffer.rs:123-125` | `RecvBuffer::remaining` | 呼び出しなし |
-| 12 | `src/stream/buffer.rs:128-130` | `RecvBuffer::clear` | 呼び出しなし |
-| 13 | `src/stream/mod.rs:184-192` | `Stream::is_open`, `is_closed` | connection が StateMachine 経由で直接判定 |
-| 14 | `src/stream/mod.rs:144-147` | `Stream::headers` | 呼び出しなし |
-| 15 | `src/stream/state.rs:80-83` | `StreamState::is_idle` | 呼び出しなし |
-| 16 | `src/stream/state.rs:258-272` | `StateMachine::sent_end_stream`, `received_end_stream` | テストのみから呼び出し |
-| 17 | `src/event.rs:116-140` | `Event::stream_id`, `is_connection_level` | テストのみから呼び出し |
+### 削除時の注意
 
-## 修正方針
+- #1-3 は `pub fn` であり外部クレートが参照している可能性がある。ただし `lib.rs` で re-export されておらず、`src/frame/encoder.rs` の module-level 関数が `pub` であっても `pub use` されていない限り外部からアクセス不可。`src/lib.rs` と `src/frame/mod.rs` の re-export を確認して削除すること
+- #4 (`set_max_frame_size`) は `pub fn` だが `FrameDecoder` 自体が `pub use` されている。外部利用者がこのメソッドを使っている可能性があるため、これは `[CHANGE]` に分類する
 
-1. 呼び出しのないスタンドアロン関数 (#1-3) を削除する
-2. 連鎖的に死亡する `check_buffer_size` (#4) を削除する
-3. 呼び出しのないメソッド (#5-12) を削除する
-4. テストのみから呼び出されるメソッド (#13-17) は削除し、テストコードを修正する
+## 変更対象ファイル
 
-## CHANGES.md (実装時に追記)
+- `src/frame/encoder.rs`: #1, #2, #3 削除
+- `src/frame/decoder.rs`: #4 削除
+- `src/frame/flags.rs`: #5 削除
+- `src/stream/state.rs`: #6 削除
+- `CHANGES.md`: エントリ追加
 
-- `## develop` の `### misc` に以下を追加する:
-  - `[UPDATE]` 未使用コードを削除する
-    - @voluntas
+## 完了条件
 
-## 受け入れ基準
-
+- 上記 6 件が全て削除されている
 - `cargo test --workspace` が通る
-- `cargo clippy --all-targets -- -D warnings` が通る
+- `cargo clippy --workspace --all-targets -- -D warnings` が通る
 - `cargo fmt --check` が通る
+- fuzz ターゲットがビルドできる (`cargo check --manifest-path fuzz/Cargo.toml`)
+
+## 備考: 既に解決済みの項目
+
+本 issue は元々 17 件を対象としていたが、以下の 11 件は他の issue (0026, 0029 等) で既に削除済みのため除外した:
+
+- `check_buffer_size` (issue 0029 で削除)
+- `WtInitialSettings::apply`, `WtInitialSettings::new` (issue 0026 で削除)
+- `SendBuffer::remaining`, `SendBuffer::clear`, `RecvBuffer::remaining`, `RecvBuffer::clear` (削除済み)
+- `Stream::is_open`, `Stream::is_closed`, `Stream::headers` (削除済み)
+- `StateMachine::sent_end_stream`, `StateMachine::received_end_stream` (削除済み)
+- `Event::stream_id`, `Event::is_connection_level` (削除済み)

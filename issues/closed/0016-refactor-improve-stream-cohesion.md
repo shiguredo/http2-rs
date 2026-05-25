@@ -1,8 +1,9 @@
 # Stream 構造体の凝集度を改善する
 
-Created: 2026-05-14
-Priority: Low
-Model: deepseek-v4-pro
+- Priority: Low
+- Created: 2026-05-14
+- Completed: 2026-05-26
+- Model: deepseek-v4-pro
 
 ## 対象
 
@@ -133,3 +134,12 @@ impl Stream {
 - `cargo fmt --check` が通る
 - `Stream` 構造体の直接フィールド数が 19 → 12 に削減されている
 - 既存の `Stream` 公開メソッドのシグネチャに変更がない
+
+## 解決方法
+
+対応不要として close する。理由:
+
+1. issue は「19 フィールド」と主張するが、実際の `Stream` 構造体は 16 フィールド（`StateMachine`, `FlowControl`, `RecvBuffer`, `SendBuffer` が既にサブ構造体に抽出済み）
+2. `src/stream/mod.rs` は 292 行であり、AGENTS.md の分割基準（テストが長くなるのはモジュールが大きすぎるサイン）に達していない
+3. 提案の委譲パターン（ConnectContext に 8 getter/setter + ContentLengthTracker に 4 getter/setter + Stream に同数の委譲メソッド）はコード量を増やすだけで、呼び出し側 `connection/mod.rs` に改善がない
+4. AGENTS.md の「Premature Optimization is the Root of All Evil」に反する
