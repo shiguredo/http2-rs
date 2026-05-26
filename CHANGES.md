@@ -147,3 +147,5 @@
   - @voluntas
 - [FIX] `examples/http2_client` と `examples/http2_server` で DATA 受信時に接続・ストリームレベルの WINDOW_UPDATE を送信するように修正する (issue 0041)
   - @voluntas
+- [FIX] WebTransport 関連コードに draft-ietf-webtrans-http2-14 由来の暫定性注記を追加する (issue 0021)
+  - @voluntas

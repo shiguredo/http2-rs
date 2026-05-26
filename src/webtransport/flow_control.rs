@@ -1,6 +1,9 @@
 //! WebTransport フロー制御
 //!
 //! セッションレベルおよびストリームレベルのフロー制御を管理する。
+//!
+//! 注: 本モジュールは draft-ietf-webtrans-http2-14 に基づく実装であり、
+//! draft の改訂や RFC 化に伴い仕様が変更される可能性がある。
 
 use crate::webtransport::error::{WtError, WtResult};
 
@@ -134,6 +137,8 @@ impl WtFlowControl {
     ///
     /// draft-ietf-webtrans-http2-14 Section 6.5:
     /// 値が減少した場合は WEBTRANSPORT_FLOW_CONTROL_ERROR セッションエラーを返す。
+    ///
+    /// 注: draft-ietf-webtrans-http2-14 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
     pub fn update_send_max(&mut self, maximum: u64) -> WtResult<()> {
         if maximum < self.send_max {
             return Err(WtError::flow_control_error("WT_MAX_DATA value decreased"));
@@ -175,6 +180,8 @@ impl WtFlowControl {
     /// RFC 9000 Section 4.6: stream_id < (max_streams * 4 + first_stream_id_of_type)
     /// のストリームのみ開設可能。順序外の stream ID は下位 ID も全て開いた扱いになる。
     /// draft-ietf-webtrans-http2-14 Section 5.2 は QUIC のストリーム ID セマンティクスを継承する。
+    ///
+    /// 注: draft-ietf-webtrans-http2-14 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
     #[must_use]
     pub fn can_accept_stream(&self, stream_id: u64) -> bool {
         let bidirectional = stream_id & 0x02 == 0;
@@ -192,6 +199,8 @@ impl WtFlowControl {
     ///
     /// draft-ietf-webtrans-http2-14 Section 6.7:
     /// 値が減少した場合は WEBTRANSPORT_FLOW_CONTROL_ERROR セッションエラーを返す。
+    ///
+    /// 注: draft-ietf-webtrans-http2-14 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
     pub fn update_max_streams(&mut self, maximum: u64, bidirectional: bool) -> WtResult<()> {
         if bidirectional {
             if maximum < self.max_streams_bidi_remote {

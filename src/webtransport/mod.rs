@@ -5,6 +5,11 @@
 //! WebTransport セッションは HTTP/2 Extended CONNECT ストリーム上で動作し、
 //! Capsule Protocol でデータを多重化する。
 //!
+//! # 注意
+//!
+//! 本モジュールは draft-ietf-webtrans-http2-14 に基づく実装であり、
+//! draft の改訂や RFC 化に伴い仕様が変更される可能性がある。
+//!
 //! # 参照仕様
 //!
 //! - draft-ietf-webtrans-http2-14 (WebTransport over HTTP/2)
