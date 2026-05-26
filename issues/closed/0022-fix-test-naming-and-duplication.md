@@ -3,6 +3,7 @@
 - Priority: Low
 - Created: 2026-05-14
 - Model: deepseek-v4-pro
+- Completed: 2026-05-26
 - Branch: feature/fix-test-naming
 
 ## 目的
@@ -37,3 +38,9 @@
 
 - PBT と重複する単体テスト (src/ 内の #[cfg(test)]) → issue 0036 で tests/ に移管済み
 - PBT ディレクトリモジュールのサブモジュール分割 → issue 0048 で対応
+
+## 解決方法
+
+`tests/rfc7541.rs` を `tests/test_hpack/rfc7541.rs` に移動し、`tests/test_hpack/main.rs` に `mod rfc7541;` を追加した。
+
+`tests/test_hpack.rs` へのリネームは既存の `tests/test_hpack/` ディレクトリモジュールと衝突するため、ディレクトリモジュールのサブモジュールとして統合する方式を採用した。AGENTS.md の「src/\<module\>/ のようにディレクトリモジュールの場合」の規約に準拠する。
