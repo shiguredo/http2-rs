@@ -14,6 +14,9 @@ use crate::webtransport::error::{WtError, WtErrorKind, WtResult};
 use crate::webtransport::varint;
 
 /// Capsule タイプ定数 (RFC 9297 + draft-ietf-webtrans-http2-14)
+///
+/// 注: draft-ietf-webtrans-http2-14 由来の capsule タイプ値は暫定値であり、
+/// IANA 登録後に変更される可能性がある。
 pub mod capsule_type {
     /// DATAGRAM (RFC 9297 Section 3.5)
     pub const DATAGRAM: u64 = 0x00;

@@ -3,6 +3,7 @@
 - Priority: Low
 - Created: 2026-05-14
 - Model: deepseek-v4-pro
+- Completed: 2026-05-26
 - Branch: feature/fix-draft-notes-webtransport
 
 ## 目的
@@ -63,3 +64,13 @@ AGENTS.md の「資料を由来の機能を実装する場合は、根拠資料�
 - `cargo test --workspace` が通る
 - `cargo clippy --workspace --all-targets -- -D warnings` が通る
 - `cargo fmt --check` が通る
+
+## 解決方法
+
+以下のファイルに draft-ietf-webtrans-http2-14 由来の暫定性注記を追加した:
+
+1. `src/settings.rs`: 6 つの WebTransport SETTINGS バリアント全てに「暫定値であり IANA 登録後に変更される可能性がある」注記を追加。Section 11.2 の参照も全バリアントに統一
+2. `src/webtransport/mod.rs`: モジュールヘッダーに「draft 由来の実装であり仕様変更の可能性がある」注記を追加
+3. `src/webtransport/capsule.rs`: `capsule_type` モジュールの doc comment に暫定値注記を追加
+4. `src/webtransport/flow_control.rs`: モジュールヘッダーに暫定仕様注記を追加。`update_send_max`, `can_accept_stream`, `update_max_streams` メソッドに個別注記を追加
+5. `src/webtransport/stream.rs`: `WtStream::update_send_max` メソッドに暫定仕様注記を追加
