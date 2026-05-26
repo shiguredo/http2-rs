@@ -62,7 +62,7 @@ impl Connection {
         }
 
         // RFC 9113 Section 10.5.1: 送信ヘッダーリストサイズの上限チェック
-        if let Some(max_size) = self.remote_settings.max_header_list_size {
+        if let Some(max_size) = self.remote_settings.max_header_list_size() {
             let header_list_size = Self::calculate_header_list_size(&headers);
             if header_list_size > max_size as usize {
                 // RFC 9113 §10.5.1: 送信前ローカル検査
@@ -153,7 +153,7 @@ impl Connection {
         validation::validate_trailers(&headers)?;
 
         // RFC 9113 Section 10.5.1: 送信ヘッダーリストサイズの上限チェック
-        if let Some(max_size) = self.remote_settings.max_header_list_size {
+        if let Some(max_size) = self.remote_settings.max_header_list_size() {
             let header_list_size = Self::calculate_header_list_size(&headers);
             if header_list_size > max_size as usize {
                 // RFC 9113 §10.5.1: 送信前ローカル検査
@@ -314,7 +314,7 @@ impl Connection {
         let sid = stream_id.as_u32();
 
         // RFC 9113 Section 10.5.1: ヘッダーリストサイズの上限チェック
-        if let Some(max_size) = self.local_settings.max_header_list_size {
+        if let Some(max_size) = self.local_settings.max_header_list_size() {
             let header_list_size = Self::calculate_header_list_size(&headers);
             if header_list_size > max_size as usize {
                 return Err(Error::stream_error(
@@ -384,7 +384,7 @@ impl Connection {
                         .find(|h| h.name() == validation::pseudo_headers::PROTOCOL)
                         .map(|h| h.value().to_vec());
                     let has_protocol = protocol_value.is_some();
-                    if has_protocol && !self.local_settings.enable_connect_protocol {
+                    if has_protocol && !self.local_settings.enable_connect_protocol() {
                         return Err(Error::stream_error(
                             ErrorCode::ProtocolError,
                             "received :protocol without ENABLE_CONNECT_PROTOCOL",
@@ -401,8 +401,8 @@ impl Connection {
                         let stream = self.streams.entry(sid).or_insert_with(|| {
                             Stream::new(
                                 stream_id,
-                                self.remote_settings.initial_window_size,
-                                self.local_settings.initial_window_size,
+                                self.remote_settings.initial_window_size().get(),
+                                self.local_settings.initial_window_size().get(),
                             )
                         });
                         stream.set_request_method(method);
@@ -458,8 +458,8 @@ impl Connection {
             let stream = self.streams.entry(sid).or_insert_with(|| {
                 Stream::new(
                     stream_id,
-                    self.remote_settings.initial_window_size,
-                    self.local_settings.initial_window_size,
+                    self.remote_settings.initial_window_size().get(),
+                    self.local_settings.initial_window_size().get(),
                 )
             });
 
@@ -670,7 +670,7 @@ impl Connection {
                 encoded_headers
             };
 
-        let max_frame_size = self.remote_settings.max_frame_size as usize;
+        let max_frame_size = self.remote_settings.max_frame_size().get() as usize;
 
         if encoded_headers.len() <= max_frame_size {
             // 単一の HEADERS フレームで送信可能

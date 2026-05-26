@@ -176,14 +176,14 @@ proptest! {
         let original = settings.clone();
         settings.apply(setting);
 
-        prop_assert_eq!(settings.header_table_size, original.header_table_size);
-        prop_assert_eq!(settings.enable_push, original.enable_push);
-        prop_assert_eq!(settings.max_concurrent_streams, original.max_concurrent_streams);
-        prop_assert_eq!(settings.initial_window_size, original.initial_window_size);
-        prop_assert_eq!(settings.max_frame_size, original.max_frame_size);
-        prop_assert_eq!(settings.max_header_list_size, original.max_header_list_size);
-        prop_assert_eq!(settings.enable_connect_protocol, original.enable_connect_protocol);
-        prop_assert_eq!(settings.no_rfc7540_priorities, original.no_rfc7540_priorities);
+        prop_assert_eq!(settings.header_table_size(), original.header_table_size());
+        prop_assert_eq!(settings.enable_push(), original.enable_push());
+        prop_assert_eq!(settings.max_concurrent_streams(), original.max_concurrent_streams());
+        prop_assert_eq!(settings.initial_window_size(), original.initial_window_size());
+        prop_assert_eq!(settings.max_frame_size(), original.max_frame_size());
+        prop_assert_eq!(settings.max_header_list_size(), original.max_header_list_size());
+        prop_assert_eq!(settings.enable_connect_protocol(), original.enable_connect_protocol());
+        prop_assert_eq!(settings.no_rfc7540_priorities(), original.no_rfc7540_priorities());
     }
 
     /// 同じ SETTINGS を複数回適用しても結果は同じ
@@ -219,7 +219,7 @@ proptest! {
             prop_assert!(result.is_ok());
             let mut settings = Settings::default();
             settings.apply(result.unwrap());
-            prop_assert_eq!(settings.enable_push, value == 1);
+            prop_assert_eq!(settings.enable_push(), value == 1);
         } else {
             prop_assert!(result.is_err());
         }
@@ -238,7 +238,7 @@ proptest! {
             prop_assert!(result.is_ok());
             let mut settings = Settings::default();
             settings.apply(result.unwrap());
-            prop_assert_eq!(settings.max_frame_size, value);
+            prop_assert_eq!(settings.max_frame_size().get(), value);
         } else {
             prop_assert!(result.is_err());
         }
@@ -257,7 +257,7 @@ proptest! {
             prop_assert!(result.is_ok());
             let mut settings = Settings::default();
             settings.apply(result.unwrap());
-            prop_assert_eq!(settings.initial_window_size, value);
+            prop_assert_eq!(settings.initial_window_size().get(), value);
         } else {
             prop_assert!(result.is_err());
         }
@@ -270,15 +270,15 @@ proptest! {
     fn prop_default_values(_dummy in Just(())) {
         let settings = Settings::default();
 
-        prop_assert_eq!(settings.header_table_size, DEFAULT_HEADER_TABLE_SIZE);
-        prop_assert_eq!(settings.enable_push, DEFAULT_ENABLE_PUSH);
-        prop_assert!(!settings.enable_push, "DEFAULT_ENABLE_PUSH should be false");
-        prop_assert_eq!(settings.max_concurrent_streams, None);
-        prop_assert_eq!(settings.initial_window_size, DEFAULT_INITIAL_WINDOW_SIZE);
-        prop_assert_eq!(settings.max_frame_size, DEFAULT_MAX_FRAME_SIZE);
-        prop_assert_eq!(settings.max_header_list_size, None);
-        prop_assert!(!settings.enable_connect_protocol);
-        prop_assert!(!settings.no_rfc7540_priorities);
+        prop_assert_eq!(settings.header_table_size(), DEFAULT_HEADER_TABLE_SIZE);
+        prop_assert_eq!(settings.enable_push(), DEFAULT_ENABLE_PUSH);
+        prop_assert!(!settings.enable_push(), "DEFAULT_ENABLE_PUSH should be false");
+        prop_assert_eq!(settings.max_concurrent_streams(), None);
+        prop_assert_eq!(settings.initial_window_size().get(), DEFAULT_INITIAL_WINDOW_SIZE);
+        prop_assert_eq!(settings.max_frame_size().get(), DEFAULT_MAX_FRAME_SIZE);
+        prop_assert_eq!(settings.max_header_list_size(), None);
+        prop_assert!(!settings.enable_connect_protocol());
+        prop_assert!(!settings.no_rfc7540_priorities());
     }
 
     /// 複数の SETTINGS を順に適用した場合、最後の値が残る
@@ -295,7 +295,7 @@ proptest! {
             settings.apply(setting);
         }
 
-        prop_assert_eq!(settings.initial_window_size, *values.last().unwrap());
+        prop_assert_eq!(settings.initial_window_size().get(), *values.last().unwrap());
     }
 
     /// to_settings_list と apply の整合性
@@ -340,20 +340,20 @@ proptest! {
             restored.apply(setting);
         }
 
-        prop_assert_eq!(restored.header_table_size, original.header_table_size);
-        prop_assert_eq!(restored.enable_push, original.enable_push);
-        prop_assert_eq!(restored.initial_window_size, original.initial_window_size);
-        prop_assert_eq!(restored.max_frame_size, original.max_frame_size);
-        prop_assert_eq!(restored.enable_connect_protocol, original.enable_connect_protocol);
-        prop_assert_eq!(restored.no_rfc7540_priorities, original.no_rfc7540_priorities);
+        prop_assert_eq!(restored.header_table_size(), original.header_table_size());
+        prop_assert_eq!(restored.enable_push(), original.enable_push());
+        prop_assert_eq!(restored.initial_window_size(), original.initial_window_size());
+        prop_assert_eq!(restored.max_frame_size(), original.max_frame_size());
+        prop_assert_eq!(restored.enable_connect_protocol(), original.enable_connect_protocol());
+        prop_assert_eq!(restored.no_rfc7540_priorities(), original.no_rfc7540_priorities());
         if max_concurrent_streams.is_some() {
-            prop_assert_eq!(restored.max_concurrent_streams, original.max_concurrent_streams);
+            prop_assert_eq!(restored.max_concurrent_streams(), original.max_concurrent_streams());
         }
         if max_header_list_size.is_some() {
-            prop_assert_eq!(restored.max_header_list_size, original.max_header_list_size);
+            prop_assert_eq!(restored.max_header_list_size(), original.max_header_list_size());
         }
         if wt_max_data.is_some() {
-            prop_assert_eq!(restored.wt_initial_max_data, original.wt_initial_max_data);
+            prop_assert_eq!(restored.wt_initial_max_data(), original.wt_initial_max_data());
         }
     }
 

@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-05-24
+- Completed: 2026-05-26
 - Model: Opus 4.7
 - Branch: feature/change-settings-field-privatization
 
@@ -136,3 +137,17 @@ getter の戻り値に `.get()` を付けるだけで対応可能。メソッド
 - CHANGES.md に `[CHANGE]` エントリを 2 件追記（issue 0028 の先例に倣い、private 化と型変更を分割）:
   - `Settings` のフィールド private 化 + getter 追加
   - `initial_window_size` / `max_frame_size` の型変更
+
+## 解決方法
+
+以下の変更を実施した:
+
+1. `src/settings.rs`: `Settings` の全フィールドから `pub` を削除して private 化。`initial_window_size` を `u32` から `WindowSize` に、`max_frame_size` を `u32` から `MaxFrameSize` に型変更。14 個の getter メソッド (`pub const fn`) を追加。`pub(crate) fn from_limits(&Limits)` を追加。`apply()` では `InitialWindowSize(ws)` / `MaxFrameSize(mfs)` を `.get()` なしで直接代入するように変更。`to_settings_list()` では `WindowSize::from_static()` / `MaxFrameSize::from_static()` の呼び出しを不要にし、フィールドをそのまま渡すように変更。`Default` impl では `WindowSize::from_static(DEFAULT_INITIAL_WINDOW_SIZE)` / `MaxFrameSize::from_static(DEFAULT_MAX_FRAME_SIZE)` で初期化するように変更。
+
+2. `src/connection/mod.rs`: `Connection::new()` の 14 行にわたる直接フィールド代入を `Settings::from_limits(&limits)` 1 行に置き換え。全フィールドアクセスを getter 経由 (`.initial_window_size().get()`, `.max_frame_size().get() as usize`, `.max_concurrent_streams()`, `.enable_connect_protocol()`, `.max_header_list_size()`, `.header_table_size()`) に変更。
+
+3. `src/connection/headers.rs`: 同様にフィールドアクセスを getter 経由に変更 (6 箇所)。
+
+4. `pbt/tests/prop_settings.rs`: 全てのフィールド直接アクセスを getter 呼び出しに変更。型変更に伴い `WindowSize` / `MaxFrameSize` と `u32` 定数の比較は `.get()` で `u32` に戻して比較。
+
+7. `CHANGES.md`: `[CHANGE]` エントリを 2 件追記 (private 化 + getter 追加、型変更)。

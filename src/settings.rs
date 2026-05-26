@@ -161,34 +161,34 @@ impl Setting {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     /// HPACK 動的テーブルの最大サイズ
-    pub header_table_size: u32,
+    header_table_size: u32,
     /// サーバープッシュの有効/無効
-    pub enable_push: bool,
+    enable_push: bool,
     /// 同時ストリーム数の上限
-    pub max_concurrent_streams: Option<u32>,
+    max_concurrent_streams: Option<u32>,
     /// ストリームの初期ウィンドウサイズ
-    pub initial_window_size: u32,
+    initial_window_size: WindowSize,
     /// フレームペイロードの最大サイズ
-    pub max_frame_size: u32,
+    max_frame_size: MaxFrameSize,
     /// ヘッダーリストの最大サイズ
-    pub max_header_list_size: Option<u32>,
+    max_header_list_size: Option<u32>,
     /// Extended CONNECT Protocol の有効/無効 (RFC 8441)
-    pub enable_connect_protocol: bool,
+    enable_connect_protocol: bool,
     /// RFC 9113 Section 5.3.1/5.3.2 で非推奨となった RFC 7540 由来の優先度シグナリングを
     /// 使用しない (RFC 9218)
-    pub no_rfc7540_priorities: bool,
+    no_rfc7540_priorities: bool,
     /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61)
-    pub wt_initial_max_data: Option<u32>,
+    wt_initial_max_data: Option<u32>,
     /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62)
-    pub wt_initial_max_stream_data_uni: Option<u32>,
+    wt_initial_max_stream_data_uni: Option<u32>,
     /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63)
-    pub wt_initial_max_stream_data_bidi_local: Option<u32>,
+    wt_initial_max_stream_data_bidi_local: Option<u32>,
     /// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64)
-    pub wt_initial_max_streams_uni: Option<u32>,
+    wt_initial_max_streams_uni: Option<u32>,
     /// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65)
-    pub wt_initial_max_streams_bidi: Option<u32>,
+    wt_initial_max_streams_bidi: Option<u32>,
     /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66)
-    pub wt_initial_max_stream_data_bidi_remote: Option<u32>,
+    wt_initial_max_stream_data_bidi_remote: Option<u32>,
 }
 
 impl Default for Settings {
@@ -197,8 +197,8 @@ impl Default for Settings {
             header_table_size: DEFAULT_HEADER_TABLE_SIZE,
             enable_push: DEFAULT_ENABLE_PUSH,
             max_concurrent_streams: DEFAULT_MAX_CONCURRENT_STREAMS,
-            initial_window_size: DEFAULT_INITIAL_WINDOW_SIZE,
-            max_frame_size: DEFAULT_MAX_FRAME_SIZE,
+            initial_window_size: WindowSize::from_static(DEFAULT_INITIAL_WINDOW_SIZE),
+            max_frame_size: MaxFrameSize::from_static(DEFAULT_MAX_FRAME_SIZE),
             max_header_list_size: DEFAULT_MAX_HEADER_LIST_SIZE,
             enable_connect_protocol: false,
             no_rfc7540_priorities: false,
@@ -219,6 +219,114 @@ impl Settings {
         Self::default()
     }
 
+    /// `Limits` から `Settings` を構築する
+    ///
+    /// `Limits` に存在しないフィールド (`enable_push`) はデフォルト値で初期化する。
+    /// `Limits` にしか存在しないフィールド (`connection_window_size`) は使用しない
+    /// (`Connection` 側で別途参照する)。
+    pub(crate) fn from_limits(limits: &crate::limits::Limits) -> Self {
+        Self {
+            header_table_size: limits.header_table_size(),
+            enable_push: DEFAULT_ENABLE_PUSH,
+            max_concurrent_streams: limits.max_concurrent_streams(),
+            initial_window_size: limits.initial_window_size(),
+            max_frame_size: limits.max_frame_size(),
+            max_header_list_size: limits.max_header_list_size(),
+            enable_connect_protocol: limits.enable_connect_protocol(),
+            no_rfc7540_priorities: limits.no_rfc7540_priorities(),
+            wt_initial_max_data: limits.wt_initial_max_data(),
+            wt_initial_max_stream_data_uni: limits.wt_initial_max_stream_data_uni(),
+            wt_initial_max_stream_data_bidi_local: limits.wt_initial_max_stream_data_bidi_local(),
+            wt_initial_max_streams_uni: limits.wt_initial_max_streams_uni(),
+            wt_initial_max_streams_bidi: limits.wt_initial_max_streams_bidi(),
+            wt_initial_max_stream_data_bidi_remote: limits.wt_initial_max_stream_data_bidi_remote(),
+        }
+    }
+
+    /// HPACK 動的テーブルの最大サイズ
+    #[must_use]
+    pub const fn header_table_size(&self) -> u32 {
+        self.header_table_size
+    }
+
+    /// サーバープッシュの有効/無効
+    #[must_use]
+    pub const fn enable_push(&self) -> bool {
+        self.enable_push
+    }
+
+    /// 同時ストリーム数の上限
+    #[must_use]
+    pub const fn max_concurrent_streams(&self) -> Option<u32> {
+        self.max_concurrent_streams
+    }
+
+    /// ストリームの初期ウィンドウサイズ
+    #[must_use]
+    pub const fn initial_window_size(&self) -> WindowSize {
+        self.initial_window_size
+    }
+
+    /// フレームペイロードの最大サイズ
+    #[must_use]
+    pub const fn max_frame_size(&self) -> MaxFrameSize {
+        self.max_frame_size
+    }
+
+    /// ヘッダーリストの最大サイズ
+    #[must_use]
+    pub const fn max_header_list_size(&self) -> Option<u32> {
+        self.max_header_list_size
+    }
+
+    /// Extended CONNECT Protocol の有効/無効 (RFC 8441)
+    #[must_use]
+    pub const fn enable_connect_protocol(&self) -> bool {
+        self.enable_connect_protocol
+    }
+
+    /// RFC 7540 由来の優先度シグナリングを使用しないかどうか (RFC 9218)
+    #[must_use]
+    pub const fn no_rfc7540_priorities(&self) -> bool {
+        self.no_rfc7540_priorities
+    }
+
+    /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61)
+    #[must_use]
+    pub const fn wt_initial_max_data(&self) -> Option<u32> {
+        self.wt_initial_max_data
+    }
+
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62)
+    #[must_use]
+    pub const fn wt_initial_max_stream_data_uni(&self) -> Option<u32> {
+        self.wt_initial_max_stream_data_uni
+    }
+
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63)
+    #[must_use]
+    pub const fn wt_initial_max_stream_data_bidi_local(&self) -> Option<u32> {
+        self.wt_initial_max_stream_data_bidi_local
+    }
+
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64)
+    #[must_use]
+    pub const fn wt_initial_max_streams_uni(&self) -> Option<u32> {
+        self.wt_initial_max_streams_uni
+    }
+
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65)
+    #[must_use]
+    pub const fn wt_initial_max_streams_bidi(&self) -> Option<u32> {
+        self.wt_initial_max_streams_bidi
+    }
+
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66)
+    #[must_use]
+    pub const fn wt_initial_max_stream_data_bidi_remote(&self) -> Option<u32> {
+        self.wt_initial_max_stream_data_bidi_remote
+    }
+
     /// 検証済み `Setting` を適用する
     ///
     /// `Setting` は `from_wire` で構築済みのため値検査は不要。
@@ -228,8 +336,8 @@ impl Settings {
             Setting::HeaderTableSize(v) => self.header_table_size = v,
             Setting::EnablePush(b) => self.enable_push = b,
             Setting::MaxConcurrentStreams(v) => self.max_concurrent_streams = Some(v),
-            Setting::InitialWindowSize(ws) => self.initial_window_size = ws.get(),
-            Setting::MaxFrameSize(mfs) => self.max_frame_size = mfs.get(),
+            Setting::InitialWindowSize(ws) => self.initial_window_size = ws,
+            Setting::MaxFrameSize(mfs) => self.max_frame_size = mfs,
             Setting::MaxHeaderListSize(v) => self.max_header_list_size = Some(v),
             Setting::EnableConnectProtocol(b) => self.enable_connect_protocol = b,
             Setting::NoRfc7540Priorities(b) => self.no_rfc7540_priorities = b,
@@ -260,12 +368,8 @@ impl Settings {
         if let Some(max) = self.max_concurrent_streams {
             list.push(Setting::MaxConcurrentStreams(max));
         }
-        list.push(Setting::InitialWindowSize(WindowSize::from_static(
-            self.initial_window_size,
-        )));
-        list.push(Setting::MaxFrameSize(MaxFrameSize::from_static(
-            self.max_frame_size,
-        )));
+        list.push(Setting::InitialWindowSize(self.initial_window_size));
+        list.push(Setting::MaxFrameSize(self.max_frame_size));
         if let Some(max) = self.max_header_list_size {
             list.push(Setting::MaxHeaderListSize(max));
         }
