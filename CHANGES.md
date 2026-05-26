@@ -56,6 +56,8 @@
   - @voluntas
 - [CHANGE] `Limits` の `initial_window_size` / `connection_window_size` を `WindowSize` 型に、`max_frame_size` を `MaxFrameSize` 型に変更する (issue 0028)
   - @voluntas
+- [CHANGE] `FlowControl::initial_window_size()` を削除し `send_initial()` / `recv_initial()` に分割する (issue 0014)
+  - @voluntas
 - [ADD] `HeaderField::from_static` を追加し、リテラル定数の RFC 違反 (大文字 field-name、CR/LF 含む値、未知の疑似ヘッダー、不正な `:status` 値など) を `const fn` 経由でコンパイル時に検出可能にする (issue 0024)
   - @voluntas
 - [ADD] 構築時検査用の公開エラー型 (`HeaderFieldError`, `FrameError`, `StreamIdError`, `SettingError`, `LimitsError`, `SendError`, `DecodeError`) と補助型 (`Parity`, `WindowSize`, `MaxFrameSize`, `WindowIncrement`, `Weight`, `LastStreamId`, `ClientStreamId`, `ServerStreamId`, `NonZeroStreamId`) を追加する (issues 0024-0032)
@@ -97,6 +99,8 @@
 - [FIX] `shiguredo_http2::Connection::send_data` で END_STREAM 宣言済みのストリームへの追加 DATA を `StreamClosed` で拒否する (issue 0041)
   - @voluntas
 - [FIX] PBT `prop_window_update_increases_window` の Strategy がフロー制御ウィンドウの上限 (RFC 9113 §6.9.1) を考慮していなかったため、proptest の seed 依存で FLOW_CONTROL_ERROR が発生して CI が断続的に失敗する問題を修正する (issue 0040)
+  - @voluntas
+- [FIX] `FlowControl::with_separate_windows` が受信側初期ウィンドウサイズを誤って参照するバグを修正する (issue 0014)
   - @voluntas
 
 ### misc

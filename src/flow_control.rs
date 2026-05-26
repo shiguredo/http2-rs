@@ -15,8 +15,10 @@ pub struct FlowControl {
     send_window: i64,
     /// 受信ウィンドウサイズ（ピアに許可している受信可能バイト数）
     recv_window: i64,
-    /// 初期ウィンドウサイズ
-    initial_window_size: u32,
+    /// 送信側の初期ウィンドウサイズ（リモートの SETTINGS_INITIAL_WINDOW_SIZE）
+    send_initial: u32,
+    /// 受信側の初期ウィンドウサイズ（ローカルの SETTINGS_INITIAL_WINDOW_SIZE）
+    recv_initial: u32,
 }
 
 impl FlowControl {
@@ -26,7 +28,8 @@ impl FlowControl {
         Self {
             send_window: i64::from(initial_window_size),
             recv_window: i64::from(initial_window_size),
-            initial_window_size,
+            send_initial: initial_window_size,
+            recv_initial: initial_window_size,
         }
     }
 
@@ -40,7 +43,8 @@ impl FlowControl {
         Self {
             send_window: i64::from(send_initial),
             recv_window: i64::from(recv_initial),
-            initial_window_size: send_initial,
+            send_initial,
+            recv_initial,
         }
     }
 
@@ -56,10 +60,16 @@ impl FlowControl {
         self.recv_window
     }
 
-    /// 初期ウィンドウサイズを取得する
+    /// 送信側の初期ウィンドウサイズを取得する
     #[must_use]
-    pub const fn initial_window_size(&self) -> u32 {
-        self.initial_window_size
+    pub const fn send_initial(&self) -> u32 {
+        self.send_initial
+    }
+
+    /// 受信側の初期ウィンドウサイズを取得する
+    #[must_use]
+    pub const fn recv_initial(&self) -> u32 {
+        self.recv_initial
     }
 
     /// 送信可能なバイト数を取得する
@@ -149,8 +159,12 @@ impl FlowControl {
     }
 
     /// SETTINGS_INITIAL_WINDOW_SIZE 変更時に送信ウィンドウを調整する
+    ///
+    /// RFC 9113 Section 6.9.2: SETTINGS_INITIAL_WINDOW_SIZE 変更時に調整対象となるのは
+    /// 送信ウィンドウのみであり、受信側の初期値には影響しない。
+    /// 将来の RFC 改訂で変更される可能性がある。
     pub fn update_initial_window_size(&mut self, new_size: u32) -> Result<(), Error> {
-        let delta = i64::from(new_size) - i64::from(self.initial_window_size);
+        let delta = i64::from(new_size) - i64::from(self.send_initial);
         let new_window = self.send_window + delta;
 
         if new_window > i64::from(MAX_WINDOW_SIZE) {
@@ -161,7 +175,7 @@ impl FlowControl {
         }
 
         self.send_window = new_window;
-        self.initial_window_size = new_size;
+        self.send_initial = new_size;
         Ok(())
     }
 
@@ -170,14 +184,14 @@ impl FlowControl {
     /// WINDOW_UPDATE を送信するタイミングの判断に使用する。
     #[must_use]
     pub fn should_send_window_update(&self) -> bool {
-        // 初期ウィンドウサイズの半分以下になったら更新を推奨
-        self.recv_window < i64::from(self.initial_window_size / 2)
+        // 受信側初期ウィンドウサイズの半分以下になったら更新を推奨
+        self.recv_window < i64::from(self.recv_initial / 2)
     }
 
     /// WINDOW_UPDATE で送信すべき増分を計算する
     #[must_use]
     pub fn window_update_increment(&self) -> u32 {
-        let target = i64::from(self.initial_window_size);
+        let target = i64::from(self.recv_initial);
         let increment = target - self.recv_window;
         if increment > 0 && increment <= i64::from(MAX_WINDOW_SIZE) {
             increment as u32
