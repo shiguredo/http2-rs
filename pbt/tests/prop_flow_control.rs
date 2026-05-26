@@ -18,7 +18,8 @@ proptest! {
         let fc = FlowControl::new(initial_window);
         prop_assert_eq!(fc.send_window(), i64::from(initial_window));
         prop_assert_eq!(fc.recv_window(), i64::from(initial_window));
-        prop_assert_eq!(fc.initial_window_size(), initial_window);
+        prop_assert_eq!(fc.send_initial(), initial_window);
+        prop_assert_eq!(fc.recv_initial(), initial_window);
     }
 
     /// 送信/受信ウィンドウ分離初期化テスト
@@ -34,7 +35,8 @@ proptest! {
         let fc = FlowControl::with_separate_windows(send_initial, recv_initial);
         prop_assert_eq!(fc.send_window(), i64::from(send_initial));
         prop_assert_eq!(fc.recv_window(), i64::from(recv_initial));
-        prop_assert_eq!(fc.initial_window_size(), send_initial);
+        prop_assert_eq!(fc.send_initial(), send_initial);
+        prop_assert_eq!(fc.recv_initial(), recv_initial);
     }
 
     /// 送信ウィンドウ消費テスト
@@ -114,7 +116,7 @@ proptest! {
         } else {
             prop_assert!(result.is_ok());
             prop_assert_eq!(fc.send_window(), new_window);
-            prop_assert_eq!(fc.initial_window_size(), new_initial);
+            prop_assert_eq!(fc.send_initial(), new_initial);
         }
     }
 
@@ -125,6 +127,67 @@ proptest! {
     ) {
         let mut fc = FlowControl::new(initial_window);
         prop_assert!(fc.add_recv_window(0).is_err());
+    }
+
+    /// should_send_window_update / window_update_increment が send_initial に依存しないことを検証する
+    ///
+    /// 任意の (send_initial_a, send_initial_b, recv_initial, consume_amount) に対して、
+    /// with_separate_windows(send_initial_a, recv_initial) と
+    /// with_separate_windows(send_initial_b, recv_initial) で同じ量を consume_recv した後の
+    /// 結果が一致することを検証する。
+    #[test]
+    fn prop_recv_methods_independent_of_send_initial(
+        send_initial_a in valid_window_size(),
+        send_initial_b in valid_window_size(),
+        recv_initial in 1..=1_000_000u32,
+        consume_amount in 0..=1_000_000usize,
+    ) {
+        let mut fc_a = FlowControl::with_separate_windows(send_initial_a, recv_initial);
+        let mut fc_b = FlowControl::with_separate_windows(send_initial_b, recv_initial);
+
+        let consume = consume_amount.min(recv_initial as usize);
+        fc_a.consume_recv(consume).unwrap();
+        fc_b.consume_recv(consume).unwrap();
+
+        prop_assert_eq!(
+            fc_a.should_send_window_update(),
+            fc_b.should_send_window_update()
+        );
+        prop_assert_eq!(
+            fc_a.window_update_increment(),
+            fc_b.window_update_increment()
+        );
+    }
+
+    /// update_initial_window_size が recv_initial を変更しないことを検証する
+    #[test]
+    fn prop_update_initial_preserves_recv_initial(
+        send_initial in valid_window_size(),
+        recv_initial in valid_window_size(),
+        new_size in 1..=131070u32,
+    ) {
+        let mut fc = FlowControl::with_separate_windows(send_initial, recv_initial);
+        let recv_initial_before = fc.recv_initial();
+        let _ = fc.update_initial_window_size(new_size);
+        prop_assert_eq!(fc.recv_initial(), recv_initial_before);
+    }
+
+    /// recv_window > recv_initial のケースで window_update_increment が 0 を返し、
+    /// should_send_window_update が false を返すことを検証する
+    #[test]
+    fn prop_recv_window_above_initial(
+        send_initial in valid_window_size(),
+        recv_initial in 1..=1_000_000u32,
+        extra in 1..=1_000_000u32,
+    ) {
+        let mut fc = FlowControl::with_separate_windows(send_initial, recv_initial);
+        // recv_window を recv_initial 超に増加させる
+        let new_recv = i64::from(recv_initial) + i64::from(extra);
+        if new_recv <= i64::from(shiguredo_http2::MAX_WINDOW_SIZE) {
+            fc.add_recv_window(extra).unwrap();
+            prop_assert!(!fc.should_send_window_update());
+            prop_assert_eq!(fc.window_update_increment(), 0);
+        }
     }
 
     /// フロー制御の不変条件テスト

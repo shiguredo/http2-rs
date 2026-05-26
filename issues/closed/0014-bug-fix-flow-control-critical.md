@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-05-14
+- Completed: 2026-05-26
 - Model: deepseek-v4-pro
 - Branch: feature/fix-flow-control-separate-windows
 
@@ -200,3 +201,18 @@ AGENTS.md のテスト役割分担に従い、PBT でカバーできるものを
 - `cargo test --workspace` が通る
 - `cargo clippy --all-targets -- -D warnings` が通る
 - `cargo fmt --check` が通る
+
+## 解決方法
+
+`FlowControl` 構造体の `initial_window_size: u32` フィールドを `send_initial: u32` と `recv_initial: u32` の 2 フィールドに分割した。
+
+### 変更ファイル
+
+- `src/flow_control.rs`: 構造体フィールド分割、`new()` / `with_separate_windows()` の初期化修正、`initial_window_size()` getter 削除と `send_initial()` / `recv_initial()` 追加、`update_initial_window_size()` を `send_initial` 基準に修正、`should_send_window_update()` / `window_update_increment()` を `recv_initial` 基準に修正
+- `pbt/tests/prop_flow_control.rs`: 既存 PBT 3 件を `send_initial()` / `recv_initial()` に更新、新規 PBT 3 件追加（recv メソッドの send_initial 非依存性、update_initial_window_size の recv_initial 不変性、recv_window > recv_initial 時の挙動）
+
+### 追加テスト
+
+- `prop_recv_methods_independent_of_send_initial`: send_initial が異なっても recv 系メソッドの結果が一致することを検証
+- `prop_update_initial_preserves_recv_initial`: update_initial_window_size 前後で recv_initial が不変であることを検証
+- `prop_recv_window_above_initial`: recv_window が recv_initial を超えた場合に window_update_increment が 0、should_send_window_update が false を返すことを検証
