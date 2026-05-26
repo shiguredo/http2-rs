@@ -108,6 +108,11 @@ pub struct Connection {
     /// RFC 9218 Section 2.1: この設定は接続中に変更できない。
     /// 最初の値を記録し、以後の変更を拒否する。
     initial_no_rfc7540_priorities: Option<bool>,
+    /// ピアが SETTINGS_ENABLE_CONNECT_PROTOCOL=1 を送信したかどうか
+    ///
+    /// RFC 8441 §3: 一度 1 を送信した後に 0 を送信してはならない (MUST NOT)。
+    /// このフラグで過去に true を受信したことを追跡し、ダウングレードを検出する。
+    peer_sent_enable_connect_protocol: bool,
     /// 保留中の動的テーブルサイズ更新
     ///
     /// RFC 7541 Section 4.2: SETTINGS_HEADER_TABLE_SIZE 変更を受信した場合、
@@ -192,6 +197,7 @@ impl Connection {
             header_block_fragment: Vec::new(),
             header_end_stream: false,
             initial_no_rfc7540_priorities: None,
+            peer_sent_enable_connect_protocol: false,
             pending_table_size_update: None,
             preface_buffer: Vec::new(),
             connection_window_size,
@@ -1072,6 +1078,19 @@ impl Connection {
                         }
                     } else {
                         self.initial_no_rfc7540_priorities = Some(*new_value);
+                    }
+                }
+
+                // RFC 8441 §3: SETTINGS_ENABLE_CONNECT_PROTOCOL を 1 に設定した後に
+                // 0 を送信してはならない (MUST NOT)。違反は PROTOCOL_ERROR。
+                if let Setting::EnableConnectProtocol(value) = setting {
+                    if *value {
+                        self.peer_sent_enable_connect_protocol = true;
+                    } else if self.peer_sent_enable_connect_protocol {
+                        return Err(Error::connection_error(
+                            ErrorCode::ProtocolError,
+                            "SETTINGS_ENABLE_CONNECT_PROTOCOL cannot be set to 0 after sending 1",
+                        ));
                     }
                 }
 

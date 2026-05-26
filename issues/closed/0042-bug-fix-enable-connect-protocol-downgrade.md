@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-05-24
+- Completed: 2026-05-26
 - Model: Opus 4.7
 - Branch: feature/fix-enable-connect-protocol-downgrade
 
@@ -87,3 +88,17 @@ value that is seen by a receiver」と規定しており、同一パラメータ
   - `true→false` が出現しないシーケンス（`false→false`、`false→true`、`true→true`）ではエラーにならない
   - 複数 SETTINGS フレームにまたがるケースでも正しく検出される
   - 他の SETTINGS 種別（HeaderTableSize、MaxFrameSize 等）が混在するシーケンスでもプロパティが成立する
+
+## 解決方法
+
+`Connection` 構造体に `peer_sent_enable_connect_protocol: bool` フィールドを追加し、`handle_settings` のループ内で `EnableConnectProtocol(true)` 受信時にフラグを `true` に設定、`EnableConnectProtocol(false)` 受信時にフラグが `true` であれば PROTOCOL_ERROR を返すようにした。
+
+### 変更ファイル
+
+- `src/connection/mod.rs`: `Connection` にフィールド追加、`handle_settings` にダウングレードチェック追加
+- `pbt/tests/prop_connection/settings.rs`: PBT 5 テスト追加
+  - `prop_enable_connect_protocol_sequence`: 任意シーケンスで true→false のみエラー（クライアントロール）
+  - `prop_enable_connect_protocol_sequence_server`: 同上（サーバーロール）
+  - `prop_enable_connect_protocol_tracking_across_frames`: 異種 SETTINGS 混在でもフラグ維持
+  - `prop_enable_connect_protocol_intra_frame_duplicate`: 同一フレーム内重複の出現順処理
+- `CHANGES.md`: `[FIX]` エントリ追記
