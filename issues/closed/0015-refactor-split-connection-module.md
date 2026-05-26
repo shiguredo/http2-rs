@@ -2,6 +2,7 @@
 
 - Priority: Low
 - Created: 2026-05-14
+- Completed: 2026-05-26
 - Model: deepseek-v4-pro
 - Branch: feature/refactor-split-connection-module
 
@@ -139,3 +140,31 @@ issue 0036 の原則（公開 API 経由でテスト可能なものは `tests/` 
 - `cargo clippy --workspace --all-targets -- -D warnings` が通る
 - `cargo fmt --check` が通る
 - fuzz ターゲット (`fuzz_connection`, `fuzz_connection_client`, `fuzz_connection_interactive`, `fuzz_connection_preface`) がビルドできる (`cargo check --manifest-path fuzz/Cargo.toml`)
+
+## 解決方法
+
+### src/connection/ の分割
+
+`src/connection/mod.rs` (2,272 行) から以下の 3 サブモジュールを抽出した:
+
+- `src/connection/data.rs`: DATA 送受信メソッド (send_data, queue_data, flush_stream_data, flush_all_stream_data, handle_data)
+- `src/connection/headers.rs`: HEADERS 送受信メソッド (send_response, send_trailers, handle_headers, process_headers, handle_continuation, send_header_block, extract_content_length, calculate_header_list_size)
+- `src/connection/settings.rs`: SETTINGS 送受信メソッド (initiate, send_settings, send_initial_connection_window_update, handle_settings, update_stream_windows)
+
+可視性設計:
+- 公開 API (`pub fn`): send_response, send_data, send_trailers, initiate, send_settings
+- mod.rs から呼ばれるメソッド: `pub(super) fn` (handle_data, handle_headers, handle_continuation, handle_settings, flush_stream_data, flush_all_stream_data)
+- サブモジュール内のみで使用: `fn` (queue_data, process_headers, send_header_block, send_initial_connection_window_update, update_stream_windows)
+
+### PBT の分割
+
+`pbt/tests/prop_connection.rs` (1,043 行) をディレクトリモジュールに分割した:
+
+- `pbt/tests/prop_connection/main.rs`: 接続レベル PBT + 共通ヘルパー + mod 宣言
+- `pbt/tests/prop_connection/headers.rs`: HEADERS 関連 PBT
+- `pbt/tests/prop_connection/settings.rs`: SETTINGS 関連 PBT
+- `pbt/tests/prop_connection/data.rs`: DATA フレーム関連 PBT
+
+### 備考
+
+`concatenate_cookies` テストブロック (`#[cfg(test)] mod tests`) は `pub(crate)` の可視性制約により `src/connection/mod.rs` に残した（統合テストからは `pub(crate)` アイテムにアクセスできないため）。
