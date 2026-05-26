@@ -141,24 +141,7 @@ impl Connection {
     /// 新しい接続を生成する
     #[must_use]
     pub fn new(role: Role, limits: Limits) -> Self {
-        let mut local_settings = Settings::new();
-        local_settings.header_table_size = limits.header_table_size();
-        if let Some(max) = limits.max_concurrent_streams() {
-            local_settings.max_concurrent_streams = Some(max);
-        }
-        local_settings.initial_window_size = limits.initial_window_size().get();
-        local_settings.max_frame_size = limits.max_frame_size().get();
-        local_settings.max_header_list_size = limits.max_header_list_size();
-        local_settings.enable_connect_protocol = limits.enable_connect_protocol();
-        local_settings.no_rfc7540_priorities = limits.no_rfc7540_priorities();
-        local_settings.wt_initial_max_data = limits.wt_initial_max_data();
-        local_settings.wt_initial_max_stream_data_uni = limits.wt_initial_max_stream_data_uni();
-        local_settings.wt_initial_max_stream_data_bidi_local =
-            limits.wt_initial_max_stream_data_bidi_local();
-        local_settings.wt_initial_max_streams_uni = limits.wt_initial_max_streams_uni();
-        local_settings.wt_initial_max_streams_bidi = limits.wt_initial_max_streams_bidi();
-        local_settings.wt_initial_max_stream_data_bidi_remote =
-            limits.wt_initial_max_stream_data_bidi_remote();
+        let local_settings = Settings::from_limits(&limits);
 
         let next_stream_id = match role {
             Role::Client => 1,
@@ -469,7 +452,7 @@ impl Connection {
         }
 
         // RFC 9113 Section 5.1.2: peer が設定した同時ストリーム上限を超えてはならない
-        if let Some(max) = self.remote_settings.max_concurrent_streams {
+        if let Some(max) = self.remote_settings.max_concurrent_streams() {
             let current_open = self
                 .streams
                 .values()
@@ -491,14 +474,14 @@ impl Connection {
         let has_protocol = headers
             .iter()
             .any(|h| h.name() == crate::validation::pseudo_headers::PROTOCOL);
-        if has_protocol && !self.remote_settings.enable_connect_protocol {
+        if has_protocol && !self.remote_settings.enable_connect_protocol() {
             return Err(Error::protocol_error(
                 "cannot send :protocol without peer's SETTINGS_ENABLE_CONNECT_PROTOCOL=1",
             ));
         }
 
         // RFC 9113 Section 10.5.1: 送信ヘッダーリストサイズの上限チェック
-        if let Some(max_size) = self.remote_settings.max_header_list_size {
+        if let Some(max_size) = self.remote_settings.max_header_list_size() {
             let header_list_size = Self::calculate_header_list_size(&headers);
             if header_list_size > max_size as usize {
                 // RFC 9113 §10.5.1: 送信前ローカル検査
@@ -523,8 +506,8 @@ impl Connection {
         // 受信ウィンドウはローカルの initial_window_size で初期化する
         let mut stream = Stream::new(
             stream_id,
-            self.remote_settings.initial_window_size,
-            self.local_settings.initial_window_size,
+            self.remote_settings.initial_window_size().get(),
+            self.local_settings.initial_window_size().get(),
         );
         stream.state_machine_mut().send_headers(end_stream)?;
         stream.set_headers(headers.clone());
@@ -655,7 +638,7 @@ impl Connection {
                 // ストリームレベルのウィンドウ
                 let stream_window = stream.flow_control().send_available();
                 // 最大フレームサイズ
-                let max_frame = self.remote_settings.max_frame_size as usize;
+                let max_frame = self.remote_settings.max_frame_size().get() as usize;
 
                 // 送信可能なサイズ（ウィンドウとフレームサイズの最小値）
                 let available = conn_window.min(stream_window).min(max_frame);
@@ -1053,10 +1036,10 @@ impl Connection {
             // SETTINGS を受信
             // RFC 9113 Section 6.5.2: SETTINGS_INITIAL_WINDOW_SIZE 変更時に
             // 既存ストリームのウィンドウサイズを調整する
-            let old_initial_window_size = self.remote_settings.initial_window_size;
+            let old_initial_window_size = self.remote_settings.initial_window_size().get();
 
             // HEADER_TABLE_SIZE の変更を追跡
-            let old_header_table_size = self.remote_settings.header_table_size;
+            let old_header_table_size = self.remote_settings.header_table_size();
 
             for setting in frame.settings() {
                 // RFC 9113 Section 8.4: サーバーはクライアントに ENABLE_PUSH=1 を送信できない
@@ -1109,7 +1092,7 @@ impl Connection {
             // RFC 7541 Section 4.2: HEADER_TABLE_SIZE が変更された場合、
             // 次のヘッダーブロック送信時に Dynamic Table Size Update をエンコードする。
             // ヘッダーブロック間に複数回変化した場合、最小値と最終値の両方を送出する必要がある。
-            let new_header_table_size = self.remote_settings.header_table_size;
+            let new_header_table_size = self.remote_settings.header_table_size();
             if new_header_table_size != old_header_table_size {
                 let new_min = match self.pending_table_size_update {
                     Some((existing_min, _)) => existing_min.min(new_header_table_size),
@@ -1119,14 +1102,14 @@ impl Connection {
             }
 
             // SETTINGS_INITIAL_WINDOW_SIZE が変更された場合、既存ストリームを更新
-            let new_initial_window_size = self.remote_settings.initial_window_size;
+            let new_initial_window_size = self.remote_settings.initial_window_size().get();
             if new_initial_window_size != old_initial_window_size {
                 self.update_stream_windows(new_initial_window_size)?;
             }
 
             // HPACK エンコーダーのテーブルサイズを更新
             self.hpack_encoder
-                .set_max_table_size(self.remote_settings.header_table_size as usize);
+                .set_max_table_size(self.remote_settings.header_table_size() as usize);
 
             // RFC 9113 Section 4.2: 受信フレームサイズの上限はローカル設定で決まる。
             // remote_settings.max_frame_size は送信フレームの上限として使用する。
@@ -1327,7 +1310,7 @@ impl Connection {
             return Ok(());
         }
 
-        if let Some(max) = self.local_settings.max_concurrent_streams {
+        if let Some(max) = self.local_settings.max_concurrent_streams() {
             let current_open = self
                 .streams
                 .values()

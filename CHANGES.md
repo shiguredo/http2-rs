@@ -8,6 +8,10 @@
 
 ## develop
 
+- [CHANGE] `Settings` の全フィールドを private 化し、getter メソッド経由でのみ読み取れるようにする。`Connection::new()` の初期化を `Settings::from_limits(&limits)` に置き換える (issue 0043)
+  - @voluntas
+- [CHANGE] `Settings` の `initial_window_size` を `u32` から `WindowSize` 型に、`max_frame_size` を `u32` から `MaxFrameSize` 型に変更し、`to_settings_list` / `apply` での `from_static` / `.get()` 変換を不要にする (issue 0043)
+  - @voluntas
 - [CHANGE] 旧コンストラクタ `HeaderField::new` (`fn(impl Into<String>, impl Into<String>) -> Self`) / `HeaderField::from_str` / `HeaderField::new_sensitive` / `HeaderField::sensitive`(コンストラクタ版) を廃止し、構築時検査つきの `HeaderField::new` (`Result<Self, HeaderFieldError>` 返却) と `HeaderField::new_with_sensitive` に置き換える (issue 0024)。アクセサ `HeaderField::sensitive() -> bool` は引き続き利用可能
   - @voluntas
 - [CHANGE] `HeaderField` の全フィールドを private 化し、アクセサ `name() -> &[u8]` / `value() -> &[u8]` / `sensitive() -> bool` 経由でのみ読み取れるようにする (issue 0024)
