@@ -1191,13 +1191,16 @@ impl Connection {
                     return Ok(());
                 }
                 // RFC 9113 §6.9.1: ストリームレベルのウィンドウオーバーフローは
-                // RST_STREAM(FLOW_CONTROL_ERROR) で処理する（接続エラーではない）
-                if let Err(e) = stream.flow_control_mut().recv_window_update(increment_u32) {
-                    if e.is_connection_error() {
-                        self.reset_stream(frame.stream_id, ErrorCode::FlowControlError)?;
-                        return Ok(());
-                    }
-                    return Err(e);
+                // RST_STREAM(FLOW_CONTROL_ERROR) で処理する（接続エラーではない）。
+                // WindowIncrement 型が非ゼロを保証するため、ここで発生するエラーは
+                // オーバーフローのみ。
+                if stream
+                    .flow_control_mut()
+                    .recv_window_update(increment_u32)
+                    .is_err()
+                {
+                    self.reset_stream(frame.stream_id, ErrorCode::FlowControlError)?;
+                    return Ok(());
                 }
                 // ストリームレベルのウィンドウが増えたので、そのストリームのキューを処理
                 self.flush_stream_data(sid)?;
@@ -1322,6 +1325,9 @@ impl Connection {
     }
 
     /// フレームを出力バッファに書き込む
+    ///
+    /// encode が成功した場合のみ encoder 内部バッファにデータが蓄積される。
+    /// 失敗時は encoder の状態が変わらないことを前提とし、output_buffer も不変に保つ。
     fn send_frame(&mut self, frame: &Frame) -> Result<()> {
         self.frame_encoder.encode(frame)?;
         self.output_buffer.extend(self.frame_encoder.buffer());

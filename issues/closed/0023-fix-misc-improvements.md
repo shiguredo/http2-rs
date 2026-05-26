@@ -3,6 +3,7 @@
 - Priority: Medium
 - Created: 2026-05-14
 - Model: deepseek-v4-pro
+- Completed: 2026-05-26
 - Branch: feature/fix-misc-improvements
 
 ## 目的
@@ -80,3 +81,14 @@
 - to_settings_list の Vec::with_capacity (Vec::new() に変更済み)
 - Limits::new() (ビルダーパターンに置換済み)
 - fuzz_flow_control.rs の欠落 (issue 0046 で追加済み)
+
+## 解決方法
+
+6 項目のうち 4 項目を修正し、2 項目は対応不要と判断した:
+
+1. **#1 到達不能分岐**: `handle_window_update` の `is_connection_error()` チェックと `return Err(e)` 分岐を削除。WindowIncrement 型が非ゼロを保証するためオーバーフローのみ発生する旨のコメントを追加
+2. **#2 ポート番号検証**: `is_valid_port` 関数を追加し、ポート番号の 0-65535 範囲チェックを実装。PBT strategy も `1u16..=65535u16` に修正
+3. **#3 コメント追加**: `recv_headers` の no-op 分岐に「end_stream なしの HEADERS は情報ヘッダー等であり状態遷移しない」旨のコメントを追加
+4. **#4 SettingsFrame**: 既に `Default` が `Self::new()` に委譲済みのため対応不要
+5. **#5 send_frame コメント**: encode 成功時のみバッファ追加される暗黙的契約をコメントで明記
+6. **#6 テスト移動**: `concatenate_cookies` は `pub(crate)` であり integration test からアクセスできないため、現在の `#[cfg(test)] mod tests` 配置が正しい。移動不要

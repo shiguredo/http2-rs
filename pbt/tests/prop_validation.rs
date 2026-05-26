@@ -164,7 +164,8 @@ proptest! {
     /// 有効な CONNECT リクエストは検証を通過する
     #[test]
     fn prop_valid_connect_passes(
-        authority in "[a-z][a-z0-9]{0,10}\\.[a-z]{2,3}:[0-9]{1,5}",
+        authority in ("[a-z][a-z0-9]{0,10}\\.[a-z]{2,3}", 1u16..=65535u16)
+            .prop_map(|(host, port)| format!("{host}:{port}")),
         regular_headers in prop::collection::vec(
             (valid_header_name(), valid_header_value()),
             0..=4

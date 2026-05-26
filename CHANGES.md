@@ -104,6 +104,8 @@
   - @voluntas
 - [FIX] `FlowControl::with_separate_windows` が受信側初期ウィンドウサイズを誤って参照するバグを修正する (issue 0014)
   - @voluntas
+- [FIX] `is_valid_connect_authority` でポート番号の 0-65535 範囲チェックを追加する (issue 0023)
+  - @voluntas
 
 ### misc
 
@@ -150,4 +152,6 @@
 - [FIX] WebTransport 関連コードに draft-ietf-webtrans-http2-14 由来の暫定性注記を追加する (issue 0021)
   - @voluntas
 - [FIX] `tests/rfc7541.rs` を `tests/test_hpack/rfc7541.rs` に移動し AGENTS.md 命名規則に準拠させる (issue 0022)
+  - @voluntas
+- [FIX] `handle_window_update` の到達不能分岐を削除し、`recv_headers` と `send_frame` にコメントを追加する (issue 0023)
   - @voluntas

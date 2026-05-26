@@ -180,6 +180,8 @@ impl StateMachine {
                         StreamState::HalfClosedRemote
                     }
                 } else {
+                    // end_stream なしの HEADERS は情報ヘッダー (1xx) 等であり、
+                    // Open / HalfClosedLocal の状態遷移を引き起こさない
                     self.state
                 }
             }
