@@ -141,5 +141,7 @@
   - @voluntas
 - [FIX] `src/validation.rs` の RFC 9113 Section 8.3.1 参照コメントで CONNECT が RFC の直接の適用対象であるかのような記載を修正する (issue 0017)
   - @voluntas
+- [FIX] PBT ファイル内の単体テストを AGENTS.md 規約に従い `tests/` に移動する (issue 0018)
+  - @voluntas
 - [FIX] `examples/http2_client` と `examples/http2_server` で DATA 受信時に接続・ストリームレベルの WINDOW_UPDATE を送信するように修正する (issue 0041)
   - @voluntas
