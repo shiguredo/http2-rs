@@ -40,11 +40,6 @@ impl FrameDecoder {
         }
     }
 
-    /// 最大フレームサイズを更新する
-    pub fn set_max_frame_size(&mut self, max_frame_size: u32) {
-        self.max_frame_size = max_frame_size;
-    }
-
     /// データを入力バッファに追加する
     pub fn feed(&mut self, data: &[u8]) {
         self.buf.extend_from_slice(data);

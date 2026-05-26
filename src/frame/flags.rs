@@ -63,12 +63,6 @@ impl FrameFlags {
         Self(self.0 | flag)
     }
 
-    /// フラグをクリアする
-    #[must_use]
-    pub const fn clear(self, flag: u8) -> Self {
-        Self(self.0 & !flag)
-    }
-
     /// END_STREAM フラグが設定されているか確認する
     #[must_use]
     pub const fn is_end_stream(self) -> bool {

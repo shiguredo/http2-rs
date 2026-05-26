@@ -1,11 +1,10 @@
 //! HTTP/2 フレームエンコーダー
 
-use crate::decode_error::DecodeError;
 use crate::error::{Error, Result};
 use crate::frame::{
-    ContinuationFrame, DataFrame, FRAME_HEADER_SIZE, Frame, FrameFlags, FrameHeader, FrameType,
-    GoawayFrame, HeadersFrame, PingFrame, PriorityFrame, PriorityUpdateFrame, RstStreamFrame,
-    SettingsFrame, WindowUpdateFrame,
+    ContinuationFrame, DataFrame, Frame, FrameFlags, FrameHeader, FrameType, GoawayFrame,
+    HeadersFrame, PingFrame, PriorityFrame, PriorityUpdateFrame, RstStreamFrame, SettingsFrame,
+    WindowUpdateFrame,
 };
 
 /// フレームエンコーダー
@@ -316,52 +315,4 @@ impl Default for FrameEncoder {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// フレームヘッダーをバッファにエンコードする
-///
-/// # Errors
-///
-/// バッファが 9 バイト未満の場合は `Err` を返す。
-pub fn encode_header(buf: &mut [u8], header: &FrameHeader) -> Result<()> {
-    DecodeError::check_buffer_size(FRAME_HEADER_SIZE, buf)?;
-
-    // Length (24 bits)
-    buf[0] = ((header.length >> 16) & 0xff) as u8;
-    buf[1] = ((header.length >> 8) & 0xff) as u8;
-    buf[2] = (header.length & 0xff) as u8;
-    // Type (8 bits)
-    buf[3] = header.frame_type;
-    // Flags (8 bits)
-    buf[4] = header.flags.bits();
-    // Stream ID (31 bits, R bit is reserved)
-    buf[5] = ((header.stream_id >> 24) & 0x7f) as u8;
-    buf[6] = ((header.stream_id >> 16) & 0xff) as u8;
-    buf[7] = ((header.stream_id >> 8) & 0xff) as u8;
-    buf[8] = (header.stream_id & 0xff) as u8;
-
-    Ok(())
-}
-
-/// フレームをバッファにエンコードする
-///
-/// 成功時はエンコードしたバイト数を返す。
-///
-/// # Errors
-///
-/// バッファが不足している場合は `Err` を返す。
-pub fn encode_frame(buf: &mut [u8], frame: &Frame) -> Result<usize> {
-    let mut encoder = FrameEncoder::new();
-    encoder.encode(frame)?;
-    let encoded = encoder.buffer();
-    DecodeError::check_buffer_size(encoded.len(), buf)?;
-    buf[..encoded.len()].copy_from_slice(encoded);
-    Ok(encoded.len())
-}
-
-/// フレームをエンコードして Vec<u8> として返す
-pub fn encode_frame_to_vec(frame: &Frame) -> Result<Vec<u8>> {
-    let mut encoder = FrameEncoder::new();
-    encoder.encode(frame)?;
-    Ok(encoder.take())
 }
