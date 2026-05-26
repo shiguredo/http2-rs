@@ -149,3 +149,5 @@
   - @voluntas
 - [FIX] WebTransport 関連コードに draft-ietf-webtrans-http2-14 由来の暫定性注記を追加する (issue 0021)
   - @voluntas
+- [FIX] `tests/rfc7541.rs` を `tests/test_hpack/rfc7541.rs` に移動し AGENTS.md 命名規則に準拠させる (issue 0022)
+  - @voluntas
