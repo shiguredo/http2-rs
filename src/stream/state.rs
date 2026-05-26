@@ -76,12 +76,6 @@ impl StreamState {
         matches!(self, Self::Closed)
     }
 
-    /// ストリームがアイドルかどうかを返す
-    #[must_use]
-    pub const fn is_idle(&self) -> bool {
-        matches!(self, Self::Idle)
-    }
-
     /// ローカル側から送信可能かどうかを返す
     #[must_use]
     pub const fn can_send(&self) -> bool {

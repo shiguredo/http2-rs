@@ -58,6 +58,8 @@
   - @voluntas
 - [CHANGE] `FlowControl::initial_window_size()` を削除し `send_initial()` / `recv_initial()` に分割する (issue 0014)
   - @voluntas
+- [CHANGE] 未使用の公開 API (`encode_header`, `encode_frame`, `encode_frame_to_vec`, `FrameDecoder::set_max_frame_size`, `FrameFlags::clear`, `StreamState::is_idle`) を削除する (issue 0019)
+  - @voluntas
 - [ADD] `HeaderField::from_static` を追加し、リテラル定数の RFC 違反 (大文字 field-name、CR/LF 含む値、未知の疑似ヘッダー、不正な `:status` 値など) を `const fn` 経由でコンパイル時に検出可能にする (issue 0024)
   - @voluntas
 - [ADD] 構築時検査用の公開エラー型 (`HeaderFieldError`, `FrameError`, `StreamIdError`, `SettingError`, `LimitsError`, `SendError`, `DecodeError`) と補助型 (`Parity`, `WindowSize`, `MaxFrameSize`, `WindowIncrement`, `Weight`, `LastStreamId`, `ClientStreamId`, `ServerStreamId`, `NonZeroStreamId`) を追加する (issues 0024-0032)

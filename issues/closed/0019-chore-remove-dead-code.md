@@ -3,7 +3,8 @@
 - Priority: Low
 - Created: 2026-05-14
 - Model: deepseek-v4-pro
-- Branch: feature/fix-remove-dead-code
+- Completed: 2026-05-26
+- Branch: feature/change-remove-dead-code
 
 ## 目的
 
@@ -63,3 +64,14 @@
 - `Stream::is_open`, `Stream::is_closed`, `Stream::headers` (削除済み)
 - `StateMachine::sent_end_stream`, `StateMachine::received_end_stream` (削除済み)
 - `Event::stream_id`, `Event::is_connection_level` (削除済み)
+
+## 解決方法
+
+以下の 6 件の未使用公開 API を削除した:
+
+1. `src/frame/encoder.rs`: スタンドアロン関数 `encode_header`, `encode_frame`, `encode_frame_to_vec` を削除。不要になった `DecodeError` と `FRAME_HEADER_SIZE` の import も除去
+2. `src/frame/decoder.rs`: `FrameDecoder::set_max_frame_size` メソッドを削除
+3. `src/frame/flags.rs`: `FrameFlags::clear` メソッドを削除
+4. `src/stream/state.rs`: `StreamState::is_idle` メソッドを削除
+
+全テスト・clippy・fmt・fuzz ビルドが通ることを確認済み。
