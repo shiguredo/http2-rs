@@ -139,5 +139,7 @@
   - @voluntas
 - [UPDATE] PBT ファイルの命名と配置を CLAUDE.md 規約 (`pbt/tests/prop_<module>.rs` および dir module 用 `prop_<module>/main.rs` 形式) に整合させる (issue 0039)
   - @voluntas
+- [FIX] `src/validation.rs` の RFC 9113 Section 8.3.1 参照コメントで CONNECT が RFC の直接の適用対象であるかのような記載を修正する (issue 0017)
+  - @voluntas
 - [FIX] `examples/http2_client` と `examples/http2_server` で DATA 受信時に接続・ストリームレベルの WINDOW_UPDATE を送信するように修正する (issue 0041)
   - @voluntas

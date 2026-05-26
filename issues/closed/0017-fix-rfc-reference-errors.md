@@ -2,6 +2,7 @@
 
 - Priority: Low
 - Created: 2026-05-14
+- Completed: 2026-05-26
 - Model: deepseek-v4-pro
 - Branch: feature/fix-rfc-reference-comment
 
@@ -49,6 +50,21 @@ CONNECT リクエストは `:scheme` を持たない (RFC 9113 Section 8.3.1, L2
 - `cargo test --workspace` が通る
 - `cargo clippy --workspace --all-targets -- -D warnings` が通る
 - `cargo fmt --check` が通る
+
+## 解決方法
+
+`src/validation.rs:303` のコメントを以下のように修正した:
+
+```rust
+// RFC 9113 Section 8.3.1: :authority の userinfo 禁止は http/https に限定
+// CONNECT は :scheme を持たないため本規定の適用対象外だが、防御的に同じく拒否する
+// 注: 将来の RFC 改訂で変更される可能性がある
+```
+
+- 「http/https/CONNECT に限定」から CONNECT を除外し、RFC 原文 (L2690-2691) と正確に一致させた
+- CONNECT が本規定の適用対象外である理由（`:scheme` を持たないため）を明記した
+- AGENTS.md 規約に従い、将来の RFC 改訂で変更される可能性がある旨を追記した
+- コードの動作（`is_http_scheme || is_connect` の条件）は変更していない
 
 ## 備考: 既に解決済みの項目
 

@@ -300,7 +300,9 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
         )));
     }
 
-    // RFC 9113 Section 8.3.1: :authority の userinfo 禁止は http/https/CONNECT に限定
+    // RFC 9113 Section 8.3.1: :authority の userinfo 禁止は http/https に限定
+    // CONNECT は :scheme を持たないため本規定の適用対象外だが、防御的に同じく拒否する
+    // 注: 将来の RFC 改訂で変更される可能性がある
     if let Some(authority) = authority_value
         && authority.contains(&b'@')
     {
