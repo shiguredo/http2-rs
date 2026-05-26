@@ -2,6 +2,7 @@
 
 - Priority: Low
 - Created: 2026-05-14
+- Completed: 2026-05-26
 - Model: deepseek-v4-pro
 - Branch: feature/fix-move-unittest-from-pbt
 
@@ -104,3 +105,35 @@ use shiguredo_http2::settings::{Setting, MAX_MAX_FRAME_SIZE};
 - `cargo test --workspace` が通る
 - `cargo clippy --workspace --all-targets -- -D warnings` が通る
 - `cargo fmt --check` が通る
+
+## 解決方法
+
+以下のとおり PBT ファイル内の 9 件の単体テストを `tests/` に移動した:
+
+### 移動先
+
+- `tests/test_connection.rs` (新設): 5 テスト
+  - `test_initiate_does_not_emit_window_update_when_default`
+  - `test_send_settings_does_not_emit_window_update_when_default`
+  - `test_continuation_without_headers_is_error`
+  - `test_rst_stream_on_idle_is_error`
+  - `test_client_rejects_enable_push_from_server`
+- `tests/test_event.rs` (新設): 2 テスト
+  - `test_priority_update_is_stream_level`
+  - `test_all_connection_level_events`
+- `tests/test_error.rs` (既存に追記): 2 テスト + `KNOWN_ERROR_CODES` 定数
+  - `test_known_error_codes_mapping`
+  - `test_gap_values_are_unknown`
+
+### 削除元
+
+- `pbt/tests/prop_connection/main.rs`: `#[cfg(test)] mod tests` ブロック削除
+- `pbt/tests/prop_connection/headers.rs`: `test_continuation_without_headers_is_error` 削除
+- `pbt/tests/prop_connection/settings.rs`: 2 テスト関数削除
+- `pbt/tests/prop_error.rs`: `#[cfg(test)] mod tests` ブロック + `KNOWN_ERROR_CODES` 定数削除
+- `pbt/tests/prop_event.rs`: `#[cfg(test)] mod tests` ブロック削除
+
+### 追加対応
+
+- テストメッセージを AGENTS.md 規約に従い日本語化した
+- ヘルパー関数 `encode_frame` / `create_continuation` は PBT に残しつつ `tests/test_connection.rs` に複製した

@@ -180,28 +180,3 @@ proptest! {
         }
     }
 }
-
-#[test]
-fn test_continuation_without_headers_is_error() {
-    let mut server = Connection::server(Limits::default());
-    server.mark_preface_received();
-    server.initiate().unwrap();
-
-    // SETTINGS を受信
-    let settings_frame = Frame::Settings(SettingsFrame::new());
-    let settings_bytes = encode_frame(&settings_frame);
-    server.feed(&settings_bytes).unwrap();
-    server.process().unwrap();
-
-    // HEADERS なしで CONTINUATION を送信
-    let continuation = create_continuation(NonZeroStreamId::from_static(1), vec![0x82], true);
-    let continuation_bytes = encode_frame(&Frame::Continuation(continuation));
-    server.feed(&continuation_bytes).unwrap();
-
-    let result = server.process();
-    assert!(result.is_err());
-    if let Err(e) = result {
-        assert!(e.is_connection_error());
-        assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
-    }
-}

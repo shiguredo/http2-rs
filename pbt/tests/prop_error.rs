@@ -5,27 +5,6 @@
 use proptest::prelude::*;
 use shiguredo_http2::{Error, ErrorCode, ErrorKind};
 
-/// RFC 9113 Section 7 で定義された既知のエラーコード値
-const KNOWN_ERROR_CODES: &[(u32, ErrorCode)] = &[
-    (0x00, ErrorCode::NoError),
-    (0x01, ErrorCode::ProtocolError),
-    (0x02, ErrorCode::InternalError),
-    (0x03, ErrorCode::FlowControlError),
-    (0x04, ErrorCode::SettingsTimeout),
-    (0x05, ErrorCode::StreamClosed),
-    (0x06, ErrorCode::FrameSizeError),
-    (0x07, ErrorCode::RefusedStream),
-    (0x08, ErrorCode::Cancel),
-    (0x09, ErrorCode::CompressionError),
-    (0x0a, ErrorCode::ConnectError),
-    (0x0b, ErrorCode::EnhanceYourCalm),
-    (0x0c, ErrorCode::InadequateSecurity),
-    (0x0d, ErrorCode::Http11Required),
-    (0x100, ErrorCode::WebtransportError),
-    (0x101, ErrorCode::WebtransportStreamStateError),
-    (0x102, ErrorCode::WebtransportFlowControlError),
-];
-
 /// 既知のエラーコード値を生成する Strategy
 fn known_error_code_value() -> impl Strategy<Value = u32> {
     prop_oneof![
@@ -227,52 +206,5 @@ proptest! {
         let display = format!("{}", error);
 
         prop_assert!(display.contains(&reason));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// RFC 9113 Section 7 で定義された既知のエラーコードのマッピングをテスト
-    #[test]
-    fn test_known_error_codes_mapping() {
-        for (value, expected_code) in KNOWN_ERROR_CODES {
-            let code = ErrorCode::from_u32(*value);
-            assert_eq!(
-                code, *expected_code,
-                "value 0x{:x} should map to {:?}",
-                value, expected_code
-            );
-            assert_eq!(
-                code.as_u32(),
-                *value,
-                "{:?} should convert back to 0x{:x}",
-                code,
-                value
-            );
-        }
-    }
-
-    /// 0x0e から 0xff の範囲は未知のエラーコード
-    #[test]
-    fn test_gap_values_are_unknown() {
-        for value in 0x0e..0x100 {
-            let code = ErrorCode::from_u32(value);
-            assert!(
-                matches!(code, ErrorCode::Unknown(v) if v == value),
-                "value 0x{:x} should be Unknown",
-                value
-            );
-        }
-        // 0x103 以降も未知
-        for value in 0x103..0x110 {
-            let code = ErrorCode::from_u32(value);
-            assert!(
-                matches!(code, ErrorCode::Unknown(v) if v == value),
-                "value 0x{:x} should be Unknown",
-                value
-            );
-        }
     }
 }
