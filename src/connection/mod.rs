@@ -243,6 +243,12 @@ impl Connection {
         matches!(self.state, ConnectionState::Closed)
     }
 
+    /// テスト用: next_stream_id を指定値に設定する
+    #[cfg(test)]
+    pub(crate) fn set_next_stream_id(&mut self, id: u32) {
+        self.next_stream_id = id;
+    }
+
     /// 接続プリフェイスを送信する（クライアント）
     ///
     /// RFC 9113 Section 8.4: サーバーは ENABLE_PUSH を 0 以外に設定できない。
@@ -493,6 +499,15 @@ impl Connection {
                     ),
                 ));
             }
+        }
+
+        // RFC 9113 §5.1.1: ストリーム ID は unsigned 31-bit integer (最大 2^31 - 1)。
+        // 枯渇した場合は新しい接続の確立が必要。
+        if self.next_stream_id > crate::stream_id::STREAM_ID_MAX {
+            return Err(Error::stream_error(
+                ErrorCode::RefusedStream,
+                "stream ID space exhausted, establish a new connection",
+            ));
         }
 
         let stream_id_u32 = self.next_stream_id;
@@ -1575,6 +1590,100 @@ mod tests {
                         cookie_sensitives[..cookie_count].iter().any(|s| *s);
                     prop_assert_eq!(output.last().unwrap().sensitive(), expected_sensitive);
                 }
+            }
+        }
+    }
+
+    mod stream_id_exhaustion {
+        use super::*;
+        use crate::frame::{Frame, FrameEncoder, SettingsFrame};
+        use crate::stream_id::STREAM_ID_MAX;
+
+        fn encode_frame(frame: &Frame) -> Vec<u8> {
+            let mut encoder = FrameEncoder::new();
+            encoder.encode(frame).expect("encode must succeed");
+            encoder.buffer().to_vec()
+        }
+
+        fn setup_active_client() -> Connection {
+            let mut client = Connection::client(Limits::default());
+            client.initiate().expect("initiate must succeed");
+
+            let settings_frame = Frame::Settings(SettingsFrame::new());
+            let settings_bytes = encode_frame(&settings_frame);
+            client.feed(&settings_bytes).expect("feed must succeed");
+            client.process().expect("process must succeed");
+            while client.poll_event().is_some() {}
+
+            client
+        }
+
+        fn test_request_headers() -> Vec<HeaderField> {
+            vec![
+                HeaderField::new(":method", "GET").expect("valid header"),
+                HeaderField::new(":path", "/").expect("valid header"),
+                HeaderField::new(":scheme", "https").expect("valid header"),
+                HeaderField::new(":authority", "example.com").expect("valid header"),
+            ]
+        }
+
+        /// next_stream_id == STREAM_ID_MAX で最後のストリームが正常に開始される
+        #[test]
+        fn last_valid_id() {
+            let mut client = setup_active_client();
+            client.set_next_stream_id(STREAM_ID_MAX);
+
+            let result = client.start_stream(test_request_headers(), true);
+            assert!(
+                result.is_ok(),
+                "STREAM_ID_MAX でのストリーム開始は成功しなければならない"
+            );
+        }
+
+        /// next_stream_id == STREAM_ID_MAX + 2 で RefusedStream エラーが返される
+        #[test]
+        fn past_max() {
+            let mut client = setup_active_client();
+            client.set_next_stream_id(STREAM_ID_MAX + 2);
+
+            let result = client.start_stream(test_request_headers(), true);
+            assert!(
+                result.is_err(),
+                "枯渇後のストリーム開始はエラーでなければならない"
+            );
+            if let Err(e) = result {
+                assert!(e.is_stream_error());
+                assert_eq!(e.error_code(), Some(ErrorCode::RefusedStream));
+            }
+        }
+
+        /// 境界: STREAM_ID_MAX - 2 → 成功、STREAM_ID_MAX → 成功、
+        /// STREAM_ID_MAX + 2 → 失敗の 3 段階
+        #[test]
+        fn boundary_sequence() {
+            let mut client = setup_active_client();
+            client.set_next_stream_id(STREAM_ID_MAX - 2);
+
+            let result1 = client.start_stream(test_request_headers(), true);
+            assert!(
+                result1.is_ok(),
+                "STREAM_ID_MAX - 2 でのストリーム開始は成功しなければならない"
+            );
+
+            let result2 = client.start_stream(test_request_headers(), true);
+            assert!(
+                result2.is_ok(),
+                "STREAM_ID_MAX でのストリーム開始は成功しなければならない"
+            );
+
+            let result3 = client.start_stream(test_request_headers(), true);
+            assert!(
+                result3.is_err(),
+                "STREAM_ID_MAX + 2 でのストリーム開始はエラーでなければならない"
+            );
+            if let Err(e) = result3 {
+                assert!(e.is_stream_error());
+                assert_eq!(e.error_code(), Some(ErrorCode::RefusedStream));
             }
         }
     }

@@ -90,6 +90,8 @@
   - @voluntas
 - [ADD] `tokio-http2::Client` と `tokio-http2::ServerConnection` に `send_window_update` メソッドを追加する (issue 0041)
   - @voluntas
+- [FIX] `start_stream` でストリーム ID が 31-bit 上限 (2^31 - 1) を超えた場合に `RefusedStream` エラーを返すように修正する (RFC 9113 §5.1.1) (issue 0044)
+  - @voluntas
 - [FIX] ピアが `SETTINGS_ENABLE_CONNECT_PROTOCOL` を 1 に設定した後に 0 を送信した場合に PROTOCOL_ERROR を返すように修正する (RFC 8441 §3) (issue 0042)
   - @voluntas
 - [FIX] `Connection::reset_stream` に `StreamId::Connection` (stream_id = 0) を渡した場合にパニックする問題を、接続エラー (PROTOCOL_ERROR) を返すように修正する (issue 0047)

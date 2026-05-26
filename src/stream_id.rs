@@ -59,7 +59,7 @@ impl std::fmt::Display for StreamIdError {
 impl std::error::Error for StreamIdError {}
 
 /// 31-bit 上限 (2^31 - 1)
-const STREAM_ID_MAX: u32 = (1u32 << 31) - 1;
+pub(crate) const STREAM_ID_MAX: u32 = (1u32 << 31) - 1;
 
 /// クライアント開始ストリーム ID (奇数、1..=2^31-1)
 ///

@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-05-24
+- Completed: 2026-05-26
 - Model: Opus 4.7
 - Branch: feature/fix-stream-id-exhaustion
 
@@ -106,3 +107,13 @@ GOAWAY の送信判断は呼び出し元（`tokio-http2` のドライバー層�
   - 境界: `STREAM_ID_MAX - 2`（2147483645）→ 成功、その後 `STREAM_ID_MAX` → 成功、
     その後 `STREAM_ID_MAX + 2` → 失敗の 3 段階
 - CHANGES.md に `[FIX]` エントリ追記
+
+## 解決方法
+
+`start_stream` 内のストリーム ID 使用前に `next_stream_id > STREAM_ID_MAX` のチェックを追加し、枯渇時は `RefusedStream` エラーを返すようにした。`STREAM_ID_MAX` を `pub(crate)` に変更して `connection/mod.rs` からアクセス可能にした。
+
+### 変更ファイル
+
+- `src/stream_id.rs`: `STREAM_ID_MAX` を `pub(crate)` に変更
+- `src/connection/mod.rs`: `start_stream` に枯渇チェック追加、テスト用 `set_next_stream_id` 追加、境界値単体テスト 3 件追加
+- `CHANGES.md`: `[FIX]` エントリ追記
