@@ -540,7 +540,8 @@ fn is_valid_connect_authority(authority: &[u8]) -> bool {
         if !rest.starts_with(b":") || rest.len() < 2 {
             return false;
         }
-        return rest[1..].iter().all(|b| b.is_ascii_digit());
+        let port = &rest[1..];
+        return is_valid_port(port);
     }
 
     // IPv4 / ホスト名の場合: 最後の ':' 以降が port
@@ -551,7 +552,22 @@ fn is_valid_connect_authority(authority: &[u8]) -> bool {
         return false;
     }
     let port = &authority[colon_pos + 1..];
-    !port.is_empty() && port.iter().all(|b| b.is_ascii_digit())
+    is_valid_port(port)
+}
+
+/// ポート番号が有効かどうかを検証する (RFC 3986 port = *DIGIT, 0-65535)
+fn is_valid_port(port: &[u8]) -> bool {
+    if port.is_empty() || !port.iter().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    // 先頭ゼロ付きでも数値として 0-65535 の範囲内であることを検証する
+    let Ok(s) = std::str::from_utf8(port) else {
+        return false;
+    };
+    let Ok(n) = s.parse::<u32>() else {
+        return false;
+    };
+    n <= 65535
 }
 
 /// Malformed メッセージエラーを生成する
