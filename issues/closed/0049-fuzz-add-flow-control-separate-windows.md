@@ -2,6 +2,7 @@
 
 - Priority: Low
 - Created: 2026-05-26
+- Completed: 2026-05-29
 - Polished: 2026-05-29
 - Model: deepseek-v4-pro
 - Branch: feature/add-fuzz-flow-control-separate-windows
@@ -105,3 +106,17 @@ fuzz_target!(|input: FuzzInput| {
 - `cargo test --workspace` が通る
 
 `cargo fuzz run fuzz_flow_control` による実コーパス実行は、実行時間が不定のため完了条件に含めない（fuzz target のコンパイル可能性検証に留める前例: issue 0037）。
+
+## 解決方法
+
+`fuzz/fuzz_targets/fuzz_flow_control.rs` を `FlowControl::with_separate_windows` で構築するよう変更し、送信側と受信側の初期ウィンドウサイズを独立に設定できるようにした。
+
+### 変更ファイル
+
+- `fuzz/fuzz_targets/fuzz_flow_control.rs`:
+  - `FuzzInput` の `initial_window_size` を `send_initial_window_size` / `recv_initial_window_size` の 2 フィールドに分割
+  - `FlowControl::new` を `FlowControl::with_separate_windows` に置き換え
+  - `FlowAction` に `ShouldSendWindowUpdate` と `WindowUpdateIncrement` の 2 バリアントを追加し、`should_send_window_update()` / `window_update_increment()` を fuzz 対象に含める
+  - fuzz の役割（パニック安全性のみ。値の検証は PBT が担保）を説明するコメントに更新
+
+純粋な getter と `send_available()` は設計方針どおり fuzz 対象に含めていない。`src/` および `CHANGES.md` は変更していない。`cargo check` / `cargo clippy -D warnings` (fuzz クレート個別指定) / `cargo test --workspace` が通ることを確認した。
