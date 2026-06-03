@@ -13,16 +13,32 @@ pub struct Decoder {
     dynamic_table: DynamicTable,
     /// 最大許容テーブルサイズ
     max_table_size: usize,
+    /// デコード後ヘッダーリストサイズの上限 (SETTINGS_MAX_HEADER_LIST_SIZE; RFC 9113 Section 6.5.2)
+    ///
+    /// `None` は無制限。`decode` 中に走行合計がこの値を超えた時点で中断する。
+    max_header_list_size: Option<usize>,
 }
 
 impl Decoder {
     /// 新しい `Decoder` を生成する
+    ///
+    /// ヘッダーリストサイズの上限は無制限。上限を設定する場合は
+    /// [`Decoder::set_max_header_list_size`] を使う。
     #[must_use]
     pub fn new(max_table_size: usize) -> Self {
         Self {
             dynamic_table: DynamicTable::new(max_table_size),
             max_table_size,
+            max_header_list_size: None,
         }
+    }
+
+    /// デコード後ヘッダーリストサイズの上限を設定する (RFC 9113 Section 6.5.2)
+    ///
+    /// `None` を指定すると無制限になり、ヘッダー展開のメモリ上限が外れる
+    /// (インデックス参照爆弾に対して無防備になる)。
+    pub fn set_max_header_list_size(&mut self, max_size: Option<usize>) {
+        self.max_header_list_size = max_size;
     }
 
     /// 動的テーブルの最大サイズを設定する
@@ -47,24 +63,25 @@ impl Decoder {
         let mut offset = 0;
         // RFC 7541 Section 4.2: Dynamic Table Size Update はヘッダーブロックの先頭でのみ許可
         let mut seen_header = false;
+        // RFC 9113 Section 6.5.2: デコード後ヘッダーリストサイズの走行合計
+        let mut header_list_size = 0usize;
 
         while offset < data.len() {
             let first_byte = data[offset];
 
-            if first_byte & 0x80 != 0 {
+            // 各分岐でデコードしたヘッダー (Dynamic Table Size Update は None) と消費バイト数
+            let (header, consumed) = if first_byte & 0x80 != 0 {
                 // Indexed Header Field (Section 6.1)
                 let (header, consumed) = self.decode_indexed(&data[offset..])?;
-                headers.push(header);
-                offset += consumed;
                 seen_header = true;
+                (Some(header), consumed)
             } else if first_byte & 0x40 != 0 {
                 // Literal Header Field with Incremental Indexing (Section 6.2.1)
                 let (header, consumed) = self.decode_literal_indexed(&data[offset..])?;
                 self.dynamic_table
                     .insert_validated(header.name().to_vec(), header.value().to_vec());
-                headers.push(header);
-                offset += consumed;
                 seen_header = true;
+                (Some(header), consumed)
             } else if first_byte & 0x20 != 0 {
                 // Dynamic Table Size Update (Section 6.3)
                 // RFC 7541 Section 4.2: ヘッダーが出現した後は許可しない
@@ -74,19 +91,35 @@ impl Decoder {
                     ));
                 }
                 let consumed = self.decode_size_update(&data[offset..])?;
-                offset += consumed;
+                (None, consumed)
             } else if first_byte & 0x10 != 0 {
                 // Literal Header Field Never Indexed (Section 6.2.3)
                 let (header, consumed) = self.decode_literal_never_indexed(&data[offset..])?;
-                headers.push(header);
-                offset += consumed;
                 seen_header = true;
+                (Some(header), consumed)
             } else {
                 // Literal Header Field without Indexing (Section 6.2.2)
                 let (header, consumed) = self.decode_literal(&data[offset..])?;
-                headers.push(header);
-                offset += consumed;
                 seen_header = true;
+                (Some(header), consumed)
+            };
+
+            offset += consumed;
+
+            if let Some(header) = header {
+                // RFC 9113 Section 6.5.2: ヘッダーリストサイズは各フィールドの name + value +
+                // 32 オクテットの総和で計算する。この上限 (SETTINGS_MAX_HEADER_LIST_SIZE) を逐次
+                // 検査し、インデックス参照爆弾 (1 バイト参照を大量に並べて巨大なヘッダーリストを
+                // 展開させる攻撃) に対し全体を展開しきる前に中断する (DoS 背景は同 Section 10.5.1)。
+                header_list_size = header_list_size.saturating_add(header.size());
+                if let Some(max) = self.max_header_list_size
+                    && header_list_size > max
+                {
+                    return Err(Error::hpack_error(
+                        "decoded header list size exceeds SETTINGS_MAX_HEADER_LIST_SIZE",
+                    ));
+                }
+                headers.push(header);
             }
         }
 

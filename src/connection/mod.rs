@@ -156,6 +156,13 @@ impl Connection {
         let flow_control = FlowControl::new(DEFAULT_INITIAL_WINDOW_SIZE);
         let connection_window_size = limits.connection_window_size().get();
 
+        // RFC 9113 Section 6.5.2: 受信ヘッダーのデコード後サイズ上限 (SETTINGS_MAX_HEADER_LIST_SIZE)
+        // はローカル設定で決まる。インデックス参照爆弾に対し、デコーダが展開中に逐次中断できるよう
+        // 上限を渡す。local_settings は構築後に変更されないため、デコーダ側の上限と常に一致する。
+        let mut hpack_decoder = HpackDecoder::new(limits.header_table_size() as usize);
+        hpack_decoder
+            .set_max_header_list_size(local_settings.max_header_list_size().map(|v| v as usize));
+
         Self {
             role,
             state: ConnectionState::WaitingPreface,
@@ -168,7 +175,7 @@ impl Connection {
             last_recv_stream_id: 0,
             last_successful_stream_id: 0,
             hpack_encoder: HpackEncoder::new(limits.header_table_size() as usize),
-            hpack_decoder: HpackDecoder::new(limits.header_table_size() as usize),
+            hpack_decoder,
             frame_decoder: FrameDecoder::new(limits.max_frame_size().get()),
             frame_encoder: FrameEncoder::new(),
             output_buffer: VecDeque::new(),

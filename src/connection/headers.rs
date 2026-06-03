@@ -299,6 +299,7 @@ impl Connection {
             self.header_continuation_stream = Some(sid);
             self.header_block_fragment = frame.header_block_fragment;
             self.header_end_stream = frame.end_stream;
+            self.check_header_block_fragment_size()?;
         }
 
         Ok(())
@@ -313,19 +314,9 @@ impl Connection {
     ) -> Result<()> {
         let sid = stream_id.as_u32();
 
-        // RFC 9113 Section 10.5.1: ヘッダーリストサイズの上限チェック
-        if let Some(max_size) = self.local_settings.max_header_list_size() {
-            let header_list_size = Self::calculate_header_list_size(&headers);
-            if header_list_size > max_size as usize {
-                return Err(Error::stream_error(
-                    ErrorCode::ProtocolError,
-                    format!(
-                        "header list size {} exceeds SETTINGS_MAX_HEADER_LIST_SIZE {}",
-                        header_list_size, max_size
-                    ),
-                ));
-            }
-        }
+        // RFC 9113 Section 6.5.2: 受信ヘッダーリストサイズの上限 (SETTINGS_MAX_HEADER_LIST_SIZE)
+        // は HPACK デコーダがデコード中に逐次検査し、超過時に COMPRESSION_ERROR の接続エラーに
+        // する (src/hpack/decoder.rs)。ここではデコード済みヘッダーが上限以下であることが保証される。
 
         // RFC 9113 Section 8.1: トレーラーは疑似ヘッダーを含まない
         // 疑似ヘッダーの有無でトレーラーかどうかを判定
@@ -603,6 +594,7 @@ impl Connection {
 
         self.header_block_fragment
             .extend_from_slice(&frame.header_block_fragment);
+        self.check_header_block_fragment_size()?;
 
         if frame.end_headers {
             self.header_continuation_stream = None;
@@ -709,5 +701,30 @@ impl Connection {
     /// 各ヘッダーフィールドのサイズは名前と値のオクテット長に 32 を加えたもの。
     pub(super) fn calculate_header_list_size(headers: &[HeaderField]) -> usize {
         headers.iter().map(HeaderField::size).sum()
+    }
+
+    /// 累積中のヘッダーブロックフラグメント (HEADERS + CONTINUATION) のサイズ上限を検査する
+    ///
+    /// RFC 9113 Section 6.10: CONTINUATION フレームの個数には上限がなく、`max_frame_size` は
+    /// フレーム単体のサイズしか制限しない。そのため累積フラグメントを無制限に成長させて
+    /// メモリを枯渇させる攻撃 (CVE-2016-8740 系) が成立する。
+    ///
+    /// 圧縮後のフラグメントサイズは概ねデコード後のヘッダーリストサイズと同オーダーに収まる
+    /// (Dynamic Table Size Update のみ例外的に出力に寄与しない) ため、上限には
+    /// `SETTINGS_MAX_HEADER_LIST_SIZE` (ローカル設定) を保守的に流用する。`None` (無制限) の場合は
+    /// 検査しない。
+    ///
+    /// RFC 9113 Section 4.3: field block を展開せずに打ち切るため、接続エラーは
+    /// COMPRESSION_ERROR にする (MUST)。
+    fn check_header_block_fragment_size(&self) -> Result<()> {
+        if let Some(max_size) = self.local_settings.max_header_list_size()
+            && self.header_block_fragment.len() > max_size as usize
+        {
+            return Err(Error::connection_error(
+                ErrorCode::CompressionError,
+                "accumulated header block fragment exceeds SETTINGS_MAX_HEADER_LIST_SIZE",
+            ));
+        }
+        Ok(())
     }
 }
