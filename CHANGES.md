@@ -64,6 +64,8 @@
   - @voluntas
 - [CHANGE] 未使用の公開 API (`encode_header`, `encode_frame`, `encode_frame_to_vec`, `FrameDecoder::set_max_frame_size`, `FrameFlags::clear`, `StreamState::is_idle`) を削除する (issue 0019)
   - @voluntas
+- [CHANGE] 受信ヘッダーリストサイズが `SETTINGS_MAX_HEADER_LIST_SIZE` を超えた場合のエラーを、STREAM レベル PROTOCOL_ERROR から接続レベル COMPRESSION_ERROR に変更する (展開を打ち切るため RFC 9113 §4.3 の MUST に従う) (issue 0050)
+  - @voluntas
 - [ADD] `HeaderField::from_static` を追加し、リテラル定数の RFC 違反 (大文字 field-name、CR/LF 含む値、未知の疑似ヘッダー、不正な `:status` 値など) を `const fn` 経由でコンパイル時に検出可能にする (issue 0024)
   - @voluntas
 - [ADD] 構築時検査用の公開エラー型 (`HeaderFieldError`, `FrameError`, `StreamIdError`, `SettingError`, `LimitsError`, `SendError`, `DecodeError`) と補助型 (`Parity`, `WindowSize`, `MaxFrameSize`, `WindowIncrement`, `Weight`, `LastStreamId`, `ClientStreamId`, `ServerStreamId`, `NonZeroStreamId`) を追加する (issues 0024-0032)
@@ -89,6 +91,12 @@
 - [ADD] `LimitsBuilder::build_static` (`const fn`) を追加し、リテラル定数で構築する `Limits` の制約違反をコンパイル時に検出可能にする (issue 0028)
   - @voluntas
 - [ADD] `tokio-http2::Client` と `tokio-http2::ServerConnection` に `send_window_update` メソッドを追加する (issue 0041)
+  - @voluntas
+- [ADD] `HpackDecoder::set_max_header_list_size` を追加し、デコード後ヘッダーリストサイズの上限を設定できるようにする (issue 0050)
+  - @voluntas
+- [FIX] HPACK デコーダがインデックス参照爆弾でメモリを無制限に確保する問題を修正する。受信ヘッダーのデコード後サイズ (`SETTINGS_MAX_HEADER_LIST_SIZE`) を展開途中で逐次検査し、超過時に展開を打ち切って COMPRESSION_ERROR の接続エラーにする (従来はデコード完了後に検査していたため、巨大なヘッダーリストを展開しきってからしか拒否できなかった) (RFC 9113 §6.5.2 / §4.3、DoS 背景は §10.5.1) (issue 0050)
+  - @voluntas
+- [FIX] CONTINUATION フレームの累積ヘッダーブロックフラグメントが無制限に成長する問題を修正する。累積サイズが `SETTINGS_MAX_HEADER_LIST_SIZE` を超えると COMPRESSION_ERROR の接続エラーにする (RFC 9113 §6.10 / §4.3) (issue 0050)
   - @voluntas
 - [FIX] `start_stream` でストリーム ID が 31-bit 上限 (2^31 - 1) を超えた場合に `RefusedStream` エラーを返すように修正する (RFC 9113 §5.1.1) (issue 0044)
   - @voluntas
@@ -138,6 +146,8 @@
 - [ADD] CI に `cargo check --manifest-path fuzz/Cargo.toml` ステップを追加し、ルートクレートの API 変更による fuzz_targets のコンパイル不能 regression を検出する (issue 0037)
   - @voluntas
 - [ADD] `concatenate_cookies` の空 cookie 除外・sensitive 伝播と、`EmptyPath` の scheme 依存判定 (http/https の eq_ignore_ascii_case) を検証する PBT と単体テストを追加する (issue 0038)
+  - @voluntas
+- [ADD] HPACK インデックス参照爆弾に対するデコード後サイズ上限を検証する PBT (`pbt/tests/prop_hpack/decoder.rs`) と接続経由の単体テストを追加し、`fuzz_hpack_decoder` に上限超過の assert を追加する (issue 0050)
   - @voluntas
 - [UPDATE] cargo feature `__test_helpers` を廃止し、PBT / fuzz は公開 API と HPACK decoder 経路のみで wire 模擬する (issue 0045)
   - @voluntas

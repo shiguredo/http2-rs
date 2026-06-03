@@ -2,6 +2,7 @@
 //!
 //! `src/hpack/` ディレクトリモジュール配下のサブモジュールに対応する PBT を集約する。
 
+mod decoder;
 mod dynamic_table;
 
 use std::collections::hash_map::DefaultHasher;

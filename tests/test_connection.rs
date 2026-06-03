@@ -4,7 +4,10 @@
 
 use shiguredo_http2::{
     Connection, ErrorCode, Limits, NonZeroStreamId,
-    frame::{ContinuationFrame, Frame, FrameDecoder, FrameEncoder, RstStreamFrame, SettingsFrame},
+    frame::{
+        ContinuationFrame, Frame, FrameDecoder, FrameEncoder, HeadersFrame, RstStreamFrame,
+        SettingsFrame,
+    },
     settings::{MAX_MAX_FRAME_SIZE, Setting},
 };
 
@@ -124,6 +127,115 @@ fn test_rst_stream_on_idle_is_error() {
     if let Err(e) = result {
         assert!(e.is_connection_error());
         assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
+    }
+}
+
+/// CONTINUATION フレームの累積が SETTINGS_MAX_HEADER_LIST_SIZE を超えると接続エラーになる
+///
+/// RFC 9113 Section 6.10: CONTINUATION の個数に上限がないため、累積フラグメントを無制限に
+/// 成長させてメモリを枯渇させる攻撃 (CVE-2016-8740 系) を防ぐ。
+/// RFC 9113 Section 4.3: field block を展開せず打ち切るため COMPRESSION_ERROR にする (MUST)。
+#[test]
+fn test_continuation_accumulation_exceeds_max_header_list_size() {
+    let limits = Limits::builder()
+        .max_header_list_size(Some(100))
+        .build()
+        .unwrap();
+    let mut server = Connection::server(limits);
+    server.mark_preface_received();
+    server.initiate().unwrap();
+
+    let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
+    server.feed(&settings_bytes).unwrap();
+    server.process().unwrap();
+
+    let stream_id = NonZeroStreamId::from_static(1);
+
+    // END_HEADERS なしの HEADERS (60 バイト): 上限 100 以内
+    let headers = HeadersFrame::new(stream_id, vec![0u8; 60]).with_end_headers(false);
+    let headers_bytes = encode_frame(&Frame::Headers(headers));
+    server.feed(&headers_bytes).unwrap();
+    server.process().unwrap();
+
+    // CONTINUATION (60 バイト): 累積 120 バイトで上限 100 を超過
+    let continuation = create_continuation(stream_id, vec![0u8; 60], false);
+    let continuation_bytes = encode_frame(&Frame::Continuation(continuation));
+    server.feed(&continuation_bytes).unwrap();
+
+    let result = server.process();
+    assert!(result.is_err());
+    if let Err(e) = result {
+        assert!(e.is_connection_error());
+        assert_eq!(e.error_code(), Some(ErrorCode::CompressionError));
+    }
+}
+
+/// 累積フラグメントが SETTINGS_MAX_HEADER_LIST_SIZE ちょうどのときは接続エラーにならない
+///
+/// `check_header_block_fragment_size` は `len() > max` の厳密不等号であり、上限ちょうどは
+/// 許容される。off-by-one (>= への退行) を検知する境界テスト。
+#[test]
+fn test_continuation_accumulation_at_limit_is_ok() {
+    let limits = Limits::builder()
+        .max_header_list_size(Some(100))
+        .build()
+        .unwrap();
+    let mut server = Connection::server(limits);
+    server.mark_preface_received();
+    server.initiate().unwrap();
+
+    let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
+    server.feed(&settings_bytes).unwrap();
+    server.process().unwrap();
+
+    let stream_id = NonZeroStreamId::from_static(1);
+
+    // END_HEADERS なしの HEADERS (50 バイト)
+    let headers = HeadersFrame::new(stream_id, vec![0u8; 50]).with_end_headers(false);
+    let headers_bytes = encode_frame(&Frame::Headers(headers));
+    server.feed(&headers_bytes).unwrap();
+    server.process().unwrap();
+
+    // CONTINUATION (50 バイト): 累積 100 バイトで上限 100 ちょうど (エラーにならない)
+    let continuation = create_continuation(stream_id, vec![0u8; 50], false);
+    let continuation_bytes = encode_frame(&Frame::Continuation(continuation));
+    server.feed(&continuation_bytes).unwrap();
+
+    // ヘッダーブロックは未完 (END_HEADERS なし) なのでデコードはまだ走らず、エラーにならない
+    server.process().unwrap();
+}
+
+/// 単一 HEADERS 内のインデックス参照爆弾が COMPRESSION_ERROR 接続エラーになる
+///
+/// RFC 9113 Section 6.5.2 / Section 4.3: デコード後ヘッダーリストサイズが
+/// SETTINGS_MAX_HEADER_LIST_SIZE を超えると、HPACK デコーダが展開途中で打ち切り、
+/// field block を展開しきらないため COMPRESSION_ERROR の接続エラーになる。
+#[test]
+fn test_headers_indexed_reference_bomb_is_compression_error() {
+    let limits = Limits::builder()
+        .max_header_list_size(Some(100))
+        .build()
+        .unwrap();
+    let mut server = Connection::server(limits);
+    server.mark_preface_received();
+    server.initiate().unwrap();
+
+    let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
+    server.feed(&settings_bytes).unwrap();
+    server.process().unwrap();
+
+    // 静的テーブル index 2 (":method: GET", size 42) への 1 バイト参照を 3 個。
+    // 累積デコード後サイズ 126 が上限 100 を超える。
+    let stream_id = NonZeroStreamId::from_static(1);
+    let headers = HeadersFrame::new(stream_id, vec![0x82, 0x82, 0x82]);
+    let headers_bytes = encode_frame(&Frame::Headers(headers));
+    server.feed(&headers_bytes).unwrap();
+
+    let result = server.process();
+    assert!(result.is_err());
+    if let Err(e) = result {
+        assert!(e.is_connection_error());
+        assert_eq!(e.error_code(), Some(ErrorCode::CompressionError));
     }
 }
 
