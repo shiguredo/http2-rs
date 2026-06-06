@@ -130,6 +130,8 @@
   - @voluntas
 - [FIX] `RecvBuffer::push` の加算を `saturating_add` に変更し、release ビルドでの整数オーバーフローによるバッファ制限バイパスを防止する (issue 0056)
   - @voluntas
+- [FIX] `handle_data` でストリームレベルのフロー制御違反 (`consume_recv`) が接続エラーとして伝播していた問題を、`handle_window_update` と同様に RST_STREAM に変換する (issue 0051 レビュー指摘)
+  - @voluntas
 
 ### misc
 
