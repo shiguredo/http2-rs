@@ -129,7 +129,9 @@
   - @voluntas
 - [UPDATE] 依存ライブラリを更新する (nghttp2 1.69.0, rustls-platform-verifier 0.7, shiguredo_toml 2026.2)
   - @voluntas
-- [UPDATE] `src/connection/mod.rs` を headers / settings / data サブモジュールに分割し、`pbt/tests/prop_connection.rs` をディレクトリモジュール形式に分割する (issue 0015)
+- [UPDATE] `src/connection/mod.rs` のヘッダー関連処理を headers サブモジュールに分割する (issue 0015)
+  - @voluntas
+- [UPDATE] `pbt/tests/prop_connection.rs` をディレクトリモジュール形式に分割する (issue 0015)
   - @voluntas
 - [ADD] 構築時検査の `*::from_static` API に `compile_fail` doctest を追加し、不正リテラル検出のリグレッションを CI で防止する (issue 0032)
   - @voluntas
