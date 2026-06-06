@@ -2,7 +2,9 @@
 
 - Priority: High
 - Created: 2026-06-06
+- Completed: 2026-06-06
 - Model: DeepSeek V4 Pro
+- Branch: feature/fix-remove-connection-dead-code
 - Polished: 2026-06-06
 
 ## 目的
@@ -100,3 +102,10 @@ issue 0015 (`issues/closed/0015-refactor-split-connection-module.md`) は「分�
 - `cargo check --workspace --all-targets` が通過する
 - `cargo test --workspace` が通過する
 - `cargo clippy --workspace --all-targets -- -D warnings` が通過する
+
+## 解決方法
+
+1. `src/connection/data.rs` (289 行) と `src/connection/settings.rs` (203 行) を削除した。両ファイルは `mod.rs:21` に `mod` 宣言がなく、コンパイル対象外のデッドコードだった。
+2. `CHANGES.md:132-133` の該当エントリを、実態に合わせて「headers サブモジュールに分割」と「PBT をディレクトリモジュール形式に分割」の 2 エントリに分割・修正した。
+3. `src/connection/mod.rs:931` の RFC 参照コメントを `Section 6.1` から `Section 6.9.1` に修正した（レビュー指摘対応）。
+4. `cargo check --workspace --all-targets`、`cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings` がすべて通過することを確認した。

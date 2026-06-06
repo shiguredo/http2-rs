@@ -928,7 +928,7 @@ impl Connection {
         // RFC 9113 Section 5.1: アイドルストリームへのフレームは接続エラー
         self.check_not_idle_stream(sid, "DATA")?;
 
-        // RFC 9113 Section 6.1: フロー制御はペイロード全体に適用
+        // RFC 9113 Section 6.9.1: フロー制御はペイロード全体に適用
         // (Pad Length フィールド + データ + パディング)
         let flow_control_size = if let Some(pad_length) = frame.pad_length {
             1 + frame.data.len() + pad_length as usize
