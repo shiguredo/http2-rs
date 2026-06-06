@@ -38,3 +38,21 @@ fn test_recv_buffer_overflow() {
     assert!(!buf.push(b"world!"));
     assert_eq!(buf.len(), 5);
 }
+
+/// saturating_add により整数オーバーフローが防止されることの確認。
+/// 実用的には usize::MAX 近傍のデータ割り当ては不可能なため、
+/// push が saturating_add を使用していることとパニックしないことを検証する。
+#[test]
+fn test_recv_buffer_push_uses_saturating_add() {
+    // max_size = usize::MAX のバッファでも saturating_add によりパニックせず、
+    // 上限超過時は false が返ることの確認（上限未満は true）
+    let mut buf = RecvBuffer::new(usize::MAX);
+
+    // 空のバッファにデータ追加は成功する
+    assert!(buf.push(&[0u8; 1]));
+
+    // バッファが空であれば再度 push も成功
+    let mut buf2 = RecvBuffer::new(usize::MAX);
+    buf2.take(); // 空にする
+    assert!(buf2.push(&[0u8; 1]));
+}

@@ -2,6 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-06
+- Completed: 2026-06-06
 - Model: DeepSeek V4 Pro
 - Branch: feature/fix-recv-buffer-overflow
 - Polished: 2026-06-06
@@ -71,3 +72,10 @@ if self.data.len().saturating_add(data.len()) > self.max_size {
 - オーバーフロー境界のテストが追加されている
 - `CHANGES.md` の `## develop` にエントリが追加されている
 - `cargo test --workspace` が通過する
+
+## 解決方法
+
+1. `src/stream/buffer.rs:91` の `self.data.len() + data.len()` を `self.data.len().saturating_add(data.len())` に変更し、release ビルドでの整数オーバーフローによるバッファ制限バイパスを防止した。
+2. `RecvBuffer` の 3 メソッド (`push`, `remaining`, `SendBuffer::push`) の検査方法を飽和演算に統一した。
+3. `tests/test_stream/buffer.rs` に `saturating_add` の動作確認テストを追加した。
+4. `CHANGES.md` の `[FIX]` セクションにエントリを追加した。

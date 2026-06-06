@@ -88,7 +88,7 @@ impl RecvBuffer {
     ///
     /// バッファが満杯の場合は `false` を返す。
     pub fn push(&mut self, data: &[u8]) -> bool {
-        if self.data.len() + data.len() > self.max_size {
+        if self.data.len().saturating_add(data.len()) > self.max_size {
             return false;
         }
         self.data.extend(data);
