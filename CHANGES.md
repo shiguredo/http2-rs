@@ -175,3 +175,5 @@
   - @voluntas
 - [FIX] `handle_window_update` の到達不能分岐を削除し、`recv_headers` と `send_frame` にコメントを追加する (issue 0023)
   - @voluntas
+- [FIX] Huffman デコーダの `Vec::with_capacity(data.len() * 2)` を `Vec::new()` に変更し、 AGENTS.md 規約違反と DoS リスクを修正する (issue 0052)
+  - @voluntas

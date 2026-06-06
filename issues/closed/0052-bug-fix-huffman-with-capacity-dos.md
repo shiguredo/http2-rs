@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-06-06
+- Completed: 2026-06-06
 - Model: DeepSeek V4 Pro
 - Branch: feature/fix-huffman-with-capacity
 - Polished: 2026-06-06
@@ -49,3 +50,9 @@ AGENTS.md:122-125:
 - `CHANGES.md` の `## develop` に `[FIX]` エントリが追加されている
 - `cargo test --workspace` が通過する
 - `cargo clippy --workspace --all-targets -- -D warnings` が通過する
+
+## 解決方法
+
+1. `src/hpack/huffman.rs:1120` の `Vec::with_capacity(data.len() * 2)` を `Vec::new()` に変更した。
+2. `CHANGES.md` の `### misc` セクションに `[FIX]` エントリを追加した。
+3. `cargo test --workspace` と `cargo clippy --workspace --all-targets -- -D warnings` の通過を確認した。

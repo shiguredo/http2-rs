@@ -1117,7 +1117,7 @@ pub fn encode_to_vec(data: &[u8]) -> Vec<u8> {
 ///
 /// 不正な Huffman データの場合は `Err` を返す。
 pub fn decode(data: &[u8]) -> Result<Vec<u8>> {
-    let mut result = Vec::with_capacity(data.len() * 2);
+    let mut result = Vec::new();
     let mut acc: u64 = 0;
     let mut acc_bits: u32 = 0;
 
