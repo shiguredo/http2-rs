@@ -270,7 +270,15 @@ impl Error {
 
 impl std::fmt::Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self}")
+        write!(f, "{}", self.kind)?;
+        if !self.reason.is_empty() {
+            write!(f, ": {}", self.reason)?;
+        }
+        write!(f, " (at {}:{})", self.location.file(), self.location.line())?;
+        if f.alternate() && self.backtrace.status() == BacktraceStatus::Captured {
+            write!(f, "\n\nBacktrace:\n{}", self.backtrace)?;
+        }
+        Ok(())
     }
 }
 
@@ -279,10 +287,6 @@ impl std::fmt::Display for Error {
         write!(f, "{}", self.kind)?;
         if !self.reason.is_empty() {
             write!(f, ": {}", self.reason)?;
-        }
-        write!(f, " (at {}:{})", self.location.file(), self.location.line())?;
-        if self.backtrace.status() == BacktraceStatus::Captured {
-            write!(f, "\n\nBacktrace:\n{}", self.backtrace)?;
         }
         Ok(())
     }

@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-06-06
+- Completed: 2026-06-06
 - Model: DeepSeek V4 Pro
 - Branch: feature/fix-error-display-info-leak
 - Polished: 2026-06-06
@@ -81,3 +82,10 @@ impl std::fmt::Debug for Error {
 - 情報漏洩を検証する単体テストが追加されている
 - `CHANGES.md` の `## develop` にエントリが追加されている
 - `cargo test --workspace` が通過する
+
+## 解決方法
+
+1. `Display` 実装から `location` (file/line) と `backtrace` の出力を削除し、`kind` と `reason` のみを出力するように変更した。
+2. `Debug` 実装を `Display` 委譲から独立した実装に変更し、通常フォーマットでは `kind`、`reason`、`location` を、alternate format (`{:#?}`) でのみ `backtrace` を出力するようにした。
+3. `tests/test_error.rs` に Display/Debug の情報漏洩防止を検証する単体テストを 4 件追加した。
+4. `CHANGES.md` の `[FIX]` セクションにエントリを追加した。
