@@ -2,6 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-06
+- Completed: 2026-06-06
 - Model: DeepSeek V4 Pro
 - Branch: feature/fix-closed-streams-memory-limit
 - Polished: 2026-06-06
@@ -69,3 +70,12 @@
 - クローズ直後のストリームへの遅延 HEADERS フレームが正しく処理される
 - 上限を超えたエントリ削除のテストが追加されている
 - 長時間稼働接続でも `closed_streams` のメモリ消費が上限に留まる
+
+## 解決方法
+
+1. `closed_streams` の型を `HashSet<u32>` から上限付きの `BoundedClosedStreams` (内部は `BTreeSet<u32>`、上限 10000 件) に変更した。
+2. 上限を超えて挿入された場合、最も小さいストリーム ID（最も古いエントリ）を自動削除するロジックを実装した。
+3. `closed_streams` の 6 箇所の insert 呼び出しと 2 箇所の contains 呼び出しはすべて新しい型と互換性があり、変更不要だった。
+4. `src/connection/mod.rs` に `BoundedClosedStreams` の単体テスト（上限到達時のエントリ削除、連続削除）を追加した。
+5. `CHANGES.md` のメイン `[FIX]` セクションにエントリを追加した。
+6. `cargo test --workspace` と `cargo clippy --workspace --all-targets -- -D warnings` の通過を確認した。
