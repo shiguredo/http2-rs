@@ -103,3 +103,63 @@ fn test_gap_values_are_unknown() {
         );
     }
 }
+
+/// Display 出力にファイルパスが含まれないこと
+#[test]
+fn test_display_excludes_location() {
+    let err = Error::connection_error(ErrorCode::ProtocolError, "test reason");
+    let display = format!("{err}");
+    assert!(
+        !display.contains('/'),
+        "Display にファイルパスが含まれていないこと: {display}"
+    );
+    assert!(
+        !display.contains('\\'),
+        "Display にファイルパスが含まれていないこと: {display}"
+    );
+    assert!(
+        display.contains("PROTOCOL_ERROR"),
+        "Display にエラー種別が含まれていること"
+    );
+    assert!(
+        display.contains("test reason"),
+        "Display に理由が含まれていること"
+    );
+}
+
+/// Display 出力に "Backtrace" が含まれないこと
+#[test]
+fn test_display_excludes_backtrace() {
+    let err = Error::connection_error(ErrorCode::InternalError, "");
+    let display = format!("{err}");
+    assert!(
+        !display.contains("Backtrace"),
+        "Display に Backtrace が含まれていないこと"
+    );
+}
+
+/// Debug 通常フォーマットにバックトレースが含まれないこと
+#[test]
+fn test_debug_excludes_backtrace() {
+    let err = Error::connection_error(ErrorCode::FlowControlError, "debug test");
+    let debug = format!("{err:?}");
+    assert!(
+        !debug.contains("Backtrace"),
+        "Debug に Backtrace が含まれていないこと"
+    );
+    assert!(
+        debug.contains('/'),
+        "Debug にファイルパスが含まれていること"
+    );
+}
+
+/// Debug alternate format にバックトレース出力用の分岐が存在すること
+#[test]
+fn test_debug_alternate_accepts_backtrace() {
+    let err = Error::connection_error(ErrorCode::Cancel, "alt debug");
+    let alt_debug = format!("{err:#?}");
+    assert!(
+        alt_debug.contains('/'),
+        "Debug alternate にファイルパスが含まれていること"
+    );
+}

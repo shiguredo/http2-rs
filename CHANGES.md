@@ -126,6 +126,8 @@
   - @voluntas
 - [FIX] `check_header_block_fragment_size` に `max_header_list_size=None` 時の絶対的な上限 (64MB) を追加し、CONTINUATION フラッド DoS を防止する (issue 0054)
   - @voluntas
+- [FIX] `Error::Display` からファイルパス・行番号・バックトレースの出力を削除し、情報漏洩を防止する。`Debug` は location のみ出力し、alternate format でのみバックトレースを出力する (issue 0055)
+  - @voluntas
 
 ### misc
 
