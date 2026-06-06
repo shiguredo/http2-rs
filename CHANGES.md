@@ -128,6 +128,8 @@
   - @voluntas
 - [FIX] `Error::Display` からファイルパス・行番号・バックトレースの出力を削除し、情報漏洩を防止する。`Debug` は location のみ出力し、alternate format でのみバックトレースを出力する (issue 0055)
   - @voluntas
+- [FIX] `RecvBuffer::push` の加算を `saturating_add` に変更し、release ビルドでの整数オーバーフローによるバッファ制限バイパスを防止する (issue 0056)
+  - @voluntas
 
 ### misc
 
