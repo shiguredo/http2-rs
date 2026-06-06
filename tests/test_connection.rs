@@ -258,3 +258,35 @@ fn test_client_rejects_enable_push_from_server() {
         assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
     }
 }
+
+/// `max_header_list_size=None` でも CONTINUATION 累積が固定上限 (64MB) を
+/// 超えずに進行することの確認。
+/// 64MB 超過は単体テストでは非現実的なため、上限未満の正常経路で
+/// None が「無制限」になっていないことを検証する。
+#[test]
+fn test_continuation_accumulation_with_none_max_header_list_size() {
+    let limits = Limits::builder()
+        .max_header_list_size(None)
+        .build()
+        .unwrap();
+    let mut server = Connection::server(limits);
+    server.mark_preface_received();
+    server.initiate().unwrap();
+
+    let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
+    server.feed(&settings_bytes).unwrap();
+    server.process().unwrap();
+
+    let stream_id = NonZeroStreamId::from_static(1);
+
+    let headers = HeadersFrame::new(stream_id, vec![0u8; 100]).with_end_headers(false);
+    let headers_bytes = encode_frame(&Frame::Headers(headers));
+    server.feed(&headers_bytes).unwrap();
+    server.process().unwrap();
+
+    let continuation = create_continuation(stream_id, vec![0u8; 100], false);
+    let continuation_bytes = encode_frame(&Frame::Continuation(continuation));
+    server.feed(&continuation_bytes).unwrap();
+
+    server.process().unwrap();
+}

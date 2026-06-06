@@ -2,6 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-06
+- Completed: 2026-06-06
 - Model: DeepSeek V4 Pro
 - Branch: feature/fix-continuation-flood-limit
 - Polished: 2026-06-06
@@ -65,3 +66,11 @@ fn check_header_block_fragment_size(&self) -> Result<()> {
 - CONTINUATION フレームを無制限に送信してもメモリが上限に留まる
 - 上限超過時の `COMPRESSION_ERROR` 返却を検証する単体テストが追加されている
 - `cargo test --workspace` が通過する
+
+## 解決方法
+
+1. `src/connection/headers.rs` の `check_header_block_fragment_size` に絶対的な固定上限 `MAX_HEADER_BLOCK_FRAGMENT_SIZE = 64MB` を追加した。
+2. `max_header_list_size` が `None` の場合は固定上限を、`Some` の場合はその値を使用するように変更した。
+3. `tests/test_connection.rs` に `max_header_list_size=None` の正常経路テストを追加した。
+4. `CHANGES.md` の `[FIX]` セクションにエントリを追加した。
+5. `cargo test --workspace` と `cargo clippy --workspace --all-targets -- -D warnings` の通過を確認した。

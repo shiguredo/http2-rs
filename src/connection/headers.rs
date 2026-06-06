@@ -716,13 +716,20 @@ impl Connection {
     ///
     /// RFC 9113 Section 4.3: field block を展開せずに打ち切るため、接続エラーは
     /// COMPRESSION_ERROR にする (MUST)。
+    /// `SETTINGS_MAX_HEADER_LIST_SIZE` が未設定の場合の絶対的な上限 (64MB)
+    const MAX_HEADER_BLOCK_FRAGMENT_SIZE: usize = 64 * 1024 * 1024;
+
     fn check_header_block_fragment_size(&self) -> Result<()> {
-        if let Some(max_size) = self.local_settings.max_header_list_size()
-            && self.header_block_fragment.len() > max_size as usize
-        {
+        let effective_max = self
+            .local_settings
+            .max_header_list_size()
+            .map(|s| s as usize)
+            .unwrap_or(Self::MAX_HEADER_BLOCK_FRAGMENT_SIZE);
+
+        if self.header_block_fragment.len() > effective_max {
             return Err(Error::connection_error(
                 ErrorCode::CompressionError,
-                "accumulated header block fragment exceeds SETTINGS_MAX_HEADER_LIST_SIZE",
+                "accumulated header block fragment exceeds size limit",
             ));
         }
         Ok(())

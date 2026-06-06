@@ -124,6 +124,8 @@
   - @voluntas
 - [FIX] `closed_streams` に上限 (10000 件) を設定し、上限を超えた古いエントリを自動削除して永不変増殖によるメモリ枯渇を防止する (issue 0053)
   - @voluntas
+- [FIX] `check_header_block_fragment_size` に `max_header_list_size=None` 時の絶対的な上限 (64MB) を追加し、CONTINUATION フラッド DoS を防止する (issue 0054)
+  - @voluntas
 
 ### misc
 
