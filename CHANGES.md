@@ -122,6 +122,8 @@
   - @voluntas
 - [FIX] `is_valid_connect_authority` でポート番号の 0-65535 範囲チェックを追加する (issue 0023)
   - @voluntas
+- [FIX] `closed_streams` に上限 (10000 件) を設定し、上限を超えた古いエントリを自動削除して永不変増殖によるメモリ枯渇を防止する (issue 0053)
+  - @voluntas
 
 ### misc
 
