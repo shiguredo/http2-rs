@@ -991,7 +991,17 @@ impl Connection {
                 .ok_or_else(|| Error::stream_error(ErrorCode::StreamClosed, "stream not found"))?;
 
             stream.state_machine_mut().recv_data(frame.end_stream)?;
-            stream.flow_control_mut().consume_recv(flow_control_size)?;
+
+            // RFC 9113 §6.9: ストリームレベルのフロー制御違反は
+            // RST_STREAM(FLOW_CONTROL_ERROR) で応答する（接続エラーではない）。
+            if stream
+                .flow_control_mut()
+                .consume_recv(flow_control_size)
+                .is_err()
+            {
+                self.reset_stream(StreamId::from(frame.stream_id), ErrorCode::FlowControlError)?;
+                return Ok(());
+            }
 
             // RFC 9113 Section 8.1.1: コンテンツを持たないレスポンス (204/304/HEAD) に
             // 内容を持つ DATA フレームが含まれている場合は malformed として扱う
