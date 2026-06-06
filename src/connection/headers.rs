@@ -129,24 +129,32 @@ impl Connection {
     ///
     /// RFC 9113 Section 8.1: トレーラーは END_STREAM 付きの HEADERS フレームで送信する。
     /// 疑似ヘッダーを含めてはならない。
+    ///
+    /// サーバーの場合は最終レスポンス送信後にのみ送信可能。
+    /// クライアントの場合はリクエストヘッダー送信後に使用する。
     pub fn send_trailers(&mut self, stream_id: StreamId, headers: Vec<HeaderField>) -> Result<()> {
         let sid = stream_id.as_u32();
 
         // RFC 9113 Section 8.5: CONNECT 確立済みストリームでは HEADERS を送信できない
-        // RFC 9113 Section 8.1: トレーラーは最終レスポンス送信後にのみ送信可能
-        if let Some(stream) = self.streams.get(&sid) {
-            if stream.connect_established() {
-                return Err(Error::stream_error(
-                    ErrorCode::ProtocolError,
-                    "HEADERS not allowed on established CONNECT tunnel",
-                ));
-            }
-            if !stream.final_response_sent() {
-                return Err(Error::stream_error(
-                    ErrorCode::ProtocolError,
-                    "cannot send trailers before final response",
-                ));
-            }
+        if let Some(stream) = self.streams.get(&sid)
+            && stream.connect_established()
+        {
+            return Err(Error::stream_error(
+                ErrorCode::ProtocolError,
+                "HEADERS not allowed on established CONNECT tunnel",
+            ));
+        }
+
+        // RFC 9113 Section 8.1: サーバーのトレーラーは最終レスポンス送信後にのみ送信可能
+        // クライアントのトレーラーはリクエスト送信後に利用可能（状態機械が検証する）
+        if self.role == Role::Server
+            && let Some(stream) = self.streams.get(&sid)
+            && !stream.final_response_sent()
+        {
+            return Err(Error::stream_error(
+                ErrorCode::ProtocolError,
+                "cannot send trailers before final response",
+            ));
         }
 
         // RFC 9113 Section 8.1: トレーラー検証 (疑似ヘッダー禁止、接続固有ヘッダー禁止)

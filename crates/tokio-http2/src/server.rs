@@ -148,6 +148,18 @@ impl ServerConnection {
         self.conn.drive().await
     }
 
+    /// トレーラーを送信
+    ///
+    /// RFC 9113 Section 8.1: トレーラーは END_STREAM 付きの HEADERS フレームで送信する。
+    /// 最終レスポンス送信後にのみ使用する。
+    pub async fn send_trailers(
+        &mut self,
+        stream_id: StreamId,
+        headers: Vec<HeaderField>,
+    ) -> Result<()> {
+        self.conn.send_trailers(stream_id, headers).await
+    }
+
     /// ストリームをリセット
     pub async fn reset_stream(&mut self, stream_id: StreamId, error_code: ErrorCode) -> Result<()> {
         self.conn.reset_stream(stream_id, error_code).await

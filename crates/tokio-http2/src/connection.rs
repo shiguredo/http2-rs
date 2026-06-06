@@ -150,6 +150,19 @@ where
         self.flush().await
     }
 
+    /// トレーラーを送信
+    ///
+    /// RFC 9113 Section 8.1: トレーラーは END_STREAM 付きの HEADERS フレームで送信する。
+    /// 最終レスポンス送信後にのみ送信可能。
+    pub async fn send_trailers(
+        &mut self,
+        stream_id: StreamId,
+        headers: Vec<HeaderField>,
+    ) -> Result<()> {
+        self.inner.send_trailers(stream_id, headers)?;
+        self.flush().await
+    }
+
     /// WINDOW_UPDATE を送信
     pub async fn send_window_update(&mut self, stream_id: StreamId, increment: u32) -> Result<()> {
         self.inner.send_window_update(stream_id, increment)?;

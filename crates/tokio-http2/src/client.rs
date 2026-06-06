@@ -132,6 +132,18 @@ impl Client {
         self.conn.drive().await
     }
 
+    /// トレーラーを送信
+    ///
+    /// RFC 9113 Section 8.1: トレーラーは END_STREAM 付きの HEADERS フレームで送信する。
+    /// リクエストボディ送信後に使用する。
+    pub async fn send_trailers(
+        &mut self,
+        stream_id: StreamId,
+        headers: Vec<HeaderField>,
+    ) -> Result<()> {
+        self.conn.send_trailers(stream_id, headers).await
+    }
+
     /// PING を送信
     pub async fn ping(&mut self, data: [u8; 8]) -> Result<()> {
         self.conn.send_ping(data).await
