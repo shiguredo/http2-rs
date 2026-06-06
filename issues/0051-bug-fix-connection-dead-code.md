@@ -1,46 +1,102 @@
-# connection/data.rs と connection/settings.rs がモジュール宣言欠落でデッドコードになっている問題を修正する
+# connection/data.rs と connection/settings.rs のデッドコードを削除する
 
 - Priority: High
 - Created: 2026-06-06
 - Model: DeepSeek V4 Pro
+- Polished: 2026-06-06
 
 ## 目的
 
-`src/connection/mod.rs` には `mod headers;` のみ宣言されており、`mod data;` / `mod settings;` が欠落している。そのため `src/connection/data.rs` (289 行) と `src/connection/settings.rs` (203 行) の全コードがコンパイル対象外の完全なデッドコードになっている。`CHANGES.md` には分割完了と記載されているが実態は未了であり、セキュリティ監査の前提を崩す問題。
+`src/connection/mod.rs:21` には `mod headers;` のみ宣言されており、`mod data;` / `mod settings;` が欠落している。そのため `src/connection/data.rs` (289 行) と `src/connection/settings.rs` (203 行) の全コードがコンパイル対象外のデッドコードになっている。`CHANGES.md:133` には分割完了と記載されているが実態は未了であり、管理上の問題。
 
 ## 優先度根拠
 
-- `connection/settings.rs` の `handle_settings()` には RFC 8441 §3 の `SETTINGS_ENABLE_CONNECT_PROTOCOL` ダウングレード拒否チェックが欠落している（`mod.rs` 側には実装済み）
-- 誤って `settings.rs` を有効化した場合、セキュリティバグを生む
-- `settings.rs:109` で `self.remote_settings.initial_window_size` と private フィールドを直接アクセスしており、`mod.rs:1061` の `.initial_window_size().get()` と実装不一致
-- コンパイル対象外の別実装が残っている状態は、いずれかの実装を誤って修正するリスクがある
+- `settings.rs` の `handle_settings()` には RFC 8441 §3 の `SETTINGS_ENABLE_CONNECT_PROTOCOL` ダウングレード拒否チェック（1→0 MUST NOT）が欠落している（`mod.rs:1089-1100` には実装済み）
+- 将来誰かが `mod data;` / `mod settings;` を追加しようとした場合、以下の理由で直ちにコンパイルエラーになる:
+  - メソッド重複定義（`send_data`, `handle_data`, `initiate`, `handle_settings` 等が両ファイルで定義されている）
+  - `Settings` の private フィールドへの他モジュールからの直接アクセス（全 5 箇所、後述）
+  - `MaxFrameSize` newtype に対する無効な `as usize` キャスト（`data.rs:108`）
+- コンパイル対象外の別実装が残っている状態は、`mod.rs` 側の実装を修正する際に `data.rs` / `settings.rs` 側の更新漏れを引き起こす二重管理リスクがある
 
 ## 現状
 
-- `src/connection/mod.rs:21`: `mod headers;` のみ、`mod data;` / `mod settings;` が欠落
-- `src/connection/data.rs`: `send_data` / `queue_data` / `flush_stream_data` / `flush_all_stream_data` / `handle_data` が `mod.rs` と重複定義
-- `src/connection/settings.rs`: `initiate` / `send_settings` / `send_initial_connection_window_update` / `handle_settings` / `update_stream_windows` が `mod.rs` と重複定義
-- `CHANGES.md:133`: 「`src/connection/mod.rs` を headers / settings / data サブモジュールに分割する」と記載されているが完了していない
+`mod.rs` にのみ `mod headers;` が宣言されており、全メソッド実装は `mod.rs` の `impl Connection` ブロック内に存在する。`data.rs` / `settings.rs` は同名メソッドの別実装を保持しているがコンパイル対象外。
+
+### `data.rs` と `mod.rs` の重複メソッド
+
+| メソッド | `mod.rs` 行 | `data.rs` 行 | 差分 |
+|----------|------------|-------------|------|
+| `send_data` | 569 | 14 | `data.rs:108` の `max_frame_size as usize` が不正 |
+| `queue_data` | 613 | 58 | 概ね同一 |
+| `flush_stream_data` | 638 | 83 | `data.rs` のみ `pub(super)`（`mod.rs` は `fn`） |
+| `flush_all_stream_data` | 735 | 180 | `data.rs` のみ `pub(super)` |
+| `handle_data` | 925 | 198 | `data.rs` のみ `pub(super)` |
+
+### `settings.rs` と `mod.rs` の重複メソッド
+
+| メソッド | `mod.rs` 行 | `settings.rs` 行 | 差分 |
+|----------|------------|-----------------|------|
+| `initiate` | 263 | 16 | 概ね同一 |
+| `send_settings` | 352 | 53 | 概ね同一 |
+| `send_initial_connection_window_update` | 375 | 76 | 概ね同一 |
+| `handle_settings` | 1042 | 90 | **RFC 8441 §3 ダウングレードチェック欠落** |
+| `update_stream_windows` | 1160 | 195 | 概ね同一 |
+
+### `settings.rs` の private フィールド直接アクセス（全 5 箇所）
+
+いずれも `crate::connection::settings` モジュールから `crate::settings::Settings` の private フィールドにアクセスしておりコンパイル不可:
+
+| `settings.rs` 行 | アクセス | `mod.rs` での正しいアクセス |
+|------------------|---------|--------------------------|
+| 109 | `self.remote_settings.initial_window_size` | `.initial_window_size().get()` (line 1061) |
+| 112 | `self.remote_settings.header_table_size` | `.header_table_size()` (line 1064) |
+| 152 | `self.remote_settings.header_table_size` | `.header_table_size()` (line 1117) |
+| 162 | `self.remote_settings.initial_window_size` | `.initial_window_size().get()` (line 1127) |
+| 169 | `self.remote_settings.header_table_size` | `.header_table_size()` (line 1133-1134) |
+
+`data.rs:108` の `self.remote_settings.max_frame_size` も同様の private フィールドアクセスだが、加えて `MaxFrameSize` newtype への無効な `as usize` キャストも含むため、上記表では分離して扱う（詳細は重複メソッド表の `send_data` 行を参照）。
+
+### issue 0015 の状況
+
+issue 0015 (`issues/closed/0015-refactor-split-connection-module.md`) は「分割完了」としてクローズされているが、実際には `headers` のみ分割され `data` / `settings` は未了。本 issue は 0015 の未了部分を**削除で決着**させる。
+
+### PBT ファイルへの影響
+
+`pbt/tests/prop_connection/data.rs` / `pbt/tests/prop_connection/settings.rs` はコンパイル対象の `mod.rs` 内実装に対する PBT であり、削除対象の `src/connection/data.rs` / `src/connection/settings.rs`（デッドコードの別実装）とは無関係。これらの PBT ファイルは修正不要。
 
 ## 設計方針
 
-以下のいずれかで対応する:
+削除案を採用する。分割案は以下が必要で修正量が大きく、移行の価値に見合わない:
 
-1. **削除案**: `data.rs` / `settings.rs` を削除し、`mod.rs` の実装を唯一の正とする
-2. **完全分割案**: `mod.rs` から `data.rs` / `settings.rs` の該当メソッドを削除し、`mod data;` / `mod settings;` を宣言した上で、`settings.rs` に欠落している `SETTINGS_ENABLE_CONNECT_PROTOCOL` ダウングレード拒否チェックを移植する
+- `settings.rs` 5 箇所の private フィールドアクセス修正
+- `data.rs:108` の `max_frame_size as usize` 修正
+- `settings.rs` への RFC 8441 §3 ダウングレード拒否チェック移植
+- `mod.rs` から重複メソッド削除
+- 可視性不一致（`pub(super)` vs `fn`）の調整
 
-削除案がシンプルで推奨。分割案の場合はセキュリティチェックの移植が必須。
+## 対応手順
+
+1. 作業ブランチ `feature/fix-remove-connection-dead-code` を作成する
+2. `src/connection/data.rs` と `src/connection/settings.rs` を削除する
+3. `CHANGES.md:132-133` の該当エントリ（2 行）を修正する。PBT 分割は完了しているため `pbt/tests/prop_connection.rs` の記述は独立した `### misc` エントリに分離する:
+   - 修正前:
+     ```
+     - [UPDATE] `src/connection/mod.rs` を headers / settings / data サブモジュールに分割し、
+       `pbt/tests/prop_connection.rs` をディレクトリモジュール形式に分割する (issue 0015)
+     ```
+   - 修正後:
+     ```
+     - [UPDATE] `src/connection/mod.rs` のヘッダー関連処理を headers サブモジュールに分割する (issue 0015)
+     - [UPDATE] `pbt/tests/prop_connection.rs` をディレクトリモジュール形式に分割する (issue 0015)
+     ```
+4. `cargo check --workspace --all-targets` で、削除対象ファイルが元々コンパイル対象外であることの裏付けとして、削除前後でコンパイル結果が同一であることを確認する
+5. `cargo test --workspace` で全テスト通過を確認する
+6. `cargo clippy --workspace --all-targets -- -D warnings` で警告がないことを確認する
 
 ## 完了条件
 
-- `src/connection/data.rs` と `src/connection/settings.rs` が削除されるか、正しくモジュール宣言される
-- 両ファイルと `mod.rs` の実装重複が解消されている
-- `CHANGES.md` の記述と実態が一致している
-- 全テストが通過する
-
-## 解決方法
-
-1. 作業ブランチ `feature/fix-connection-dead-code` を切る
-2. `src/connection/data.rs` と `src/connection/settings.rs` を削除する
-3. `CHANGES.md:133` のエントリを修正する（実態と一致させる）
-4. `cargo test --all` を実行して全テスト通過を確認する
+- `src/connection/data.rs` と `src/connection/settings.rs` が削除されている
+- `CHANGES.md` の記述が実態と一致している
+- `cargo check --workspace --all-targets` が通過する
+- `cargo test --workspace` が通過する
+- `cargo clippy --workspace --all-targets -- -D warnings` が通過する
