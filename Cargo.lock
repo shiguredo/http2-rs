@@ -1441,6 +1441,7 @@ dependencies = [
  "rustls-pki-types",
  "rustls-platform-verifier",
  "shiguredo_http2",
+ "shiguredo_nghttp2",
  "tokio",
  "tokio-nghttp2",
  "tokio-rustls",

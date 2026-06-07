@@ -187,3 +187,5 @@
   - @voluntas
 - [FIX] Huffman デコーダの `Vec::with_capacity(data.len() * 2)` を `Vec::new()` に変更し、 AGENTS.md 規約違反と DoS リスクを修正する (issue 0052)
   - @voluntas
+- [ADD] tokio-http2 に nghttp2 との相互運用テストを 25 件追加し、全 96 件に拡充する (不足方向の HTTP メソッド・ステータスコード・RST_STREAM エラーコード・大規模データ転送・複数クライアント・GOAWAY エラーコード・混在メソッド・PATCH・301/302/400/403・SETTINGS ネゴシエーション)
+  - @voluntas

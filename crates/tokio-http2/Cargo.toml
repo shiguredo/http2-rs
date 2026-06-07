@@ -33,5 +33,6 @@ tokio-rustls = "0.26"
 
 [dev-dependencies]
 rcgen = "0.14"
+shiguredo_nghttp2 = { path = "../shiguredo_nghttp2" }
 tokio = { version = "1.52", features = ["full"] }
 tokio-nghttp2 = { path = "../tokio-nghttp2" }

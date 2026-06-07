@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use shiguredo_nghttp2::SettingsId;
 use tokio_http2::{
     ErrorCode as Http2ErrorCode, Event as Http2Event, HeaderField, Limits, Server as Http2Server,
     TlsServerConfig as Http2TlsServerConfig,
@@ -7058,6 +7059,2342 @@ async fn test_http2_client_nghttp2_server_manual_window_update() {
     }
 
     assert_eq!(received_data.len(), 16384);
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+// ============================================================================
+// 不足方向の HTTP メソッドテスト
+// ============================================================================
+
+/// http2 クライアント <-> nghttp2 サーバー: PUT メソッド
+#[tokio::test]
+async fn test_http2_client_nghttp2_server_put() {
+    let tls_config = generate_nghttp2_test_cert();
+    let limits = Limits::default();
+
+    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(NgHttp2Event::HeadersReceived {
+                    stream_id,
+                    headers,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        let method = headers
+                            .iter()
+                            .find(|h| h.name == b":method")
+                            .expect("missing :method header");
+                        assert_eq!(method.value, b"PUT");
+
+                        let response_headers = vec![NgHeader::status(204)];
+                        conn.send_response(stream_id, &response_headers, true)
+                            .await
+                            .expect("failed to send response");
+                        conn.flush().await.expect("failed to flush");
+                        break;
+                    }
+                }
+                Ok(Ok(NgHttp2Event::SettingsReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
+        .await
+        .expect("failed to connect");
+
+    wait_for_http2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        HeaderField::new(":method", "PUT").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/resource").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+    ];
+    let stream_id = client
+        .send_request(request_headers, true)
+        .await
+        .expect("failed to send request");
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => panic!("timeout waiting for response"),
+        };
+        if let Http2Event::HeadersReceived {
+            stream_id: recv_stream_id,
+            headers,
+            ..
+        } = event
+        {
+            assert_eq!(recv_stream_id, stream_id);
+
+            let status = headers
+                .iter()
+                .find(|h| h.name() == b":status")
+                .expect("missing :status header");
+            assert_eq!(status.value(), b"204");
+            break;
+        }
+    }
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+/// nghttp2 クライアント <-> http2 サーバー: DELETE メソッド
+#[tokio::test]
+async fn test_nghttp2_client_http2_server_delete() {
+    let tls_config = generate_http2_test_cert();
+    let limits = Limits::default();
+
+    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(Http2Event::HeadersReceived {
+                    stream_id,
+                    headers,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        let method = headers
+                            .iter()
+                            .find(|h| h.name() == b":method")
+                            .expect("missing :method header");
+                        assert_eq!(method.value(), b"DELETE");
+
+                        let response_headers = vec![HeaderField::new(":status", "204").unwrap()];
+                        conn.send_response(stream_id, response_headers, true)
+                            .await
+                            .expect("failed to send response");
+                        break;
+                    }
+                }
+                Ok(Ok(Http2Event::SettingsReceived { .. }))
+                | Ok(Ok(Http2Event::ConnectionPreface))
+                | Ok(Ok(Http2Event::WindowUpdateReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = NgClient::connect_insecure(server_addr, "localhost")
+        .await
+        .expect("failed to connect");
+
+    wait_for_nghttp2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        NgHeader::method("DELETE"),
+        NgHeader::scheme("https"),
+        NgHeader::authority("localhost"),
+        NgHeader::path("/resource/123"),
+    ];
+    let stream_id = client
+        .send_request(&request_headers, None, true)
+        .await
+        .expect("failed to send request");
+    client.flush().await.expect("failed to flush");
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => panic!("timeout waiting for response"),
+        };
+        if let NgHttp2Event::HeadersReceived {
+            stream_id: recv_stream_id,
+            headers,
+            ..
+        } = event
+        {
+            assert_eq!(recv_stream_id, stream_id);
+
+            let status = headers
+                .iter()
+                .find(|h| h.name == b":status")
+                .expect("missing :status header");
+            assert_eq!(status.value, b"204");
+            break;
+        }
+    }
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+/// http2 クライアント <-> nghttp2 サーバー: HEAD メソッド
+#[tokio::test]
+async fn test_http2_client_nghttp2_server_head() {
+    let tls_config = generate_nghttp2_test_cert();
+    let limits = Limits::default();
+
+    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(NgHttp2Event::HeadersReceived {
+                    stream_id,
+                    headers,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        let method = headers
+                            .iter()
+                            .find(|h| h.name == b":method")
+                            .expect("missing :method header");
+                        assert_eq!(method.value, b"HEAD");
+
+                        let response_headers = vec![
+                            NgHeader::status(200),
+                            NgHeader::new(b"content-length".to_vec(), b"1234".to_vec()),
+                        ];
+                        conn.send_response(stream_id, &response_headers, true)
+                            .await
+                            .expect("failed to send response");
+                        conn.flush().await.expect("failed to flush");
+                        break;
+                    }
+                }
+                Ok(Ok(NgHttp2Event::SettingsReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
+        .await
+        .expect("failed to connect");
+
+    wait_for_http2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        HeaderField::new(":method", "HEAD").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+    ];
+    let stream_id = client
+        .send_request(request_headers, true)
+        .await
+        .expect("failed to send request");
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => panic!("timeout waiting for response"),
+        };
+        if let Http2Event::HeadersReceived {
+            stream_id: recv_stream_id,
+            headers,
+            end_stream,
+            ..
+        } = event
+        {
+            assert_eq!(recv_stream_id, stream_id);
+            assert!(end_stream);
+
+            let status = headers
+                .iter()
+                .find(|h| h.name() == b":status")
+                .expect("missing :status header");
+            assert_eq!(status.value(), b"200");
+
+            let content_length = headers
+                .iter()
+                .find(|h| h.name() == b"content-length")
+                .expect("missing content-length header");
+            assert_eq!(content_length.value(), b"1234");
+            break;
+        }
+    }
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+// ============================================================================
+// 不足方向のステータスコードテスト
+// ============================================================================
+
+/// http2 クライアント <-> nghttp2 サーバー: 404 Not Found
+#[tokio::test]
+async fn test_http2_client_nghttp2_server_404() {
+    let tls_config = generate_nghttp2_test_cert();
+    let limits = Limits::default();
+
+    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(NgHttp2Event::HeadersReceived {
+                    stream_id,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        let response_headers = vec![NgHeader::status(404)];
+                        conn.send_response(stream_id, &response_headers, true)
+                            .await
+                            .expect("failed to send response");
+                        conn.flush().await.expect("failed to flush");
+                        break;
+                    }
+                }
+                Ok(Ok(NgHttp2Event::SettingsReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
+        .await
+        .expect("failed to connect");
+
+    wait_for_http2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/not-found").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+    ];
+    let stream_id = client
+        .send_request(request_headers, true)
+        .await
+        .expect("failed to send request");
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => panic!("timeout waiting for response"),
+        };
+        if let Http2Event::HeadersReceived {
+            stream_id: recv_stream_id,
+            headers,
+            ..
+        } = event
+        {
+            assert_eq!(recv_stream_id, stream_id);
+
+            let status = headers
+                .iter()
+                .find(|h| h.name() == b":status")
+                .expect("missing :status header");
+            assert_eq!(status.value(), b"404");
+            break;
+        }
+    }
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+/// nghttp2 クライアント <-> http2 サーバー: 500 Internal Server Error
+#[tokio::test]
+async fn test_nghttp2_client_http2_server_500() {
+    let tls_config = generate_http2_test_cert();
+    let limits = Limits::default();
+
+    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(Http2Event::HeadersReceived {
+                    stream_id,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        let response_headers = vec![HeaderField::new(":status", "500").unwrap()];
+                        conn.send_response(stream_id, response_headers, true)
+                            .await
+                            .expect("failed to send response");
+                        break;
+                    }
+                }
+                Ok(Ok(Http2Event::SettingsReceived { .. }))
+                | Ok(Ok(Http2Event::ConnectionPreface))
+                | Ok(Ok(Http2Event::WindowUpdateReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = NgClient::connect_insecure(server_addr, "localhost")
+        .await
+        .expect("failed to connect");
+
+    wait_for_nghttp2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        NgHeader::method("GET"),
+        NgHeader::scheme("https"),
+        NgHeader::authority("localhost"),
+        NgHeader::path("/error"),
+    ];
+    let stream_id = client
+        .send_request(&request_headers, None, true)
+        .await
+        .expect("failed to send request");
+    client.flush().await.expect("failed to flush");
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => panic!("timeout waiting for response"),
+        };
+        if let NgHttp2Event::HeadersReceived {
+            stream_id: recv_stream_id,
+            headers,
+            ..
+        } = event
+        {
+            assert_eq!(recv_stream_id, stream_id);
+
+            let status = headers
+                .iter()
+                .find(|h| h.name == b":status")
+                .expect("missing :status header");
+            assert_eq!(status.value, b"500");
+            break;
+        }
+    }
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+/// http2 クライアント <-> nghttp2 サーバー: 404 レスポンスにボディ付き
+#[tokio::test]
+async fn test_http2_client_nghttp2_server_404_with_body() {
+    let tls_config = generate_nghttp2_test_cert();
+    let limits = Limits::default();
+
+    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let error_body = b"Not Found: the requested resource does not exist";
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(NgHttp2Event::HeadersReceived {
+                    stream_id,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        let response_headers = vec![
+                            NgHeader::status(404),
+                            NgHeader::new(b"content-type".to_vec(), b"text/plain".to_vec()),
+                        ];
+                        conn.send_response(stream_id, &response_headers, false)
+                            .await
+                            .expect("failed to send response headers");
+
+                        conn.send_data(stream_id, error_body, true)
+                            .await
+                            .expect("failed to send error body");
+                        conn.flush().await.expect("failed to flush");
+                        break;
+                    }
+                }
+                Ok(Ok(NgHttp2Event::SettingsReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
+        .await
+        .expect("failed to connect");
+
+    wait_for_http2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/not-found").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+    ];
+    let stream_id = client
+        .send_request(request_headers, true)
+        .await
+        .expect("failed to send request");
+
+    let mut received_status = Vec::new();
+    let mut received_body = Vec::new();
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => panic!("timeout waiting for response"),
+        };
+        match event {
+            Http2Event::HeadersReceived {
+                stream_id: recv_stream_id,
+                headers,
+                ..
+            } => {
+                assert_eq!(recv_stream_id, stream_id);
+                let status = headers
+                    .iter()
+                    .find(|h| h.name() == b":status")
+                    .expect("missing :status header");
+                received_status = status.value().to_vec();
+            }
+            Http2Event::DataReceived {
+                data, end_stream, ..
+            } => {
+                received_body.extend_from_slice(&data);
+                if end_stream {
+                    break;
+                }
+            }
+            Http2Event::SettingsReceived { .. } | Http2Event::ConnectionPreface => {}
+            _ => {}
+        }
+    }
+
+    assert_eq!(received_status, b"404");
+    assert_eq!(received_body, error_body);
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+/// http2 クライアント <-> nghttp2 サーバー: 500 レスポンスにボディ付き
+#[tokio::test]
+async fn test_http2_client_nghttp2_server_500_with_body() {
+    let tls_config = generate_nghttp2_test_cert();
+    let limits = Limits::default();
+
+    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let error_body = b"Internal Server Error: an unexpected error occurred";
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(NgHttp2Event::HeadersReceived {
+                    stream_id,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        let response_headers = vec![
+                            NgHeader::status(500),
+                            NgHeader::new(b"content-type".to_vec(), b"text/plain".to_vec()),
+                        ];
+                        conn.send_response(stream_id, &response_headers, false)
+                            .await
+                            .expect("failed to send response headers");
+
+                        conn.send_data(stream_id, error_body, true)
+                            .await
+                            .expect("failed to send error body");
+                        conn.flush().await.expect("failed to flush");
+                        break;
+                    }
+                }
+                Ok(Ok(NgHttp2Event::SettingsReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
+        .await
+        .expect("failed to connect");
+
+    wait_for_http2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/error").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+    ];
+    let stream_id = client
+        .send_request(request_headers, true)
+        .await
+        .expect("failed to send request");
+
+    let mut received_status = Vec::new();
+    let mut received_body = Vec::new();
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => panic!("timeout waiting for response"),
+        };
+        match event {
+            Http2Event::HeadersReceived {
+                stream_id: recv_stream_id,
+                headers,
+                ..
+            } => {
+                assert_eq!(recv_stream_id, stream_id);
+                let status = headers
+                    .iter()
+                    .find(|h| h.name() == b":status")
+                    .expect("missing :status header");
+                received_status = status.value().to_vec();
+            }
+            Http2Event::DataReceived {
+                data, end_stream, ..
+            } => {
+                received_body.extend_from_slice(&data);
+                if end_stream {
+                    break;
+                }
+            }
+            Http2Event::SettingsReceived { .. } | Http2Event::ConnectionPreface => {}
+            _ => {}
+        }
+    }
+
+    assert_eq!(received_status, b"500");
+    assert_eq!(received_body, error_body);
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+// ============================================================================
+// 不足方向の RST_STREAM エラーコードテスト
+// ============================================================================
+
+/// http2 クライアント <-> nghttp2 サーバー: RST_STREAM InternalError
+#[tokio::test]
+async fn test_http2_client_nghttp2_server_rst_stream_internal_error() {
+    let tls_config = generate_nghttp2_test_cert();
+    let limits = Limits::default();
+
+    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(NgHttp2Event::HeadersReceived {
+                    stream_id,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        conn.reset_stream(stream_id, NgErrorCode::InternalError)
+                            .await
+                            .expect("failed to send rst_stream");
+                        conn.flush().await.expect("failed to flush");
+                        break;
+                    }
+                }
+                Ok(Ok(NgHttp2Event::SettingsReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
+        .await
+        .expect("failed to connect");
+
+    wait_for_http2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+    ];
+    let stream_id = client
+        .send_request(request_headers, true)
+        .await
+        .expect("failed to send request");
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => break,
+        };
+        if let Http2Event::StreamReset {
+            stream_id: reset_stream_id,
+            error_code,
+        } = event
+        {
+            assert_eq!(reset_stream_id, stream_id);
+            assert_eq!(error_code, Http2ErrorCode::InternalError);
+            break;
+        }
+    }
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+/// nghttp2 クライアント <-> http2 サーバー: RST_STREAM RefusedStream
+#[tokio::test]
+async fn test_nghttp2_client_http2_server_rst_stream_refused() {
+    let tls_config = generate_http2_test_cert();
+    let limits = Limits::default();
+
+    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(Http2Event::HeadersReceived {
+                    stream_id,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        conn.reset_stream(stream_id, Http2ErrorCode::RefusedStream)
+                            .await
+                            .expect("failed to send rst_stream");
+                        break;
+                    }
+                }
+                Ok(Ok(Http2Event::SettingsReceived { .. }))
+                | Ok(Ok(Http2Event::ConnectionPreface))
+                | Ok(Ok(Http2Event::WindowUpdateReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = NgClient::connect_insecure(server_addr, "localhost")
+        .await
+        .expect("failed to connect");
+
+    wait_for_nghttp2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        NgHeader::method("GET"),
+        NgHeader::scheme("https"),
+        NgHeader::authority("localhost"),
+        NgHeader::path("/"),
+    ];
+    let stream_id = client
+        .send_request(&request_headers, None, true)
+        .await
+        .expect("failed to send request");
+    client.flush().await.expect("failed to flush");
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => break,
+        };
+        if let NgHttp2Event::StreamClosed {
+            stream_id: closed_stream_id,
+            error_code,
+        } = event
+        {
+            assert_eq!(closed_stream_id, stream_id);
+            assert_eq!(error_code, NgErrorCode::RefusedStream);
+            break;
+        }
+    }
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+// ============================================================================
+// 不足方向の大規模データ転送テスト
+// ============================================================================
+
+/// http2 クライアント <-> nghttp2 サーバー: 中程度のレスポンスボディ
+#[tokio::test]
+async fn test_http2_client_nghttp2_server_large_response() {
+    let tls_config = generate_nghttp2_test_cert();
+    let limits = Limits::default();
+
+    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    // 16KB のレスポンスボディ（初期ウィンドウサイズ内）
+    let response_body: Vec<u8> = (0..16384).map(|i| (i % 256) as u8).collect();
+    let response_body_clone = response_body.clone();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(NgHttp2Event::HeadersReceived {
+                    stream_id,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        let response_headers = vec![NgHeader::status(200)];
+                        conn.send_response(stream_id, &response_headers, false)
+                            .await
+                            .expect("failed to send response headers");
+
+                        conn.send_data(stream_id, &response_body_clone, true)
+                            .await
+                            .expect("failed to send response body");
+                        conn.flush().await.expect("failed to flush");
+                        break;
+                    }
+                }
+                Ok(Ok(NgHttp2Event::SettingsReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
+        .await
+        .expect("failed to connect");
+
+    wait_for_http2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/large").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+    ];
+    let stream_id = client
+        .send_request(request_headers, true)
+        .await
+        .expect("failed to send request");
+
+    let mut received_body = Vec::new();
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(10), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => break,
+        };
+        match event {
+            Http2Event::HeadersReceived { .. } => {}
+            Http2Event::DataReceived {
+                stream_id: recv_stream_id,
+                data,
+                end_stream,
+            } => {
+                assert_eq!(recv_stream_id, stream_id);
+                received_body.extend_from_slice(&data);
+
+                if end_stream {
+                    break;
+                }
+            }
+            Http2Event::SettingsReceived { .. }
+            | Http2Event::ConnectionPreface
+            | Http2Event::WindowUpdateReceived { .. } => {}
+            _ => {}
+        }
+    }
+
+    assert_eq!(received_body.len(), response_body.len());
+    assert_eq!(received_body, response_body);
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+/// nghttp2 クライアント <-> http2 サーバー: 中程度のリクエストボディ
+#[tokio::test]
+async fn test_nghttp2_client_http2_server_large_request() {
+    let tls_config = generate_http2_test_cert();
+    let limits = Limits::default();
+
+    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    // 16KB のリクエストボディ（初期ウィンドウサイズ内）
+    let request_body: Vec<u8> = (0..16384).map(|i| (i % 256) as u8).collect();
+    let request_body_clone = request_body.clone();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+        let mut received_body = Vec::new();
+        let mut request_stream_id: Option<tokio_http2::StreamId> = None;
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(10), conn.next_event()).await {
+                Ok(Ok(Http2Event::HeadersReceived {
+                    stream_id,
+                    end_stream,
+                    ..
+                })) => {
+                    request_stream_id = Some(stream_id);
+                    if end_stream {
+                        break;
+                    }
+                }
+                Ok(Ok(Http2Event::DataReceived {
+                    data, end_stream, ..
+                })) => {
+                    received_body.extend_from_slice(&data);
+                    if end_stream {
+                        break;
+                    }
+                }
+                Ok(Ok(Http2Event::SettingsReceived { .. }))
+                | Ok(Ok(Http2Event::ConnectionPreface))
+                | Ok(Ok(Http2Event::WindowUpdateReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+
+        assert_eq!(received_body.len(), request_body_clone.len());
+        assert_eq!(received_body, request_body_clone);
+
+        let sid = request_stream_id.expect("headers not received");
+        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+        conn.send_response(sid, response_headers, true)
+            .await
+            .expect("failed to send response");
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = NgClient::connect_insecure(server_addr, "localhost")
+        .await
+        .expect("failed to connect");
+
+    wait_for_nghttp2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        NgHeader::method("POST"),
+        NgHeader::scheme("https"),
+        NgHeader::authority("localhost"),
+        NgHeader::path("/upload"),
+    ];
+    let stream_id = client
+        .send_request(&request_headers, Some(&request_body), true)
+        .await
+        .expect("failed to send request");
+    client.flush().await.expect("failed to flush");
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(10), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => panic!("timeout waiting for response"),
+        };
+        if let NgHttp2Event::HeadersReceived {
+            stream_id: recv_stream_id,
+            headers,
+            ..
+        } = event
+        {
+            assert_eq!(recv_stream_id, stream_id);
+
+            let status = headers
+                .iter()
+                .find(|h| h.name == b":status")
+                .expect("missing :status header");
+            assert_eq!(status.value, b"200");
+            break;
+        }
+    }
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+// ============================================================================
+// 複数 http2 クライアント → nghttp2 サーバーテスト
+// ============================================================================
+
+/// http2 クライアント複数 <-> nghttp2 サーバー: 同時接続
+#[tokio::test]
+async fn test_multiple_http2_clients_nghttp2_server() {
+    let tls_config = generate_nghttp2_test_cert();
+
+    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        for _ in 0..2 {
+            let mut conn = server.accept().await.expect("failed to accept connection");
+
+            tokio::spawn(async move {
+                loop {
+                    match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                        Ok(Ok(NgHttp2Event::HeadersReceived {
+                            stream_id,
+                            end_stream,
+                            ..
+                        })) => {
+                            if end_stream {
+                                let response_headers = vec![NgHeader::status(200)];
+                                conn.send_response(stream_id, &response_headers, true)
+                                    .await
+                                    .expect("failed to send response");
+                                conn.flush().await.expect("failed to flush");
+                            }
+                        }
+                        Ok(Ok(NgHttp2Event::SettingsReceived { .. })) => {}
+                        Ok(Ok(_)) => {}
+                        _ => break,
+                    }
+                }
+            });
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let limits = Limits::default();
+    let limits2 = Limits::default();
+
+    let client1_handle = tokio::spawn(async move {
+        let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
+            .await
+            .expect("client1: failed to connect");
+
+        wait_for_http2_settings_ack(&mut client).await;
+
+        let request_headers = vec![
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":authority", "localhost").unwrap(),
+            HeaderField::new(":path", "/client1").unwrap(),
+        ];
+        let stream_id = client
+            .send_request(request_headers, true)
+            .await
+            .expect("client1: failed to send request");
+
+        loop {
+            let event =
+                match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+                    Ok(Ok(e)) => e,
+                    _ => panic!("client1: timeout"),
+                };
+            if let Http2Event::HeadersReceived {
+                stream_id: recv_stream_id,
+                ..
+            } = event
+            {
+                assert_eq!(recv_stream_id, stream_id);
+                break;
+            }
+        }
+        client.shutdown().await.ok();
+    });
+
+    let client2_handle = tokio::spawn(async move {
+        let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits2)
+            .await
+            .expect("client2: failed to connect");
+
+        wait_for_http2_settings_ack(&mut client).await;
+
+        let request_headers = vec![
+            HeaderField::new(":method", "GET").unwrap(),
+            HeaderField::new(":scheme", "https").unwrap(),
+            HeaderField::new(":authority", "localhost").unwrap(),
+            HeaderField::new(":path", "/client2").unwrap(),
+        ];
+        let stream_id = client
+            .send_request(request_headers, true)
+            .await
+            .expect("client2: failed to send request");
+
+        loop {
+            let event =
+                match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+                    Ok(Ok(e)) => e,
+                    _ => panic!("client2: timeout"),
+                };
+            if let Http2Event::HeadersReceived {
+                stream_id: recv_stream_id,
+                ..
+            } = event
+            {
+                assert_eq!(recv_stream_id, stream_id);
+                break;
+            }
+        }
+        client.shutdown().await.ok();
+    });
+
+    let (r1, r2) = tokio::join!(client1_handle, client2_handle);
+    r1.expect("client1 failed");
+    r2.expect("client2 failed");
+
+    server_handle.abort();
+}
+
+// ============================================================================
+// GOAWAY エラーコード・デバッグデータテスト (RFC 9113 Section 6.8)
+// ============================================================================
+
+/// nghttp2 サーバーが GOAWAY を ProtocolError で送信 → http2 クライアントが受信
+#[tokio::test]
+async fn test_http2_client_nghttp2_server_goaway_protocol_error() {
+    let tls_config = generate_nghttp2_test_cert();
+    let limits = Limits::default();
+
+    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(NgHttp2Event::SettingsReceived { ack: true })) => break,
+                Ok(Ok(_)) => {}
+                _ => return,
+            }
+        }
+
+        conn.terminate(NgErrorCode::ProtocolError)
+            .await
+            .expect("failed to send goaway");
+        conn.flush().await.expect("failed to flush");
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
+        .await
+        .expect("failed to connect");
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => break,
+        };
+        if let Http2Event::GoawayReceived { error_code, .. } = event {
+            assert_eq!(error_code, Http2ErrorCode::ProtocolError);
+            break;
+        }
+    }
+
+    let _ = server_handle.await;
+}
+
+/// nghttp2 クライアントが GOAWAY を InternalError で送信 → http2 サーバーが受信
+#[tokio::test]
+async fn test_nghttp2_client_http2_server_goaway_internal_error() {
+    let tls_config = generate_http2_test_cert();
+    let limits = Limits::default();
+
+    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(Http2Event::GoawayReceived { error_code, .. })) => {
+                    assert_eq!(error_code, Http2ErrorCode::InternalError);
+                    break;
+                }
+                Ok(Ok(Http2Event::SettingsReceived { .. }))
+                | Ok(Ok(Http2Event::ConnectionPreface))
+                | Ok(Ok(Http2Event::WindowUpdateReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = NgClient::connect_insecure(server_addr, "localhost")
+        .await
+        .expect("failed to connect");
+
+    wait_for_nghttp2_settings_ack(&mut client).await;
+
+    client
+        .terminate(NgErrorCode::InternalError)
+        .await
+        .expect("failed to send goaway");
+
+    let _ = server_handle.await;
+}
+
+/// nghttp2 サーバーがストリーム完了後に GOAWAY を送信 → http2 クライアントが両方受信
+#[tokio::test]
+async fn test_http2_client_nghttp2_server_goaway_after_response() {
+    let tls_config = generate_nghttp2_test_cert();
+    let limits = Limits::default();
+
+    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(NgHttp2Event::HeadersReceived {
+                    stream_id,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        let response_headers = vec![NgHeader::status(200)];
+                        conn.send_response(stream_id, &response_headers, true)
+                            .await
+                            .expect("failed to send response");
+                        conn.flush().await.expect("failed to flush");
+
+                        conn.shutdown(stream_id)
+                            .await
+                            .expect("failed to send goaway");
+                        conn.flush().await.expect("failed to flush");
+                        break;
+                    }
+                }
+                Ok(Ok(NgHttp2Event::SettingsReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
+        .await
+        .expect("failed to connect");
+
+    wait_for_http2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+    ];
+    client
+        .send_request(request_headers, true)
+        .await
+        .expect("failed to send request");
+
+    let mut got_response = false;
+    let mut got_goaway = false;
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => break,
+        };
+        match event {
+            Http2Event::HeadersReceived { end_stream, .. } => {
+                if end_stream {
+                    got_response = true;
+                }
+            }
+            Http2Event::GoawayReceived {
+                last_stream_id,
+                error_code,
+                ..
+            } => {
+                assert!(last_stream_id.as_u32() >= 1);
+                assert_eq!(error_code, Http2ErrorCode::NoError);
+                got_goaway = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    assert!(got_response);
+    assert!(got_goaway);
+
+    let _ = server_handle.await;
+}
+
+// ============================================================================
+// 混在メソッドテスト
+// ============================================================================
+
+/// nghttp2 クライアント <-> http2 サーバー: GET と POST を同一接続で混在
+#[tokio::test]
+async fn test_nghttp2_client_http2_server_mixed_methods() {
+    let tls_config = generate_http2_test_cert();
+    let limits = Limits::default();
+
+    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+        let mut streams_responded = 0;
+        let mut post_stream_id: Option<tokio_http2::StreamId> = None;
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(Http2Event::HeadersReceived {
+                    stream_id,
+                    headers,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        let method = headers
+                            .iter()
+                            .find(|h| h.name() == b":method")
+                            .expect("missing :method");
+                        let status = match method.value() {
+                            b"GET" => b"200",
+                            b"POST" => b"201",
+                            _ => b"200",
+                        };
+
+                        let response_headers = vec![HeaderField::new(":status", status).unwrap()];
+                        conn.send_response(stream_id, response_headers, true)
+                            .await
+                            .expect("failed to send response");
+
+                        streams_responded += 1;
+                        if streams_responded >= 2 {
+                            break;
+                        }
+                    } else {
+                        post_stream_id = Some(stream_id);
+                    }
+                }
+                Ok(Ok(Http2Event::DataReceived { end_stream, .. })) => {
+                    if end_stream {
+                        let sid = post_stream_id.expect("POST stream ID not set");
+                        let response_headers = vec![HeaderField::new(":status", "201").unwrap()];
+                        conn.send_response(sid, response_headers, true)
+                            .await
+                            .expect("failed to send response");
+
+                        streams_responded += 1;
+                        if streams_responded >= 2 {
+                            break;
+                        }
+                    }
+                }
+                Ok(Ok(Http2Event::SettingsReceived { .. }))
+                | Ok(Ok(Http2Event::ConnectionPreface))
+                | Ok(Ok(Http2Event::WindowUpdateReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = NgClient::connect_insecure(server_addr, "localhost")
+        .await
+        .expect("failed to connect");
+
+    wait_for_nghttp2_settings_ack(&mut client).await;
+
+    // GET リクエスト
+    let get_headers = vec![
+        NgHeader::method("GET"),
+        NgHeader::scheme("https"),
+        NgHeader::authority("localhost"),
+        NgHeader::path("/"),
+    ];
+    let get_stream_id = client
+        .send_request(&get_headers, None, true)
+        .await
+        .expect("failed to send GET");
+    client.flush().await.expect("failed to flush");
+
+    // POST リクエスト (ボディ付き)
+    let post_headers = vec![
+        NgHeader::method("POST"),
+        NgHeader::scheme("https"),
+        NgHeader::authority("localhost"),
+        NgHeader::path("/create"),
+    ];
+    let post_stream_id = client
+        .send_request(&post_headers, Some(b"data"), true)
+        .await
+        .expect("failed to send POST");
+    client.flush().await.expect("failed to flush");
+
+    let mut get_response = false;
+    let mut post_response = false;
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => break,
+        };
+        if let NgHttp2Event::HeadersReceived {
+            stream_id,
+            headers,
+            end_stream,
+            ..
+        } = event
+        {
+            if stream_id == get_stream_id {
+                let status = headers
+                    .iter()
+                    .find(|h| h.name == b":status")
+                    .expect("missing :status");
+                assert_eq!(status.value, b"200");
+                assert!(end_stream);
+                get_response = true;
+            }
+            if stream_id == post_stream_id {
+                let status = headers
+                    .iter()
+                    .find(|h| h.name == b":status")
+                    .expect("missing :status");
+                assert_eq!(status.value, b"201");
+                assert!(end_stream);
+                post_response = true;
+            }
+        }
+
+        if get_response && post_response {
+            break;
+        }
+    }
+
+    assert!(get_response);
+    assert!(post_response);
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+/// http2 クライアント <-> nghttp2 サーバー: GET と POST を同一接続で混在
+#[tokio::test]
+async fn test_http2_client_nghttp2_server_mixed_methods() {
+    let tls_config = generate_nghttp2_test_cert();
+    let limits = Limits::default();
+
+    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+        let mut streams_responded = 0;
+        let mut request_stream_id = 0;
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(NgHttp2Event::HeadersReceived {
+                    stream_id,
+                    headers,
+                    end_stream,
+                })) => {
+                    let method = headers
+                        .iter()
+                        .find(|h| h.name == b":method")
+                        .expect("missing :method");
+                    let status = match method.value.as_slice() {
+                        b"GET" => b"200",
+                        b"POST" => {
+                            request_stream_id = stream_id;
+                            if end_stream {
+                                b"201"
+                            } else {
+                                continue;
+                            }
+                        }
+                        _ => b"200",
+                    };
+
+                    let response_headers = vec![NgHeader::status(
+                        std::str::from_utf8(status).unwrap().parse().unwrap(),
+                    )];
+                    conn.send_response(stream_id, &response_headers, true)
+                        .await
+                        .expect("failed to send response");
+                    conn.flush().await.expect("failed to flush");
+
+                    if method.value != b"POST" || end_stream {
+                        streams_responded += 1;
+                    }
+                    if streams_responded >= 2 {
+                        break;
+                    }
+                }
+                Ok(Ok(NgHttp2Event::DataReceived { end_stream, .. })) => {
+                    if end_stream {
+                        let response_headers = vec![NgHeader::status(201)];
+                        conn.send_response(request_stream_id, &response_headers, true)
+                            .await
+                            .expect("failed to send response");
+                        conn.flush().await.expect("failed to flush");
+                        streams_responded += 1;
+                        if streams_responded >= 2 {
+                            break;
+                        }
+                    }
+                }
+                Ok(Ok(NgHttp2Event::SettingsReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
+        .await
+        .expect("failed to connect");
+
+    wait_for_http2_settings_ack(&mut client).await;
+
+    // GET リクエスト
+    let get_headers = vec![
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+    ];
+    let get_stream_id = client
+        .send_request(get_headers, true)
+        .await
+        .expect("failed to send GET");
+
+    // POST リクエスト (ボディ付き)
+    let post_headers = vec![
+        HeaderField::new(":method", "POST").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":path", "/create").unwrap(),
+    ];
+    let post_stream_id = client
+        .send_request(post_headers, false)
+        .await
+        .expect("failed to send POST headers");
+    client
+        .send_data(post_stream_id, b"data".to_vec(), true)
+        .await
+        .expect("failed to send POST body");
+
+    let mut get_response = false;
+    let mut post_response = false;
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => break,
+        };
+        if let Http2Event::HeadersReceived {
+            stream_id,
+            headers,
+            end_stream,
+            ..
+        } = event
+        {
+            let status = headers
+                .iter()
+                .find(|h| h.name() == b":status")
+                .expect("missing :status");
+
+            if stream_id == get_stream_id {
+                assert_eq!(status.value(), b"200");
+                assert!(end_stream);
+                get_response = true;
+            }
+            if stream_id == post_stream_id {
+                assert_eq!(status.value(), b"201");
+                assert!(end_stream);
+                post_response = true;
+            }
+        }
+
+        if get_response && post_response {
+            break;
+        }
+    }
+
+    assert!(get_response);
+    assert!(post_response);
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+// ============================================================================
+// PATCH メソッドテスト
+// ============================================================================
+
+/// nghttp2 クライアント <-> http2 サーバー: PATCH メソッド
+#[tokio::test]
+async fn test_nghttp2_client_http2_server_patch() {
+    let tls_config = generate_http2_test_cert();
+    let limits = Limits::default();
+
+    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+        let mut patch_stream_id: Option<tokio_http2::StreamId> = None;
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(Http2Event::HeadersReceived {
+                    stream_id,
+                    headers,
+                    end_stream,
+                    ..
+                })) => {
+                    let method = headers
+                        .iter()
+                        .find(|h| h.name() == b":method")
+                        .expect("missing :method header");
+                    assert_eq!(method.value(), b"PATCH");
+
+                    if end_stream {
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        conn.send_response(stream_id, response_headers, true)
+                            .await
+                            .expect("failed to send response");
+                        break;
+                    } else {
+                        patch_stream_id = Some(stream_id);
+                    }
+                }
+                Ok(Ok(Http2Event::DataReceived { end_stream, .. })) => {
+                    if end_stream {
+                        let sid = patch_stream_id.expect("PATCH stream ID not set");
+                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        conn.send_response(sid, response_headers, true)
+                            .await
+                            .expect("failed to send response");
+                        break;
+                    }
+                }
+                Ok(Ok(Http2Event::SettingsReceived { .. }))
+                | Ok(Ok(Http2Event::ConnectionPreface))
+                | Ok(Ok(Http2Event::WindowUpdateReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = NgClient::connect_insecure(server_addr, "localhost")
+        .await
+        .expect("failed to connect");
+
+    wait_for_nghttp2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        NgHeader::method("PATCH"),
+        NgHeader::scheme("https"),
+        NgHeader::authority("localhost"),
+        NgHeader::path("/resource"),
+    ];
+    let stream_id = client
+        .send_request(&request_headers, Some(b"patch data"), true)
+        .await
+        .expect("failed to send request");
+    client.flush().await.expect("failed to flush");
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => panic!("timeout waiting for response"),
+        };
+        if let NgHttp2Event::HeadersReceived {
+            stream_id: recv_stream_id,
+            headers,
+            ..
+        } = event
+        {
+            assert_eq!(recv_stream_id, stream_id);
+
+            let status = headers
+                .iter()
+                .find(|h| h.name == b":status")
+                .expect("missing :status header");
+            assert_eq!(status.value, b"200");
+            break;
+        }
+    }
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+/// http2 クライアント <-> nghttp2 サーバー: PATCH メソッド
+#[tokio::test]
+async fn test_http2_client_nghttp2_server_patch() {
+    let tls_config = generate_nghttp2_test_cert();
+    let limits = Limits::default();
+
+    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+        let mut request_stream_id = 0;
+        let mut received_body = Vec::new();
+        let mut body_done = false;
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(NgHttp2Event::HeadersReceived {
+                    stream_id,
+                    headers,
+                    end_stream,
+                    ..
+                })) => {
+                    let method = headers
+                        .iter()
+                        .find(|h| h.name == b":method")
+                        .expect("missing :method header");
+                    assert_eq!(method.value, b"PATCH");
+                    request_stream_id = stream_id;
+
+                    if end_stream {
+                        body_done = true;
+                        break;
+                    }
+                }
+                Ok(Ok(NgHttp2Event::DataReceived {
+                    data, end_stream, ..
+                })) => {
+                    received_body.extend_from_slice(&data);
+                    if end_stream {
+                        body_done = true;
+                        break;
+                    }
+                }
+                Ok(Ok(NgHttp2Event::SettingsReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+
+        assert!(body_done);
+
+        let response_headers = vec![NgHeader::status(200)];
+        conn.send_response(request_stream_id, &response_headers, true)
+            .await
+            .expect("failed to send response");
+        conn.flush().await.expect("failed to flush");
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
+        .await
+        .expect("failed to connect");
+
+    wait_for_http2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        HeaderField::new(":method", "PATCH").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/resource").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+    ];
+    let stream_id = client
+        .send_request(request_headers, false)
+        .await
+        .expect("failed to send request headers");
+
+    client
+        .send_data(stream_id, b"patch data".to_vec(), true)
+        .await
+        .expect("failed to send request body");
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => panic!("timeout waiting for response"),
+        };
+        if let Http2Event::HeadersReceived {
+            stream_id: recv_stream_id,
+            headers,
+            ..
+        } = event
+        {
+            assert_eq!(recv_stream_id, stream_id);
+
+            let status = headers
+                .iter()
+                .find(|h| h.name() == b":status")
+                .expect("missing :status header");
+            assert_eq!(status.value(), b"200");
+            break;
+        }
+    }
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+// ============================================================================
+// 追加 HTTP ステータスコードテスト
+// ============================================================================
+
+/// nghttp2 クライアント <-> http2 サーバー: 301 Moved Permanently
+#[tokio::test]
+async fn test_nghttp2_client_http2_server_301() {
+    let tls_config = generate_http2_test_cert();
+    let limits = Limits::default();
+
+    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(Http2Event::HeadersReceived {
+                    stream_id,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        let response_headers = vec![
+                            HeaderField::new(":status", "301").unwrap(),
+                            HeaderField::new("location", "/new-location").unwrap(),
+                        ];
+                        conn.send_response(stream_id, response_headers, true)
+                            .await
+                            .expect("failed to send response");
+                        break;
+                    }
+                }
+                Ok(Ok(Http2Event::SettingsReceived { .. }))
+                | Ok(Ok(Http2Event::ConnectionPreface))
+                | Ok(Ok(Http2Event::WindowUpdateReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = NgClient::connect_insecure(server_addr, "localhost")
+        .await
+        .expect("failed to connect");
+
+    wait_for_nghttp2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        NgHeader::method("GET"),
+        NgHeader::scheme("https"),
+        NgHeader::authority("localhost"),
+        NgHeader::path("/old-path"),
+    ];
+    let stream_id = client
+        .send_request(&request_headers, None, true)
+        .await
+        .expect("failed to send request");
+    client.flush().await.expect("failed to flush");
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => panic!("timeout waiting for response"),
+        };
+        if let NgHttp2Event::HeadersReceived {
+            stream_id: recv_stream_id,
+            headers,
+            ..
+        } = event
+        {
+            assert_eq!(recv_stream_id, stream_id);
+
+            let status = headers
+                .iter()
+                .find(|h| h.name == b":status")
+                .expect("missing :status header");
+            assert_eq!(status.value, b"301");
+
+            let location = headers
+                .iter()
+                .find(|h| h.name == b"location")
+                .expect("missing location header");
+            assert_eq!(location.value, b"/new-location");
+            break;
+        }
+    }
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+/// http2 クライアント <-> nghttp2 サーバー: 302 Found
+#[tokio::test]
+async fn test_http2_client_nghttp2_server_302() {
+    let tls_config = generate_nghttp2_test_cert();
+    let limits = Limits::default();
+
+    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(NgHttp2Event::HeadersReceived {
+                    stream_id,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        let response_headers = vec![
+                            NgHeader::status(302),
+                            NgHeader::new(b"location".to_vec(), b"/temporary".to_vec()),
+                        ];
+                        conn.send_response(stream_id, &response_headers, true)
+                            .await
+                            .expect("failed to send response");
+                        conn.flush().await.expect("failed to flush");
+                        break;
+                    }
+                }
+                Ok(Ok(NgHttp2Event::SettingsReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
+        .await
+        .expect("failed to connect");
+
+    wait_for_http2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/old-path").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+    ];
+    let stream_id = client
+        .send_request(request_headers, true)
+        .await
+        .expect("failed to send request");
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => panic!("timeout waiting for response"),
+        };
+        if let Http2Event::HeadersReceived {
+            stream_id: recv_stream_id,
+            headers,
+            ..
+        } = event
+        {
+            assert_eq!(recv_stream_id, stream_id);
+
+            let status = headers
+                .iter()
+                .find(|h| h.name() == b":status")
+                .expect("missing :status header");
+            assert_eq!(status.value(), b"302");
+
+            let location = headers
+                .iter()
+                .find(|h| h.name() == b"location")
+                .expect("missing location header");
+            assert_eq!(location.value(), b"/temporary");
+            break;
+        }
+    }
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+/// nghttp2 クライアント <-> http2 サーバー: 400 Bad Request
+#[tokio::test]
+async fn test_nghttp2_client_http2_server_400() {
+    let tls_config = generate_http2_test_cert();
+    let limits = Limits::default();
+
+    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(Http2Event::HeadersReceived {
+                    stream_id,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        let response_headers = vec![HeaderField::new(":status", "400").unwrap()];
+                        conn.send_response(stream_id, response_headers, true)
+                            .await
+                            .expect("failed to send response");
+                        break;
+                    }
+                }
+                Ok(Ok(Http2Event::SettingsReceived { .. }))
+                | Ok(Ok(Http2Event::ConnectionPreface))
+                | Ok(Ok(Http2Event::WindowUpdateReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = NgClient::connect_insecure(server_addr, "localhost")
+        .await
+        .expect("failed to connect");
+
+    wait_for_nghttp2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        NgHeader::method("GET"),
+        NgHeader::scheme("https"),
+        NgHeader::authority("localhost"),
+        NgHeader::path("/bad-request"),
+    ];
+    let stream_id = client
+        .send_request(&request_headers, None, true)
+        .await
+        .expect("failed to send request");
+    client.flush().await.expect("failed to flush");
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => panic!("timeout waiting for response"),
+        };
+        if let NgHttp2Event::HeadersReceived {
+            stream_id: recv_stream_id,
+            headers,
+            ..
+        } = event
+        {
+            assert_eq!(recv_stream_id, stream_id);
+
+            let status = headers
+                .iter()
+                .find(|h| h.name == b":status")
+                .expect("missing :status header");
+            assert_eq!(status.value, b"400");
+            break;
+        }
+    }
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+/// http2 クライアント <-> nghttp2 サーバー: 403 Forbidden
+#[tokio::test]
+async fn test_http2_client_nghttp2_server_403() {
+    let tls_config = generate_nghttp2_test_cert();
+    let limits = Limits::default();
+
+    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(NgHttp2Event::HeadersReceived {
+                    stream_id,
+                    end_stream,
+                    ..
+                })) => {
+                    if end_stream {
+                        let response_headers = vec![NgHeader::status(403)];
+                        conn.send_response(stream_id, &response_headers, true)
+                            .await
+                            .expect("failed to send response");
+                        conn.flush().await.expect("failed to flush");
+                        break;
+                    }
+                }
+                Ok(Ok(NgHttp2Event::SettingsReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
+        .await
+        .expect("failed to connect");
+
+    wait_for_http2_settings_ack(&mut client).await;
+
+    let request_headers = vec![
+        HeaderField::new(":method", "GET").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/forbidden").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+    ];
+    let stream_id = client
+        .send_request(request_headers, true)
+        .await
+        .expect("failed to send request");
+
+    loop {
+        let event = match tokio::time::timeout(Duration::from_secs(5), client.next_event()).await {
+            Ok(Ok(e)) => e,
+            _ => panic!("timeout waiting for response"),
+        };
+        if let Http2Event::HeadersReceived {
+            stream_id: recv_stream_id,
+            headers,
+            ..
+        } = event
+        {
+            assert_eq!(recv_stream_id, stream_id);
+
+            let status = headers
+                .iter()
+                .find(|h| h.name() == b":status")
+                .expect("missing :status header");
+            assert_eq!(status.value(), b"403");
+            break;
+        }
+    }
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+// ============================================================================
+// SETTINGS ネゴシエーションテスト
+// ============================================================================
+
+/// nghttp2 クライアント <-> http2 サーバー: SETTINGS の値を相互確認
+#[tokio::test]
+async fn test_nghttp2_client_http2_server_settings_values() {
+    let tls_config = generate_http2_test_cert();
+    let limits = Limits::default();
+
+    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+        let mut ack_received = false;
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(Http2Event::SettingsReceived { ack })) => {
+                    if ack {
+                        ack_received = true;
+                        break;
+                    }
+                }
+                Ok(Ok(Http2Event::ConnectionPreface))
+                | Ok(Ok(Http2Event::WindowUpdateReceived { .. })) => {}
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+
+        assert!(ack_received);
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = NgClient::connect_insecure(server_addr, "localhost")
+        .await
+        .expect("failed to connect");
+
+    wait_for_nghttp2_settings_ack(&mut client).await;
+
+    let remote_initial_window = client.get_remote_settings(SettingsId::InitialWindowSize);
+    assert!(remote_initial_window >= 65535);
+
+    let remote_max_streams = client.get_remote_settings(SettingsId::MaxConcurrentStreams);
+    assert!(remote_max_streams > 0);
+
+    client.shutdown().await.ok();
+    let _ = server_handle.await;
+}
+
+/// http2 クライアント <-> nghttp2 サーバー: SETTINGS の値を相互確認
+#[tokio::test]
+async fn test_http2_client_nghttp2_server_settings_values() {
+    let tls_config = generate_nghttp2_test_cert();
+    let limits = Limits::default();
+
+    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
+        .await
+        .expect("failed to bind server");
+    let server_addr = server.local_addr();
+
+    let server_handle = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("failed to accept connection");
+        let mut ack_received = false;
+
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
+                Ok(Ok(NgHttp2Event::SettingsReceived { ack })) => {
+                    if ack {
+                        ack_received = true;
+                        break;
+                    }
+                }
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+
+        assert!(ack_received);
+
+        let remote_initial_window = conn.get_remote_settings(SettingsId::InitialWindowSize);
+        assert!(remote_initial_window >= 65535);
+
+        let local_max_frame = conn.get_local_settings(SettingsId::MaxFrameSize);
+        assert!(local_max_frame >= 16384);
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
+        .await
+        .expect("failed to connect");
+
+    wait_for_http2_settings_ack(&mut client).await;
 
     client.shutdown().await.ok();
     let _ = server_handle.await;
