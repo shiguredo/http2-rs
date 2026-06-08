@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-06-08
+- Completed: 2026-06-08
 - Polished: 2026-06-08
 - Model: deepseek-v4-pro
 - Branch: feature/fix-wt-stop-sending-auto-reset
@@ -115,3 +116,31 @@ Capsule::WtStopSending {
 - draft-ietf-webtrans-http2-14 Section 6.3 (WT_STOP_SENDING Capsule), L845-L883
 - RFC 9000 Section 3.1 (Stream States), L743-L767
 - RFC 9000 Section 3.5 (Solicited State Transitions), L980-L995
+
+## 解決方法
+
+### 変更ファイル
+
+- `src/webtransport/mod.rs` — `Capsule::WtStopSending` ハンドラに自動リセットロジックを追加
+- `tests/test_webtransport/integration.rs` — 5 件の単体テスト追加
+- `CHANGES.md` — [FIX] エントリ追記
+
+### src/webtransport/mod.rs
+
+`handle_capsule` の `Capsule::WtStopSending` 分岐に以下の変更を加えた (L616-L641):
+
+1. **`should_reset` の事前計算**: 可変借用ブロックに入る前に `self.streams.get(&stream_id).is_some_and(|s| s.can_send())` で Ready/Send 状態を判定する。`can_send()` は `stream.rs:128-129` で `Ready | Send` に対してのみ `true` を返す。
+
+2. **自動リセット**: `should_reset` が `true` の場合、`reset_stream(stream_id, error_code)` を呼び出して `WT_RESET_STREAM` カプセルを出力バッファに追加する。error_code は RFC 9000 Section 3.5 の SHOULD に従い受信したものをコピーする。
+
+3. **借用回避**: 可変借用ブロック (`if let Some(stream) = self.streams.get_mut(...)`) の後に `reset_stream` を呼ぶことで、再借用の競合を回避している。
+
+4. **重複検出・イベント発行**: 既存の重複 WT_STOP_SENDING 検出と `WtEvent::StopSending` 発行は維持している。
+
+### テスト追加
+
+- `stop_sending_triggers_auto_reset_ready_state`: Ready 状態 + WT_STOP_SENDING → WT_RESET_STREAM 出力
+- `stop_sending_triggers_auto_reset_send_state`: Send 状態 + WT_STOP_SENDING → WT_RESET_STREAM 出力
+- `stop_sending_no_auto_reset_data_sent_state`: DataSent では WT_RESET_STREAM が生成されない
+- `stop_sending_unknown_stream_emits_event`: 存在しない stream_id はエラーにならずイベント発行
+- `stop_sending_duplicate_errors`: 重複 WT_STOP_SENDING は StreamStateError

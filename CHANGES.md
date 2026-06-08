@@ -134,6 +134,8 @@
   - @voluntas
 - [FIX] WT_CLOSE_SESSION 送信時に CONNECT ストリームに END_STREAM を自動送信し、受信時に END_STREAM を自動返信する (issue 0058)
   - @voluntas
+- [FIX] WT_STOP_SENDING 受信時に Ready/Send 状態のストリームに WT_RESET_STREAM を自動応答する (issue 0059)
+  - @voluntas
 
 ### misc
 
