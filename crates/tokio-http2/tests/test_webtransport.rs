@@ -532,3 +532,204 @@ async fn test_wt_drain() {
     assert!(drained);
     server_task.await.expect("server join");
 }
+
+/// サーバーが close() を呼んだ後、クライアントが CONNECT ストリーム上で
+/// END_STREAM を受信することを確認する。
+///
+/// draft-ietf-webtrans-http2-14 Section 6.12 (L1360-L1361) の MUST 要件:
+/// WT_CLOSE_SESSION 送信後は END_STREAM で half-close しなければならない。
+#[tokio::test]
+async fn test_wt_close_sends_end_stream() {
+    let tls = test_tls();
+    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
+        .await
+        .expect("bind");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("accept");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let session = req.accept(WtConfig::default()).await.expect("wt accept");
+        session.close(0, "done").await.expect("close");
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("connect");
+    let connect_stream = perform_connect(&mut client).await;
+
+    let mut wt_client = WtSession::client(WtConfig::default());
+    wt_client.initiate().expect("initiate");
+
+    let mut end_stream_received = false;
+    while !end_stream_received {
+        let ev = tokio::time::timeout(Duration::from_secs(5), client.next_event())
+            .await
+            .expect("タイムアウト")
+            .expect("client event");
+        match ev {
+            Event::DataReceived {
+                stream_id,
+                data,
+                end_stream,
+            } if stream_id == connect_stream => {
+                if !data.is_empty() {
+                    wt_client.feed(&data).expect("feed");
+                    wt_client.process().expect("process");
+                    while wt_client.poll_event().is_some() {}
+                }
+                if end_stream {
+                    end_stream_received = true;
+                }
+            }
+            Event::StreamClosed { stream_id } if stream_id == connect_stream => {
+                end_stream_received = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        end_stream_received,
+        "クライアントが END_STREAM を受信しなかった"
+    );
+    server_task.await.expect("server join");
+}
+
+/// クライアントが WT_CLOSE_SESSION + END_STREAM を送信した後、
+/// サーバーが END_STREAM を返信することを確認する。
+///
+/// draft-ietf-webtrans-http2-14 Section 6.12 (L1364-L1365):
+/// WT_CLOSE_SESSION の受信者は END_STREAM で応答しなければならない (MUST)。
+#[tokio::test]
+async fn test_wt_close_received_sends_end_stream() {
+    let tls = test_tls();
+    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
+        .await
+        .expect("bind");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("accept");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let _session = req.accept(WtConfig::default()).await.expect("wt accept");
+        // ドライバーが WT_CLOSE_SESSION を処理し END_STREAM を返信するのを待つ
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("connect");
+    let connect_stream = perform_connect(&mut client).await;
+
+    let mut wt_client = WtSession::client(WtConfig::default());
+    wt_client.initiate().expect("initiate");
+
+    // WT_CLOSE_SESSION capsule を送信
+    wt_client.close(0, "done").expect("close");
+    while let Some(out) = wt_client.poll_output() {
+        client
+            .send_data(connect_stream, out, false)
+            .await
+            .expect("send capsule");
+    }
+    // END_STREAM を送信
+    client
+        .send_data(connect_stream, vec![], true)
+        .await
+        .expect("send END_STREAM");
+
+    // サーバーからの END_STREAM 返信を待つ
+    let mut end_stream_received = false;
+    while !end_stream_received {
+        let ev = tokio::time::timeout(Duration::from_secs(5), client.next_event())
+            .await
+            .expect("タイムアウト")
+            .expect("client event");
+        match ev {
+            Event::DataReceived {
+                stream_id,
+                end_stream,
+                ..
+            } if stream_id == connect_stream && end_stream => {
+                end_stream_received = true;
+            }
+            Event::StreamClosed { stream_id } if stream_id == connect_stream => {
+                end_stream_received = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        end_stream_received,
+        "サーバーが END_STREAM を返信しなかった"
+    );
+    server_task.await.expect("server join");
+}
+
+/// クライアントが WT_CLOSE_SESSION と END_STREAM を同一 DATA フレームで送信した後、
+/// サーバーが END_STREAM を返信することを確認する。
+///
+/// end_stream=true と WT_CLOSE_SESSION が同一フレームで届くエッジケースでも、
+/// 先に END_STREAM を返信してから driver が終了すること (issue 0058 エッジケース)。
+#[tokio::test]
+async fn test_wt_close_same_frame_end_stream() {
+    let tls = test_tls();
+    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
+        .await
+        .expect("bind");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("accept");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let _session = req.accept(WtConfig::default()).await.expect("wt accept");
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("connect");
+    let connect_stream = perform_connect(&mut client).await;
+
+    let mut wt_client = WtSession::client(WtConfig::default());
+    wt_client.initiate().expect("initiate");
+
+    // WT_CLOSE_SESSION capsule と END_STREAM を同一 DATA フレームで送信
+    wt_client.close(0, "done").expect("close");
+    while let Some(out) = wt_client.poll_output() {
+        client
+            .send_data(connect_stream, out, true)
+            .await
+            .expect("send capsule + END_STREAM");
+    }
+
+    // サーバーからの END_STREAM 返信を待つ
+    let mut end_stream_received = false;
+    while !end_stream_received {
+        let ev = tokio::time::timeout(Duration::from_secs(5), client.next_event())
+            .await
+            .expect("タイムアウト")
+            .expect("client event");
+        match ev {
+            Event::DataReceived {
+                stream_id,
+                end_stream,
+                ..
+            } if stream_id == connect_stream && end_stream => {
+                end_stream_received = true;
+            }
+            Event::StreamClosed { stream_id } if stream_id == connect_stream => {
+                end_stream_received = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        end_stream_received,
+        "サーバーが END_STREAM を返信しなかった"
+    );
+    server_task.await.expect("server join");
+}

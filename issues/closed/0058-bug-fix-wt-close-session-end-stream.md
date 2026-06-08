@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-06-08
+- Completed: 2026-06-08
 - Polished: 2026-06-08
 - Model: deepseek-v4-pro
 - Branch: feature/fix-wt-close-session-end-stream
@@ -150,3 +151,31 @@ if self.wt_session.state() == WtSessionState::Closed
 - RFC 9113 Section 6.1 (DATA フレーム END_STREAM flag)
 - RFC 9113 Section 6.9.1 (空 DATA フレーム + END_STREAM の送信許容)
 - RFC 9113 Section 8.5 (CONNECT メソッド)
+
+## 解決方法
+
+### 変更ファイル
+
+- `crates/tokio-http2/src/webtransport.rs` — 3 箇所の修正
+- `crates/tokio-http2/tests/test_webtransport.rs` — 3 件の E2E テスト追加
+- `tests/test_webtransport/root.rs` — 2 件の単体テスト追加
+- `CHANGES.md` — [FIX] エントリ追記
+
+### crates/tokio-http2/src/webtransport.rs
+
+1. **DriverState に `responded_end_stream_on_close: bool` フィールドを追加** (L612): WT_CLOSE_SESSION 受信時に END_STREAM 二重送信を防止するフラグ。
+
+2. **DriverCmd::Close ハンドラで END_STREAM を送信** (L728-L742): `wt_session.close()` 成功後、`flush_wt_output()` で WT_CLOSE_SESSION カプセルを送信し、続けて空 DATA + END_STREAM を CONNECT ストリームに送信する (draft-ietf-webtrans-http2-14 Section 6.12 MUST)。
+
+3. **handle_event の DataReceived 分岐で END_STREAM を返信** (L777-L789): `poll_event` ループの後、`wt_session.state() == Closed && !responded_end_stream_on_close` をチェックし、END_STREAM を返信する。このチェックは `end_stream` 判定 (L807) より前に置くことで、end_stream=true と WT_CLOSE_SESSION が同一 DATA フレームで届いた場合でも正しく END_STREAM を返信できる。
+
+### テスト追加
+
+- `tests/test_webtransport/root.rs`:
+  - `test_close_double_call_errors`: close() 二重呼び出しが SessionStateError になること
+  - `test_close_emits_wt_close_session_capsule`: close() が WT_CLOSE_SESSION capsule を出力すること
+
+- `crates/tokio-http2/tests/test_webtransport.rs`:
+  - `test_wt_close_sends_end_stream`: サーバー close → クライアントが END_STREAM を受信
+  - `test_wt_close_received_sends_end_stream`: クライアント close → サーバーが END_STREAM を返信
+  - `test_wt_close_same_frame_end_stream`: end_stream=true + WT_CLOSE_SESSION 同梱 → END_STREAM 返信

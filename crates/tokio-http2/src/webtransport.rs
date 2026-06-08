@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use shiguredo_http2::webtransport::{
-    WtConfig, WtEvent, WtSession, WtStreamId, stream::stream_id as wt_stream_id,
+    WtConfig, WtEvent, WtSession, WtSessionState, WtStreamId, stream::stream_id as wt_stream_id,
 };
 use shiguredo_http2::{Event, HeaderField, StreamId};
 
@@ -139,6 +139,7 @@ impl WtServerRequest {
                 stream_channels: HashMap::new(),
                 peer_closed_bidi_count: 0,
                 peer_closed_uni_count: 0,
+                responded_end_stream_on_close: false,
             };
             state.run().await
         });
@@ -608,6 +609,8 @@ struct DriverState {
     peer_closed_bidi_count: u64,
     /// ピア側から開いて閉じた単方向ストリームの数 (WT_MAX_STREAMS 自動発行用)
     peer_closed_uni_count: u64,
+    /// WT_CLOSE_SESSION 受信時に END_STREAM で応答済みか
+    responded_end_stream_on_close: bool,
 }
 
 impl DriverState {
@@ -727,9 +730,15 @@ impl DriverState {
                 let res = self.wt_session.close(error_code, &reason).map_err(wt_err);
                 if res.is_ok() {
                     self.flush_wt_output().await?;
+                    // draft-ietf-webtrans-http2-14 Section 6.12 (L1360-L1361):
+                    // WT_CLOSE_SESSION 送信後は MUST half-close the stream。
+                    // RFC 9113 Section 6.9.1: 空 DATA + END_STREAM はフロー制御ウィンドウ空きなしでも送信可能。
+                    self.conn
+                        .send_data(self.connect_stream_id, vec![], true)
+                        .await?;
+                    self.responded_end_stream_on_close = true;
                 }
                 let _ = ack.send(res);
-                // Close コマンドを受けたら driver を終了する
                 return Ok(false);
             }
             DriverCmd::Drain { ack } => {
@@ -762,6 +771,21 @@ impl DriverState {
 
                 while let Some(wt_ev) = self.wt_session.poll_event() {
                     self.dispatch_wt_event(wt_ev)?;
+                }
+
+                // draft-ietf-webtrans-http2-14 Section 6.12 (L1364-L1365):
+                // WT_CLOSE_SESSION 受信時は MUST close the stream with END_STREAM。
+                // end_stream=true と WT_CLOSE_SESSION が同一 DATA フレームに
+                // 含まれている場合でも、先に END_STREAM を返信する必要があるため
+                // このチェックは end_stream 判定より前に置く。
+                if self.wt_session.state() == WtSessionState::Closed
+                    && !self.responded_end_stream_on_close
+                {
+                    self.conn
+                        .send_data(self.connect_stream_id, vec![], true)
+                        .await?;
+                    self.responded_end_stream_on_close = true;
+                    return Err(Error::ConnectionClosed);
                 }
 
                 // draft-ietf-webtrans-http2-14 Section 6: 受信時にフロー制御を更新する

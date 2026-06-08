@@ -1,5 +1,7 @@
 use shiguredo_http2::connection::Role;
-use shiguredo_http2::webtransport::{WtConfig, WtSession, WtSessionState, stream};
+use shiguredo_http2::webtransport::{
+    Capsule, CapsuleDecoder, WtConfig, WtSession, WtSessionState, stream,
+};
 
 #[test]
 fn test_client_session_creation() {
@@ -67,4 +69,44 @@ fn test_drain_session() {
 
     session.drain().unwrap();
     assert_eq!(session.state(), WtSessionState::Draining);
+}
+
+/// `close()` の二重呼び出しが `SessionStateError` になることを確認する
+#[test]
+fn test_close_double_call_errors() {
+    let mut session = WtSession::client(WtConfig::default());
+    session.initiate().unwrap();
+
+    session.close(0, "first close").unwrap();
+    assert_eq!(session.state(), WtSessionState::Closed);
+
+    let err = session.close(1, "second close").unwrap_err();
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::SessionStateError
+    );
+}
+
+/// `close()` が WT_CLOSE_SESSION capsule を出力することを確認する
+#[test]
+fn test_close_emits_wt_close_session_capsule() {
+    let mut session = WtSession::client(WtConfig::default());
+    session.initiate().unwrap();
+
+    session.close(42, "reason").unwrap();
+    assert!(session.has_output());
+
+    let out = session.poll_output().expect("output expected");
+
+    let mut decoder = CapsuleDecoder::new();
+    decoder.feed(&out);
+    let capsule = decoder.decode().unwrap().expect("capsule expected");
+
+    match capsule {
+        Capsule::WtCloseSession { error_code, reason } => {
+            assert_eq!(error_code, 42);
+            assert_eq!(reason, "reason");
+        }
+        other => panic!("expected WtCloseSession, got {other:?}"),
+    }
 }
