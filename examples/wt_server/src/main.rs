@@ -139,7 +139,7 @@ async fn handle_connection(mut conn: ServerConnection, reject_connect: bool) -> 
         return Ok(());
     }
 
-    let session = req.accept(WtConfig::default()).await?;
+    let session = req.accept(WtConfig::default(), None).await?;
     log::info!(
         "[{remote}] session accepted (session_id={})",
         session.session_id()
