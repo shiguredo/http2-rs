@@ -68,7 +68,7 @@ pub mod capsule_type {
 }
 
 /// WT_CLOSE_SESSION のメッセージ最大長
-const MAX_CLOSE_REASON_LEN: usize = 1024;
+pub(crate) const MAX_CLOSE_REASON_LEN: usize = 1024;
 
 /// WebTransport アプリケーションエラーコードの最大値 (32-bit)
 ///
@@ -242,13 +242,16 @@ impl CapsuleEncoder {
                 self.encode_varint(*maximum);
             }
             Capsule::WtCloseSession { error_code, reason } => {
-                // reason は最大 1024 バイト
                 let reason_bytes = reason.as_bytes();
-                let reason_len = reason_bytes.len().min(MAX_CLOSE_REASON_LEN);
+                debug_assert!(
+                    reason_bytes.len() <= MAX_CLOSE_REASON_LEN,
+                    "WT_CLOSE_SESSION reason length already checked in WtSession::close()"
+                );
+                let reason_len = reason_bytes.len();
                 let payload_len = 4 + reason_len; // 32-bit error code + reason
                 self.encode_header(capsule_type::WT_CLOSE_SESSION, payload_len);
                 self.buffer.extend_from_slice(&error_code.to_be_bytes());
-                self.buffer.extend_from_slice(&reason_bytes[..reason_len]);
+                self.buffer.extend_from_slice(reason_bytes);
             }
             Capsule::WtDrainSession => {
                 self.encode_header(capsule_type::WT_DRAIN_SESSION, 0);

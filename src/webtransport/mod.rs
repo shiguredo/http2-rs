@@ -28,6 +28,7 @@ pub mod varint;
 use std::collections::{HashMap, VecDeque};
 
 use crate::connection::Role;
+use crate::webtransport::capsule::MAX_CLOSE_REASON_LEN;
 
 pub use capsule::{Capsule, CapsuleDecoder, CapsuleEncoder, capsule_type};
 pub use error::{WtError, WtErrorKind, WtResult};
@@ -446,6 +447,16 @@ impl WtSession {
     pub fn close(&mut self, error_code: u32, reason: &str) -> WtResult<()> {
         if self.state == WtSessionState::Closed {
             return Err(WtError::session_state_error("session already closed"));
+        }
+
+        // draft-ietf-webtrans-http2-14 Section 6.12 (L1355-L1358):
+        // reason の長さは MUST NOT exceed 1024 bytes
+        if reason.len() > MAX_CLOSE_REASON_LEN {
+            return Err(WtError::capsule_decode(format!(
+                "WT_CLOSE_SESSION reason exceeds {} bytes (got {})",
+                MAX_CLOSE_REASON_LEN,
+                reason.len(),
+            )));
         }
 
         // WT_CLOSE_SESSION Capsule をエンコード

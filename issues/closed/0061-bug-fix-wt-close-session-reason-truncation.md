@@ -2,6 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-08
+- Completed: 2026-06-08
 - Polished: 2026-06-08
 - Model: deepseek-v4-pro
 - Branch: feature/fix-wt-close-session-reason-truncation
@@ -117,3 +118,10 @@ Capsule::WtCloseSession { error_code, reason } => {
 ## 参照仕様
 
 - draft-ietf-webtrans-http2-14 Section 6.12 (WT_CLOSE_SESSION Capsule), L1321-L1370
+
+## 解決方法
+
+- `src/webtransport/mod.rs` (`WtSession::close()`): reason 長が 1024 バイトを超えると `WtError::capsule_decode` を返す。
+- `src/webtransport/capsule.rs` (`CapsuleEncoder::encode()`): `.min(MAX_CLOSE_REASON_LEN)` を `debug_assert!` に置き換え。
+- `MAX_CLOSE_REASON_LEN` を `pub(crate)` に変更。
+- `tests/test_webtransport/root.rs`: 境界値テスト 2 件追加。
