@@ -2,6 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-08
+- Completed: 2026-06-08
 - Polished: 2026-06-08
 - Model: deepseek-v4-pro
 - Branch: feature/fix-wt-reset-stream-unregistered-error
@@ -122,3 +123,15 @@ fn test_wt_reset_stream_unknown_stream_id() {
 
 - draft-ietf-webtrans-http2-14 Section 3.4 (Session Termination and Error Handling), L344-L380
 - draft-ietf-webtrans-http2-14 Section 6.2 (WT_RESET_STREAM Capsule), L826-L835
+
+## 解決方法
+
+### 変更ファイル
+
+- `src/webtransport/mod.rs` — `Capsule::WtResetStream` ハンドラの `if let Some(stream)` を `ok_or_else` に変更
+- `tests/test_webtransport/integration.rs` — 単体テスト 1 件追加
+- `CHANGES.md` — [FIX] エントリ追記
+
+### src/webtransport/mod.rs
+
+`handle_capsule` の `Capsule::WtResetStream` 分岐 (L586-L615) において、`if let Some(stream) = self.streams.get_mut(&stream_id)` を `let stream = self.streams.get_mut(&stream_id).ok_or_else(|| WtError::stream_state_error(...))?` に変更した。これにより未登録ストリームへの WT_RESET_STREAM 受信時に `WEBTRANSPORT_STREAM_STATE_ERROR` が返る (draft-ietf-webtrans-http2-14 Section 6.2 MUST)。

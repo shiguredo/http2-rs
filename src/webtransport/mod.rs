@@ -588,26 +588,33 @@ impl WtSession {
                 error_code,
                 reliable_size,
             } => {
-                if let Some(stream) = self.streams.get_mut(&stream_id) {
-                    // draft-ietf-webtrans-http2-14 Section 6.2:
-                    // クローズ済みまたはリセット済みのストリームへの WT_RESET_STREAM は
-                    // WEBTRANSPORT_STREAM_STATE_ERROR
-                    if !stream.can_recv() {
-                        return Err(WtError::stream_state_error(
-                            "WT_RESET_STREAM received for stream not in valid state",
-                        ));
-                    }
-                    // draft-ietf-webtrans-http2-14 Section 6.2: Reliable Size 検証
-                    // reliable_size が既に受信したオフセットより小さい場合はセッションエラー
-                    if reliable_size < stream.recv_offset() {
-                        return Err(WtError::stream_state_error(format!(
-                            "WT_RESET_STREAM reliable_size {} is less than recv_offset {}",
-                            reliable_size,
-                            stream.recv_offset()
-                        )));
-                    }
-                    stream.recv_reset();
+                // draft-ietf-webtrans-http2-14 Section 6.2 (L826-L835):
+                // 存在しないストリームへの WT_RESET_STREAM は MUST でエラー。
+                let stream = self.streams.get_mut(&stream_id).ok_or_else(|| {
+                    WtError::stream_state_error(format!(
+                        "WT_RESET_STREAM received for unknown stream {stream_id}"
+                    ))
+                })?;
+
+                // draft-ietf-webtrans-http2-14 Section 6.2:
+                // クローズ済みまたはリセット済みのストリームへの WT_RESET_STREAM は
+                // WEBTRANSPORT_STREAM_STATE_ERROR
+                if !stream.can_recv() {
+                    return Err(WtError::stream_state_error(
+                        "WT_RESET_STREAM received for stream not in valid state",
+                    ));
                 }
+                // draft-ietf-webtrans-http2-14 Section 6.2: Reliable Size 検証
+                // reliable_size が既に受信したオフセットより小さい場合はセッションエラー
+                if reliable_size < stream.recv_offset() {
+                    return Err(WtError::stream_state_error(format!(
+                        "WT_RESET_STREAM reliable_size {} is less than recv_offset {}",
+                        reliable_size,
+                        stream.recv_offset()
+                    )));
+                }
+                stream.recv_reset();
+
                 self.events.push_back(WtEvent::StreamReset {
                     stream_id,
                     error_code,

@@ -377,3 +377,25 @@ fn stop_sending_duplicate_errors() {
         shiguredo_http2::webtransport::WtErrorKind::StreamStateError
     );
 }
+
+/// 未登録ストリームへの WT_RESET_STREAM が stream_state_error を返すことを確認する。
+#[test]
+fn wt_reset_stream_unknown_stream_id_errors() {
+    let mut session = WtSession::server(WtConfig::default());
+    session.initiate().unwrap();
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtResetStream {
+        stream_id: 0,
+        error_code: 1,
+        reliable_size: 0,
+    });
+    session.feed(&encoder.take()).unwrap();
+    let err = session.process().unwrap_err();
+
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason.contains("unknown stream"));
+}
