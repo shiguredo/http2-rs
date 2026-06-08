@@ -129,7 +129,10 @@ async fn test_wt_bidi_echo() {
         };
 
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
-        let mut session = req.accept(WtConfig::default()).await.expect("wt accept");
+        let mut session = req
+            .accept(WtConfig::default(), None)
+            .await
+            .expect("wt accept");
 
         // bidi を 1 つ受け取ってエコーする
         let mut bidi = session.accept_bidi().await.expect("bidi");
@@ -316,7 +319,10 @@ async fn test_wt_uni_echo() {
         let mut conn = server.accept().await.expect("accept");
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
-        let mut session = req.accept(WtConfig::default()).await.expect("wt accept");
+        let mut session = req
+            .accept(WtConfig::default(), None)
+            .await
+            .expect("wt accept");
         let mut uni_recv = session.accept_uni().await.expect("uni recv");
         let data = uni_recv.recv().await.expect("recv").expect("data");
         let uni_send = session.open_uni().await.expect("open uni");
@@ -386,7 +392,10 @@ async fn test_wt_datagram_echo() {
         let mut conn = server.accept().await.expect("accept");
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
-        let mut session = req.accept(WtConfig::default()).await.expect("wt accept");
+        let mut session = req
+            .accept(WtConfig::default(), None)
+            .await
+            .expect("wt accept");
         let data = session.recv_datagram().await.expect("datagram");
         session.send_datagram(data).await.expect("echo");
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -444,7 +453,10 @@ async fn test_wt_close() {
         let mut conn = server.accept().await.expect("accept");
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
-        let session = req.accept(WtConfig::default()).await.expect("wt accept");
+        let session = req
+            .accept(WtConfig::default(), None)
+            .await
+            .expect("wt accept");
         session.close(99, "shutdown").await.expect("close");
     });
 
@@ -495,7 +507,10 @@ async fn test_wt_drain() {
         let mut conn = server.accept().await.expect("accept");
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
-        let mut session = req.accept(WtConfig::default()).await.expect("wt accept");
+        let mut session = req
+            .accept(WtConfig::default(), None)
+            .await
+            .expect("wt accept");
         session.drain().await.expect("drain");
         // クライアント側が capsule を受信する余地を与える
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -550,7 +565,10 @@ async fn test_wt_close_sends_end_stream() {
         let mut conn = server.accept().await.expect("accept");
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
-        let session = req.accept(WtConfig::default()).await.expect("wt accept");
+        let session = req
+            .accept(WtConfig::default(), None)
+            .await
+            .expect("wt accept");
         session.close(0, "done").await.expect("close");
     });
 
@@ -613,7 +631,10 @@ async fn test_wt_close_received_sends_end_stream() {
         let mut conn = server.accept().await.expect("accept");
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
-        let _session = req.accept(WtConfig::default()).await.expect("wt accept");
+        let _session = req
+            .accept(WtConfig::default(), None)
+            .await
+            .expect("wt accept");
         // ドライバーが WT_CLOSE_SESSION を処理し END_STREAM を返信するのを待つ
         tokio::time::sleep(Duration::from_secs(2)).await;
     });
@@ -685,7 +706,10 @@ async fn test_wt_close_same_frame_end_stream() {
         let mut conn = server.accept().await.expect("accept");
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
-        let _session = req.accept(WtConfig::default()).await.expect("wt accept");
+        let _session = req
+            .accept(WtConfig::default(), None)
+            .await
+            .expect("wt accept");
         tokio::time::sleep(Duration::from_secs(2)).await;
     });
 
@@ -731,5 +755,185 @@ async fn test_wt_close_same_frame_end_stream() {
         end_stream_received,
         "サーバーが END_STREAM を返信しなかった"
     );
+    server_task.await.expect("server join");
+}
+
+/// Origin ヘッダーつきの CONNECT 要求ヘッダー
+fn connect_request_with_origin(origin: &str) -> Vec<HeaderField> {
+    vec![
+        HeaderField::new(":method", "CONNECT").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":protocol", "webtransport").unwrap(),
+        HeaderField::new("origin", origin).unwrap(),
+    ]
+}
+
+/// 許可された Origin と一致する場合は 200 で受理されることを確認する。
+#[tokio::test]
+async fn test_wt_origin_allowed() {
+    let tls = test_tls();
+    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
+        .await
+        .expect("bind");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("accept");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let _session = req
+            .accept(WtConfig::default(), Some(b"https://example.com"))
+            .await
+            .expect("wt accept");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("connect");
+    loop {
+        let ev = client.next_event().await.expect("client event");
+        if matches!(ev, Event::SettingsReceived { ack: false }) {
+            break;
+        }
+    }
+    let connect_stream = client
+        .send_request(connect_request_with_origin("https://example.com"), false)
+        .await
+        .expect("send CONNECT");
+
+    let mut got_200 = false;
+    for _ in 0..10 {
+        let ev = tokio::time::timeout(Duration::from_secs(5), client.next_event())
+            .await
+            .expect("timeout")
+            .expect("client event");
+        if let Event::HeadersReceived {
+            stream_id, headers, ..
+        } = ev
+            && stream_id == connect_stream
+        {
+            let status = headers
+                .iter()
+                .find(|h| h.name() == b":status")
+                .expect("status header")
+                .value()
+                .to_vec();
+            assert_eq!(status.as_slice(), b"200");
+            got_200 = true;
+            break;
+        }
+    }
+    assert!(got_200, "Origin が許可されなかった");
+    server_task.await.expect("server join");
+}
+
+/// 許可されていない Origin の場合は 403 で拒否されることを確認する。
+#[tokio::test]
+async fn test_wt_origin_rejected() {
+    let tls = test_tls();
+    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
+        .await
+        .expect("bind");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("accept");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        match req
+            .accept(WtConfig::default(), Some(b"https://example.com"))
+            .await
+        {
+            Ok(_) => panic!("expected origin rejection but succeeded"),
+            Err(err) => assert!(
+                format!("{err}").contains("origin rejected"),
+                "expected origin rejection, got {err}"
+            ),
+        }
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("connect");
+    loop {
+        let ev = client.next_event().await.expect("client event");
+        if matches!(ev, Event::SettingsReceived { ack: false }) {
+            break;
+        }
+    }
+    let connect_stream = client
+        .send_request(connect_request_with_origin("https://evil.com"), false)
+        .await
+        .expect("send CONNECT");
+
+    let mut got_403 = false;
+    for _ in 0..10 {
+        let ev = tokio::time::timeout(Duration::from_secs(5), client.next_event())
+            .await
+            .expect("timeout")
+            .expect("client event");
+        if let Event::HeadersReceived {
+            stream_id, headers, ..
+        } = ev
+            && stream_id == connect_stream
+        {
+            let status = headers
+                .iter()
+                .find(|h| h.name() == b":status")
+                .expect("status header")
+                .value()
+                .to_vec();
+            assert_eq!(status.as_slice(), b"403");
+            got_403 = true;
+            break;
+        }
+    }
+    assert!(got_403, "Origin が拒否されなかった");
+    server_task.await.expect("server join");
+}
+
+/// Origin ヘッダーが存在しない場合に 403 で拒否されることを確認する。
+#[tokio::test]
+async fn test_wt_origin_missing_rejected() {
+    let tls = test_tls();
+    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
+        .await
+        .expect("bind");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("accept");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        match req
+            .accept(WtConfig::default(), Some(b"https://example.com"))
+            .await
+        {
+            Ok(_) => panic!("expected missing origin error but succeeded"),
+            Err(err) => assert!(
+                format!("{err}").contains("Origin header is required but missing"),
+                "expected missing origin error, got {err}"
+            ),
+        }
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("connect");
+    loop {
+        let ev = client.next_event().await.expect("client event");
+        if matches!(ev, Event::SettingsReceived { ack: false }) {
+            break;
+        }
+    }
+    let _connect_stream = client
+        .send_request(connect_request(), false)
+        .await
+        .expect("send CONNECT");
+
+    // サーバー側のエラーチェックのみで十分
     server_task.await.expect("server join");
 }

@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-06-08
+- Completed: 2026-06-08
 - Polished: 2026-06-08
 - Model: deepseek-v4-pro
 - Branch: feature/add-origin-header-verification
@@ -43,6 +44,11 @@ draft-ietf-webtrans-http2-14 Section 3.2 (L290-L301):
 仕様は「In a Web context」に限定して Origin を MUST としている。サーバー間通信や非ブラウザクライアントなど、Web context でないケースでは Origin が存在しない可能性がある。本実装では `allowed_origin: None` を指定することで検証をスキップできるようにし、呼び出し側がコンテキストを判断する。
 
 ## 解決方法
+
+- `WtServerRequest::accept()` に `allowed_origin: Option<&[u8]>` パラメータを追加。`Some` の場合、Origin ヘッダーを RFC 6454 形式で ASCII case-insensitive 比較し、不一致/不在時に 403 で拒否。`None` で検証スキップ。
+- 全呼び出し元を `accept(config, None)` に更新。
+- E2E テスト 3 件追加 (allowed/rejected/missing)。
+- `CHANGES.md` に [CHANGE] エントリ追記 (後方互換なし)。
 
 ### tokio-http2 層 (`crates/tokio-http2/src/webtransport.rs`)
 

@@ -100,12 +100,44 @@ impl WtServerRequest {
     ///
     /// `:status=200` レスポンスを送信し、`WtSession` を生成して
     /// 双方向エコーやストリーム受信が可能な状態にする。
-    pub async fn accept(self, config: WtConfig) -> Result<WtServerSession> {
+    ///
+    /// `allowed_origin` に `Some` を指定すると、リクエストの Origin ヘッダーを
+    /// 検証する (draft-ietf-webtrans-http2-14 Section 3.2 MUST)。
+    /// Origin が一致しないか存在しない場合は 403 を返す。
+    /// `None` を指定すると検証をスキップする (非 Web context 向け)。
+    pub async fn accept(
+        self,
+        config: WtConfig,
+        allowed_origin: Option<&[u8]>,
+    ) -> Result<WtServerSession> {
+        // draft-ietf-webtrans-http2-14 Section 3.2 (L290-L301):
+        // Web context では Origin ヘッダーを MUST verify する。
+        // Origin の形式は RFC 6454 Section 7 で定義される。
+        // self の部分ムーブ前に origin を取得する必要がある。
+        let origin = self.origin().map(|o| o.to_vec());
+
         let Self {
             mut conn,
             stream_id,
             ..
         } = self;
+
+        if let Some(allowed) = allowed_origin {
+            let actual = origin.ok_or_else(|| {
+                Error::InvalidArgument("Origin header is required but missing".into())
+            })?;
+            // RFC 6454 Section 7: Origin = scheme "://" host [ ":" port ]
+            // ASCII case-insensitive で比較する
+            if !actual.eq_ignore_ascii_case(allowed) {
+                let response = vec![HeaderField::from_static(b":status", b"403")];
+                conn.send_response(stream_id, response, true).await?;
+                return Err(Error::InvalidArgument(format!(
+                    "origin rejected: allowed={}, actual={}",
+                    String::from_utf8_lossy(allowed),
+                    String::from_utf8_lossy(&actual),
+                )));
+            }
+        }
 
         // draft-ietf-webtrans-http2-14 Section 3.2:
         // WebTransport セッション確立時はサーバーが 2xx ステータスを返し、
