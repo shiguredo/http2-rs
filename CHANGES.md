@@ -132,6 +132,8 @@
   - @voluntas
 - [FIX] `handle_data` でストリームレベルのフロー制御違反 (`consume_recv`) が接続エラーとして伝播していた問題を、`handle_window_update` と同様に RST_STREAM に変換する (issue 0051 レビュー指摘)
   - @voluntas
+- [FIX] WT_CLOSE_SESSION 送信時に CONNECT ストリームに END_STREAM を自動送信し、受信時に END_STREAM を自動返信する (issue 0058)
+  - @voluntas
 
 ### misc
 
