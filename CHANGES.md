@@ -136,6 +136,8 @@
   - @voluntas
 - [FIX] WT_STOP_SENDING 受信時に Ready/Send 状態のストリームに WT_RESET_STREAM を自動応答する (issue 0059)
   - @voluntas
+- [FIX] 未登録ストリームへの WT_RESET_STREAM 受信時に `WEBTRANSPORT_STREAM_STATE_ERROR` を返す (issue 0060)
+  - @voluntas
 
 ### misc
 
