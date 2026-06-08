@@ -617,6 +617,9 @@ impl WtSession {
                 stream_id,
                 error_code,
             } => {
+                // 借用回避: 可変借用ブロックを抜けてから reset_stream を呼ぶ
+                let should_reset = self.streams.get(&stream_id).is_some_and(|s| s.can_send());
+
                 if let Some(stream) = self.streams.get_mut(&stream_id) {
                     // draft-ietf-webtrans-http2-14 Section 6.3:
                     // 2 回目の WT_STOP_SENDING は WEBTRANSPORT_STREAM_STATE_ERROR
@@ -626,6 +629,13 @@ impl WtSession {
                         ));
                     }
                     stream.set_stop_sending_received();
+                }
+
+                // draft-ietf-webtrans-http2-14 Section 6.3 + RFC 9000 Section 3.5:
+                // Ready または Send 状態のストリームには WT_RESET_STREAM を MUST 応答する。
+                // error_code のコピーは RFC 9000 Section 3.5 の SHOULD に従う。
+                if should_reset {
+                    let _ = self.reset_stream(stream_id, error_code);
                 }
 
                 self.events.push_back(WtEvent::StopSending {

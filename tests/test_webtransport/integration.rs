@@ -194,3 +194,186 @@ fn getters_return_expected_state() {
     let cfg = session.config();
     assert_eq!(cfg.initial_max_data, WtConfig::default().initial_max_data);
 }
+
+/// Ready 状態のストリームに WT_STOP_SENDING を受信すると
+/// WT_RESET_STREAM が自動応答されることを確認する。
+#[test]
+fn stop_sending_triggers_auto_reset_ready_state() {
+    // サーバー側のピア (client) が開いた bidi ストリーム (id=0) に対して
+    // サーバーが WT_STOP_SENDING を送り、ピアが WT_RESET_STREAM で応答するケースを模擬する。
+    // ここではサーバーが stop_sending を送信した扱いでテストする。
+    let mut session = WtSession::client(WtConfig::default());
+    session.initiate().unwrap();
+
+    // クライアント側で bidi ストリームを開く (id=0, Ready → このストリームはピアから見て Ready)
+    let stream_id = session.open_bidi_stream().unwrap();
+
+    // ピア (サーバー) から WT_STOP_SENDING を受信
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id,
+        error_code: 42,
+    });
+    session.feed(&encoder.take()).unwrap();
+    session.process().unwrap();
+
+    // WT_RESET_STREAM が出力バッファに含まれていることを確認
+    assert!(session.has_output());
+
+    let out = session.poll_output().expect("output expected");
+    let capsule = decode_single_capsule(&out);
+    match capsule {
+        Capsule::WtResetStream {
+            stream_id: sid,
+            error_code,
+            ..
+        } => {
+            assert_eq!(sid, stream_id);
+            assert_eq!(error_code, 42);
+        }
+        other => panic!("expected WtResetStream, got {other:?}"),
+    }
+}
+
+/// Send 状態のストリームに WT_STOP_SENDING を受信すると
+/// WT_RESET_STREAM が自動応答されることを確認する。
+#[test]
+fn stop_sending_triggers_auto_reset_send_state() {
+    let mut session = WtSession::client(WtConfig::default());
+    session.initiate().unwrap();
+
+    let stream_id = session.open_bidi_stream().unwrap();
+
+    // 送信して Send 状態に遷移させる
+    session
+        .send_stream_data(stream_id, b"hello", false)
+        .unwrap();
+
+    // 出力を消費してから WT_STOP_SENDING を受信
+    while session.poll_output().is_some() {}
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id,
+        error_code: 99,
+    });
+    session.feed(&encoder.take()).unwrap();
+    session.process().unwrap();
+
+    assert!(session.has_output());
+
+    let out = session.poll_output().expect("output expected");
+    let capsule = decode_single_capsule(&out);
+    match capsule {
+        Capsule::WtResetStream {
+            stream_id: sid,
+            error_code,
+            ..
+        } => {
+            assert_eq!(sid, stream_id);
+            assert_eq!(error_code, 99);
+        }
+        other => panic!("expected WtResetStream, got {other:?}"),
+    }
+}
+
+/// DataSent 状態のストリームでは WT_STOP_SENDING 受信時に
+/// WT_RESET_STREAM が生成されないことを確認する。
+#[test]
+fn stop_sending_no_auto_reset_data_sent_state() {
+    let mut session = WtSession::client(WtConfig::default());
+    session.initiate().unwrap();
+
+    let stream_id = session.open_bidi_stream().unwrap();
+    session.send_stream_data(stream_id, b"done", true).unwrap();
+
+    // 出力を消費
+    while session.poll_output().is_some() {}
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id,
+        error_code: 1,
+    });
+    session.feed(&encoder.take()).unwrap();
+    session.process().unwrap();
+
+    // DataSent では WT_RESET_STREAM が生成されない
+    assert!(!session.has_output());
+
+    // ただし WtEvent::StopSending は発行される
+    let mut got_stop_sending = false;
+    while let Some(ev) = session.poll_event() {
+        if matches!(
+            ev,
+            WtEvent::StopSending {
+                stream_id: sid,
+                error_code,
+            } if sid == stream_id && error_code == 1
+        ) {
+            got_stop_sending = true;
+        }
+    }
+    assert!(got_stop_sending);
+}
+
+/// 存在しないストリーム ID への WT_STOP_SENDING はエラーにならず
+/// WtEvent::StopSending を発行することを確認する。
+#[test]
+fn stop_sending_unknown_stream_emits_event() {
+    let mut session = WtSession::client(WtConfig::default());
+    session.initiate().unwrap();
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: 9999,
+        error_code: 0,
+    });
+    session.feed(&encoder.take()).unwrap();
+    session.process().unwrap();
+
+    assert!(!session.has_output());
+
+    let mut got_stop_sending = false;
+    while let Some(ev) = session.poll_event() {
+        if matches!(ev, WtEvent::StopSending { .. }) {
+            got_stop_sending = true;
+        }
+    }
+    assert!(got_stop_sending);
+}
+
+/// 重複 WT_STOP_SENDING 受信は stream_state_error になることを確認する。
+#[test]
+fn stop_sending_duplicate_errors() {
+    let mut session = WtSession::client(WtConfig::default());
+    session.initiate().unwrap();
+
+    let stream_id = session.open_bidi_stream().unwrap();
+
+    // 1 回目の WT_STOP_SENDING
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id,
+        error_code: 0,
+    });
+    session.feed(&encoder.take()).unwrap();
+    session.process().unwrap();
+
+    // 出力消費
+    while session.poll_output().is_some() {}
+    while session.poll_event().is_some() {}
+
+    // 2 回目の WT_STOP_SENDING はエラー
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id,
+        error_code: 0,
+    });
+    session.feed(&encoder.take()).unwrap();
+    let err = session.process().unwrap_err();
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+}
