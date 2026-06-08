@@ -138,6 +138,8 @@
   - @voluntas
 - [FIX] 未登録ストリームへの WT_RESET_STREAM 受信時に `WEBTRANSPORT_STREAM_STATE_ERROR` を返す (issue 0060)
   - @voluntas
+- [FIX] WT_CLOSE_SESSION の reason が 1024 バイト超過時にエラーを返す (issue 0061)
+  - @voluntas
 
 ### misc
 

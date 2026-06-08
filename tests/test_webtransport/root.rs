@@ -110,3 +110,28 @@ fn test_close_emits_wt_close_session_capsule() {
         other => panic!("expected WtCloseSession, got {other:?}"),
     }
 }
+
+/// reason が 1024 バイトの境界値までは正常に close() できることを確認する。
+#[test]
+fn test_close_reason_max_length_ok() {
+    let mut session = WtSession::client(WtConfig::default());
+    session.initiate().unwrap();
+
+    let reason = "a".repeat(1024);
+    session.close(0, &reason).unwrap();
+    assert_eq!(session.state(), WtSessionState::Closed);
+}
+
+/// reason が 1024 バイトを超えると close() がエラーを返すことを確認する。
+#[test]
+fn test_close_reason_exceeds_max_length_errors() {
+    let mut session = WtSession::client(WtConfig::default());
+    session.initiate().unwrap();
+
+    let reason = "a".repeat(1025);
+    let err = session.close(0, &reason).unwrap_err();
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::CapsuleDecode
+    );
+}
