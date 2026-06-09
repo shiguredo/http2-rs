@@ -22,6 +22,7 @@
 pub mod capsule;
 pub mod error;
 pub mod flow_control;
+pub mod init;
 pub mod stream;
 pub mod varint;
 
@@ -33,6 +34,7 @@ use crate::webtransport::capsule::MAX_CLOSE_REASON_LEN;
 pub use capsule::{Capsule, CapsuleDecoder, CapsuleEncoder, capsule_type};
 pub use error::{WtError, WtErrorKind, WtResult};
 pub use flow_control::WtFlowControl;
+pub use init::WtInit;
 pub use stream::{RecvState, SendState, WtStream, WtStreamId};
 pub use varint::{MAX_VALUE, decode as varint_decode, encode as varint_encode, encoded_len};
 
@@ -114,6 +116,41 @@ impl Default for WtConfig {
             initial_max_stream_data_uni: 262_144,         // 256 KiB
             initial_max_streams_bidi: 100,
             initial_max_streams_uni: 100,
+        }
+    }
+}
+
+impl WtConfig {
+    /// **WebTransport-Init を受信した側** の `WtConfig` に対し、ヘッダー由来の値を
+    /// SETTINGS 由来の値とマージする
+    ///
+    /// draft-ietf-webtrans-http2-14 Section 4.3 (L480-L483) の MUST 規則:
+    /// > If both the SETTINGS and the header field are present when a WebTransport
+    /// > session is established, the endpoint MUST use the greater of the two values
+    /// > for each corresponding initial flow control value.
+    ///
+    /// Section 4.3.2 (L527-L537) の各キーの意味は受信側 (= recipient) 視点で:
+    /// - `u`: ピアが開く単方向ストリームの初期最大データ量 → `initial_max_stream_data_uni`
+    /// - `bl`: ピア (= sender) が開く双方向ストリームの初期最大データ量 →
+    ///   自身視点で「ピアが開いた」ストリームなので `initial_max_stream_data_bidi_remote`
+    /// - `br`: 自身 (= recipient) が開く双方向ストリームの初期最大データ量 →
+    ///   自身視点で「自身が開いた」ストリームなので `initial_max_stream_data_bidi_local`
+    ///
+    /// 各キーは `Some(_)` のときのみ `max` で上書きし、`None` のキーには触れない。
+    /// 送信側 (クライアント) が `WebTransport-Init` をネゴシエートする前のローカル
+    /// `WtConfig` 整合用途で使う場合は sender/recipient の解釈が逆になるため
+    /// 本メソッドを直接呼ばず、別途専用 API を導入すること。
+    pub fn apply_init(&mut self, init: &WtInit) {
+        if let Some(u) = init.u {
+            self.initial_max_stream_data_uni = self.initial_max_stream_data_uni.max(u);
+        }
+        if let Some(bl) = init.bl {
+            self.initial_max_stream_data_bidi_remote =
+                self.initial_max_stream_data_bidi_remote.max(bl);
+        }
+        if let Some(br) = init.br {
+            self.initial_max_stream_data_bidi_local =
+                self.initial_max_stream_data_bidi_local.max(br);
         }
     }
 }
