@@ -63,6 +63,7 @@ fn setup_client_server() -> (Connection, Connection) {
 
 proptest! {
     /// idle ストリームへの RST_STREAM は PROTOCOL_ERROR
+    /// RFC 9113 Section 6.4: idle ストリームへの RST_STREAM 受信は PROTOCOL_ERROR の接続エラー (MUST)。
     #[test]
     fn prop_rst_stream_on_idle_is_error(stream_id in client_stream_id()) {
         let mut server = Connection::server(Limits::default());
@@ -90,6 +91,7 @@ proptest! {
     }
 
     /// サーバーが偶数のストリーム ID を受信した場合、PROTOCOL_ERROR
+    /// RFC 9113 Section 5.1.1: クライアント開始のストリームは奇数 ID でなければならず、予期しない ID の受信は PROTOCOL_ERROR の接続エラー (MUST)。
     #[test]
     fn prop_server_rejects_even_stream_id(stream_id in (1u32..=100).prop_map(|n| NonZeroStreamId::new(n * 2).expect("even non-zero is valid"))) {
         let mut server = Connection::server(Limits::default());
@@ -119,6 +121,7 @@ proptest! {
     }
 
     /// ストリーム ID が単調増加しない場合、PROTOCOL_ERROR
+    /// RFC 9113 Section 5.1.1: 新規ストリーム ID は既存のすべてより大きくなければならず、違反は PROTOCOL_ERROR の接続エラー (MUST)。
     #[test]
     fn prop_non_monotonic_stream_id_is_error(
         first_id_raw in (5u32..=100).prop_map(|n| n * 2 + 1),

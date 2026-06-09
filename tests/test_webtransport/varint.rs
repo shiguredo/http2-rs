@@ -4,6 +4,7 @@ use shiguredo_http2::webtransport::varint::{
 
 #[test]
 fn test_encoded_len() {
+    // RFC 9000 Section 16 Table 4: 1/2/4/8 バイトでそれぞれ 0-63 / 0-16383 / 0-1073741823 / 0-2^62-1 を表現する
     assert_eq!(encoded_len(0), 1);
     assert_eq!(encoded_len(63), 1);
     assert_eq!(encoded_len(64), 2);
@@ -101,7 +102,7 @@ fn test_decode_incomplete() {
 
 #[test]
 fn test_decode_non_minimal_encoding() {
-    // RFC 9000 Section 16: 非最小エンコーディングは拒否される
+    // RFC 9000 Section 16 / RFC 9297 は非最小エンコーディングを許容するが、本実装は方針として拒否する
 
     // 値 10 を 2 バイトでエンコード (最小は 1 バイト)
     // 0x40 | (10 >> 8) = 0x40, buf[1] = 10

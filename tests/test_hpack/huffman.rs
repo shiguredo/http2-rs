@@ -35,7 +35,7 @@ fn test_encode_decode_path() {
 
 #[test]
 fn test_encoded_len() {
-    // "www.example.com" should encode to 12 bytes
+    // RFC 7541 Appendix C.4.1: "www.example.com" の Huffman 符号は 12 バイト
     assert_eq!(encoded_len(b"www.example.com"), 12);
 }
 

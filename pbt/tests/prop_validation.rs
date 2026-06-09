@@ -5,7 +5,9 @@ use shiguredo_http2::{HeaderField, validation};
 
 /// PBT で生成した「ランダム通常ヘッダー」が以下の場合は除外する:
 /// - リクエストで禁止 (RFC 9113 §8.2.2): connection / keep-alive / proxy-connection
-///   / transfer-encoding / upgrade / te
+///   / transfer-encoding / upgrade
+/// - te は §8.2.2 の例外として許可される (MAY) が "trailers" 以外の値は禁止のため、
+///   ランダム値生成では除外する
 /// - PBT で固定 authority と不一致を生む可能性がある: host
 const FORBIDDEN_FOR_VALIDATION: &[&str] = &[
     "connection",
@@ -211,7 +213,7 @@ proptest! {
         prop_assert!(validation::validate_request_headers(&headers).is_err());
     }
 
-    /// 大文字を含むヘッダー名は拒否される
+    /// 大文字を含むヘッダー名は拒否される (RFC 9113 Section 8.2.1)
     #[test]
     fn prop_uppercase_header_name_rejected(
         prefix in "[a-z]{1,8}",
@@ -230,7 +232,7 @@ proptest! {
         prop_assert!(validation::validate_request_headers(&headers).is_err());
     }
 
-    /// 疑似ヘッダーの重複は拒否される
+    /// 疑似ヘッダーの重複は拒否される (RFC 9113 Section 8.3)
     #[test]
     fn prop_duplicate_pseudo_header_rejected(
         pseudo in prop_oneof![
@@ -258,7 +260,7 @@ proptest! {
         prop_assert!(validation::validate_request_headers(&headers).is_err());
     }
 
-    /// 通常ヘッダー後の疑似ヘッダーは拒否される
+    /// 通常ヘッダー後の疑似ヘッダーは拒否される (RFC 9113 Section 8.3)
     #[test]
     fn prop_pseudo_after_regular_rejected(
         extra_pseudo in prop_oneof![
@@ -302,7 +304,7 @@ proptest! {
         prop_assert!(validation::validate_trailers(&headers).is_ok());
     }
 
-    /// トレーラーに疑似ヘッダーがあると拒否される
+    /// トレーラーに疑似ヘッダーがあると拒否される (RFC 9113 Section 8.3)
     #[test]
     fn prop_trailers_with_pseudo_rejected(
         pseudo in prop_oneof![
@@ -351,7 +353,7 @@ proptest! {
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
     }
 
-    /// Extended CONNECT に :scheme がない場合は拒否される
+    /// Extended CONNECT に :scheme がない場合は拒否される (RFC 8441 Section 4: :protocol を含むリクエストには :scheme と :path が必須)
     #[test]
     fn prop_extended_connect_without_scheme_rejected(
         path in http_path(),
@@ -367,7 +369,7 @@ proptest! {
         prop_assert!(validation::validate_request_headers(&headers).is_err());
     }
 
-    /// Extended CONNECT に :path がない場合は拒否される
+    /// Extended CONNECT に :path がない場合は拒否される (RFC 8441 Section 4: :protocol を含むリクエストには :scheme と :path が必須)
     #[test]
     fn prop_extended_connect_without_path_rejected(
         scheme in http_scheme(),
@@ -478,7 +480,7 @@ proptest! {
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
     }
 
-    /// 制御文字、スペース、デリミタを含むヘッダー名は拒否される (RFC 9110 Section 5.6.2)
+    /// 制御文字、スペース、デリミタ、大文字を含むヘッダー名は拒否される (RFC 9110 Section 5.6.2 / RFC 9113 Section 8.2.1)
     #[test]
     fn prop_header_name_with_invalid_chars_rejected(
         prefix in "[a-z]{1,4}",
@@ -549,7 +551,7 @@ proptest! {
         prop_assert!(validation::validate_request_headers(&headers).is_err());
     }
 
-    /// :status = "101" のレスポンスは拒否される (RFC 9113 Section 8.3.2)
+    /// :status = "101" のレスポンスは拒否される (RFC 9113 Section 8.6: HTTP/2 は 101 (Switching Protocols) をサポートしない)
     #[test]
     fn prop_response_status_101_rejected(
         regular_headers in prop::collection::vec(

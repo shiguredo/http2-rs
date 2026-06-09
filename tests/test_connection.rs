@@ -76,6 +76,9 @@ fn test_send_settings_does_not_emit_window_update_when_default() {
 }
 
 /// HEADERS なしで CONTINUATION を送信するとエラー
+///
+/// RFC 9113 Section 6.10: 先行する HEADERS/PUSH_PROMISE/CONTINUATION の無い
+/// CONTINUATION は PROTOCOL_ERROR の接続エラーにしなければならない (MUST)。
 #[test]
 fn test_continuation_without_headers_is_error() {
     let mut server = Connection::server(Limits::default());
@@ -102,6 +105,9 @@ fn test_continuation_without_headers_is_error() {
 }
 
 /// idle ストリームへの RST_STREAM がエラー
+///
+/// RFC 9113 Section 6.4: idle ストリームを指す RST_STREAM の受信は
+/// PROTOCOL_ERROR の接続エラーとして扱わなければならない (MUST)。
 #[test]
 fn test_rst_stream_on_idle_is_error() {
     let mut server = Connection::server(Limits::default());
@@ -240,6 +246,9 @@ fn test_headers_indexed_reference_bomb_is_compression_error() {
 }
 
 /// サーバーからの ENABLE_PUSH=1 がエラー
+///
+/// RFC 9113 Section 6.5.2: クライアントは SETTINGS_ENABLE_PUSH=1 の受信を
+/// PROTOCOL_ERROR の接続エラーとして扱わなければならない (MUST)。
 #[test]
 fn test_client_rejects_enable_push_from_server() {
     let mut client = Connection::client(Limits::default());

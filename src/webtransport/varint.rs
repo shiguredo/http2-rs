@@ -137,7 +137,7 @@ pub fn encode_to_vec(value: u64) -> WtResult<Vec<u8>> {
 ///
 /// - 入力データが不足している場合 (`Incomplete`)
 /// - 非最小エンコーディングの場合 (`InvalidInput`)
-///   - RFC 9000 Section 16: 値は最小バイト数でエンコードされなければならない
+///   - RFC 9000 Section 16 はこれを要求しないが、本実装独自の厳格化として拒否する
 #[track_caller]
 pub fn decode(buf: &[u8]) -> WtResult<(u64, usize)> {
     if buf.is_empty() {
@@ -189,8 +189,8 @@ pub fn decode(buf: &[u8]) -> WtResult<(u64, usize)> {
         _ => unreachable!(),
     };
 
-    // RFC 9000 Section 16: 非最小エンコーディングを拒否する
-    // "A variable-length integer MUST use the minimum number of bytes required to encode the value."
+    // RFC 9000 Section 16 は Frame Type を除き最小エンコーディングを要求しないが、
+    // 本実装は独自方針として非最小エンコーディングを拒否する
     if encoded_len(value) != len {
         return Err(WtError::with_reason(
             WtErrorKind::InvalidInput,

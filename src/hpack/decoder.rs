@@ -224,7 +224,7 @@ impl Decoder {
         Ok(consumed)
     }
 
-    /// 文字列をデコードする
+    /// 文字列をデコードする (RFC 7541 Section 5.2: String Literal Representation)
     fn decode_string(&self, data: &[u8]) -> Result<(Vec<u8>, usize)> {
         if data.is_empty() {
             return Err(Error::hpack_error("incomplete HPACK string"));
@@ -251,6 +251,9 @@ impl Decoder {
     }
 
     /// インデックスからヘッダーフィールドを取得する
+    ///
+    /// RFC 7541 Section 2.3.3 (Index Address Space): 両テーブルの長さの合計より大きいインデックスは
+    /// デコードエラーとして扱わなければならない (MUST)
     fn get_header_by_index(&self, index: usize) -> Result<HeaderField> {
         if index <= STATIC_TABLE_SIZE {
             // 静的テーブル

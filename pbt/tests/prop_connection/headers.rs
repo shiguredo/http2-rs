@@ -46,6 +46,7 @@ fn create_continuation(
 
 proptest! {
     /// CONTINUATION フレームが先行する HEADERS なしで受信された場合、PROTOCOL_ERROR
+    /// RFC 9113 Section 6.10: CONTINUATION は END_HEADERS 未設定の HEADERS/PUSH_PROMISE/CONTINUATION に先行されなければならず、違反は PROTOCOL_ERROR の接続エラー (MUST)。
     #[test]
     fn prop_continuation_without_headers_is_error(stream_id in client_stream_id()) {
         let mut server = Connection::server(Limits::default());
@@ -72,6 +73,7 @@ proptest! {
     }
 
     /// CONTINUATION フレームのストリーム ID が一致しない場合、PROTOCOL_ERROR
+    /// RFC 9113 Section 6.10: END_HEADERS 未設定の後に異なるストリームのフレームを受信した場合は PROTOCOL_ERROR の接続エラー (MUST)。
     #[test]
     fn prop_continuation_stream_id_mismatch_is_error(
         first_id in client_stream_id(),

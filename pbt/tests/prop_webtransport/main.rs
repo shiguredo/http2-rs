@@ -31,7 +31,7 @@ proptest! {
         prop_assert_eq!(consumed, encoded_len_result);
     }
 
-    /// varint エンコード長テスト
+    /// varint エンコード長テスト (RFC 9000 Section 16 Table 4 の境界値)
     #[test]
     fn prop_varint_encoded_len(value in valid_varint_value()) {
         let len = encoded_len(value);

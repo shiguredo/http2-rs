@@ -19,7 +19,7 @@ fn test_encode_max_prefix() {
 
 #[test]
 fn test_encode_large_value() {
-    // RFC 7541 Section 5.1 の例: 1337 を 5 ビットプレフィックスでエンコード
+    // RFC 7541 Appendix C.1.2 の例: 1337 を 5 ビットプレフィックスでエンコード
     let mut buf = [0u8; 8];
     let len = encode(&mut buf, 1337, 5, 0).unwrap();
     assert_eq!(len, 3);
@@ -38,7 +38,7 @@ fn test_decode_small_value() {
 
 #[test]
 fn test_decode_large_value() {
-    // RFC 7541 Section 5.1 の例: 1337
+    // RFC 7541 Appendix C.1.2 の例: 1337
     let buf = [31u8, 154, 10];
     let (value, len) = decode(&buf, 5).unwrap();
     assert_eq!(value, 1337);

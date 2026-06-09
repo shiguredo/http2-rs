@@ -94,13 +94,14 @@ impl DynamicTable {
     fn insert_entry(&mut self, entry: HeaderField) {
         let entry_size = entry.size();
 
-        // エントリが最大サイズより大きい場合、テーブルをクリアする
+        // RFC 7541 Section 4.4 (Entry Eviction When Adding New Entries):
+        // 最大サイズより大きいエントリの追加はエラーではなく、テーブルを空にする
         if entry_size > self.max_size {
             self.clear();
             return;
         }
 
-        // サイズ制限を超えないように古いエントリを削除
+        // RFC 7541 Section 4.4: 追加前にサイズ制限を満たすまで末尾から古いエントリを退避する
         while self.size + entry_size > self.max_size {
             if let Some(removed) = self.entries.pop() {
                 self.size -= removed.size();
@@ -125,6 +126,7 @@ impl DynamicTable {
     }
 
     /// 絶対インデックス（静的テーブル + 動的テーブル）からエントリを取得する
+    /// (RFC 7541 Section 2.3.3 Index Address Space)
     ///
     /// 絶対インデックスは 1 から始まり、1-61 が静的テーブル、
     /// 62 以降が動的テーブルを指す。
@@ -167,6 +169,7 @@ impl DynamicTable {
     }
 
     /// サイズ制限を超えているエントリを削除する
+    /// (RFC 7541 Section 4.3: 最大サイズ縮小時はサイズが最大サイズ以下になるまで末尾からエントリを退避する)
     fn evict(&mut self) {
         while self.size > self.max_size {
             if let Some(removed) = self.entries.pop() {

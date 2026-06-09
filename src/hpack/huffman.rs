@@ -1090,7 +1090,7 @@ pub fn encode(buf: &mut [u8], data: &[u8]) -> Result<usize> {
         }
     }
 
-    // 残りビットがある場合、1 でパディング (EOS プレフィックス)
+    // RFC 7541 Section 5.2: 残りビットは EOS 符号の最上位ビット (すべて 1) でパディングする
     if acc_bits > 0 {
         let padding_bits = 8 - acc_bits;
         let padding_mask = (1u64 << padding_bits) - 1;
@@ -1172,7 +1172,8 @@ pub fn decode(data: &[u8]) -> Result<Vec<u8>> {
         }
     }
 
-    // 残りビットが EOS パディング (すべて 1) か検証
+    // RFC 7541 Section 5.2: パディングは EOS 符号の最上位ビット (すべて 1) と一致しなければならず、
+    // 一致しないパディングはデコードエラーとして扱わなければならない (MUST)
     if acc_bits > 0 && acc_bits <= 7 {
         let mask = (1u64 << acc_bits) - 1;
         if (acc & mask) == mask {
@@ -1183,7 +1184,7 @@ pub fn decode(data: &[u8]) -> Result<Vec<u8>> {
     }
 
     if acc_bits > 7 {
-        // 7 ビット以上残っている = 不完全なデータ
+        // RFC 7541 Section 5.2: 7 ビットより長いパディングはデコードエラーとして扱わなければならない (MUST)
         return Err(Error::hpack_error("incomplete Huffman data"));
     }
 

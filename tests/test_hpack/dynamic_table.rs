@@ -52,7 +52,7 @@ fn test_set_max_size() {
     table.insert(b"name2", b"value2").unwrap();
     assert_eq!(table.len(), 2);
 
-    // サイズを 0 に設定するとすべて削除される
+    // RFC 7541 Section 4.2: 最大サイズ 0 の設定で動的テーブルのエントリを完全にクリアできる。
     table.set_max_size(0);
     assert_eq!(table.len(), 0);
 }
@@ -77,6 +77,7 @@ fn test_find() {
     assert_eq!(result, None);
 }
 
+// RFC 7541 Section 4.4: 最大サイズより大きいエントリの追加はエラーではなく、テーブルを空にする。
 #[test]
 fn test_entry_too_large() {
     let mut table = DynamicTable::new(50);

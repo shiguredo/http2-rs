@@ -43,7 +43,7 @@ pub struct Stream {
     /// CONNECT トンネル確立済みフラグ (RFC 9113 Section 8.5)
     ///
     /// 通常の CONNECT (:protocol なし) で 2xx レスポンスが送受信された場合に true になる。
-    /// 確立後は DATA/RST_STREAM/WINDOW_UPDATE のみ許可され、HEADERS は拒否される。
+    /// 確立後は DATA/RST_STREAM/WINDOW_UPDATE/PRIORITY のみ許可され、HEADERS は拒否される。
     connect_established: bool,
     /// リクエストメソッド
     ///
@@ -74,7 +74,7 @@ pub struct Stream {
 impl Stream {
     /// 新しいストリームを生成する
     ///
-    /// RFC 9113 Section 5.2: 送信ウィンドウはリモートの initial_window_size、
+    /// RFC 9113 Section 6.5.2 / Section 6.9.2: 送信ウィンドウはリモートの initial_window_size、
     /// 受信ウィンドウはローカルの initial_window_size で初期化する。
     #[must_use]
     pub fn new(id: StreamId, send_initial_window_size: u32, recv_initial_window_size: u32) -> Self {

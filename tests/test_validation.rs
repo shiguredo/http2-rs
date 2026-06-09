@@ -25,6 +25,7 @@ fn test_valid_connect_request() {
     assert!(validate_request_headers(&headers).is_ok());
 }
 
+// RFC 9113 Section 8.3.1: 全ての HTTP/2 リクエストは :method/:scheme/:path をちょうど 1 つずつ含まなければならない (MUST)。欠落は malformed。
 #[test]
 fn test_missing_method() {
     let headers = vec![h(":scheme", "https"), h(":path", "/")];
@@ -43,6 +44,7 @@ fn test_missing_path() {
     assert!(validate_request_headers(&headers).is_err());
 }
 
+// RFC 9113 Section 8.3: 同一の擬似ヘッダー名は field block 内に 2 回以上現れてはならない (MUST NOT)。
 #[test]
 fn test_duplicate_method() {
     let headers = vec![
@@ -54,6 +56,7 @@ fn test_duplicate_method() {
     assert!(validate_request_headers(&headers).is_err());
 }
 
+// RFC 9113 Section 8.3: 擬似ヘッダーは全ての通常フィールドより前に現れなければならない (MUST)。違反は malformed。
 #[test]
 fn test_pseudo_header_after_regular() {
     let headers = vec![
@@ -64,6 +67,7 @@ fn test_pseudo_header_after_regular() {
     assert!(validate_request_headers(&headers).is_err());
 }
 
+// RFC 9113 Section 8.2.2: Connection や Transfer-Encoding 等の接続固有ヘッダーを含むメッセージは malformed として扱わなければならない (MUST)。
 #[test]
 fn test_forbidden_connection_header() {
     let headers = vec![
@@ -98,6 +102,7 @@ fn test_te_trailers_allowed() {
     assert!(validate_request_headers(&headers).is_ok());
 }
 
+// RFC 9113 Section 8.2.2: TE は "trailers" 以外の値を含んではならない (MUST NOT)。
 #[test]
 fn test_te_gzip_forbidden() {
     let headers = vec![
@@ -125,10 +130,12 @@ fn test_te_trailers_forbidden_in_trailers() {
 #[test]
 fn test_empty_path() {
     // 空 :path は HeaderField::new では通る (scheme 依存判定のため)
+    // RFC 9113 Section 8.3.1: "http"/"https" URI で :path は空であってはならない (MUST NOT)。
     let headers = vec![h(":method", "GET"), h(":scheme", "https"), h(":path", "")];
     assert!(validate_request_headers(&headers).is_err());
 }
 
+// RFC 9113 Section 8.5: CONNECT リクエストでは :scheme と :path を省略しなければならない (MUST)。
 #[test]
 fn test_connect_with_path() {
     let headers = vec![
@@ -145,12 +152,14 @@ fn test_valid_response() {
     assert!(validate_response_headers(&headers).is_ok());
 }
 
+// RFC 9113 Section 8.3.2: :status は全てのレスポンスに含めなければならない (MUST)。
 #[test]
 fn test_response_missing_status() {
     let headers = vec![h("content-type", "text/html")];
     assert!(validate_response_headers(&headers).is_err());
 }
 
+// RFC 9113 Section 8.3: リクエスト用に定義された擬似ヘッダーはレスポンスに現れてはならない (MUST NOT)。
 #[test]
 fn test_response_with_method() {
     let headers = vec![h(":status", "200"), h(":method", "GET")];
@@ -163,6 +172,7 @@ fn test_valid_trailers() {
     assert!(validate_trailers(&headers).is_ok());
 }
 
+// RFC 9113 Section 8.3.1: サーバーは :authority と異なる Host を含むリクエストを malformed として扱うべき (SHOULD)。
 #[test]
 fn test_host_authority_mismatch() {
     let headers = vec![
@@ -187,6 +197,7 @@ fn test_host_authority_match() {
     assert!(validate_request_headers(&headers).is_ok());
 }
 
+// RFC 9113 Section 8.3: 擬似ヘッダーはトレーラーセクションに現れてはならない (MUST NOT)。
 #[test]
 fn test_trailers_with_pseudo_header() {
     let headers = vec![h(":status", "200"), h("x-trailer", "value")];
@@ -196,7 +207,7 @@ fn test_trailers_with_pseudo_header() {
 #[test]
 fn test_response_status_101_disallowed() {
     // HeaderField::new は 101 を通す (3DIGIT 検査のみ)。
-    // 101 は HTTP/2 でサポートされないため validation 側で弾く。
+    // RFC 9113 Section 8.6: HTTP/2 は 101 (Switching Protocols) をサポートしないため validation 側で弾く。
     let headers = vec![h(":status", "101")];
     assert!(validate_response_headers(&headers).is_err());
 }

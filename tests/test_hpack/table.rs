@@ -6,6 +6,7 @@ fn static_table_count() {
     assert_eq!(STATIC_TABLE.len(), 62);
 }
 
+// RFC 7541 Appendix A: 静的テーブルはインデックス 1 (:authority) から 61 (www-authenticate) で定義される。
 #[test]
 fn get_static_entry_basic() {
     let entry = get_static_entry(1).unwrap();
@@ -39,7 +40,7 @@ fn find_static_index_basic() {
 #[test]
 fn header_field_size() {
     let field = HeaderField::new("content-type", "application/json").unwrap();
-    // 12 + 16 + 32 = 60
+    // RFC 7541 Section 4.1: エントリサイズ = 名前長 + 値長 + 32 → 12 + 16 + 32 = 60
     assert_eq!(field.size(), 60);
 }
 

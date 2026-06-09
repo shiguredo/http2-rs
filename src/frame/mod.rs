@@ -505,8 +505,9 @@ impl ContinuationFrame {
 pub struct PriorityUpdateFrame {
     /// 優先度を更新するストリーム ID (非ゼロ)
     ///
-    /// RFC 9218 §7.1: Prioritized Stream ID
-    /// クライアント開始ストリーム (奇数) の ID を指定する。
+    /// RFC 9218 Section 7.1: Prioritized Stream ID
+    /// idle 状態の push stream を指す PRIORITY_UPDATE は PROTOCOL_ERROR の接続エラーとなる (MUST)。
+    /// 本実装はプッシュ非サポートのため、クライアント開始ストリーム (奇数) の ID のみ受け付ける。
     pub prioritized_element_id: NonZeroStreamId,
     /// Priority Field Value
     ///

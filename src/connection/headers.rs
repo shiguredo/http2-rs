@@ -450,7 +450,7 @@ impl Connection {
             Self::extract_content_length(&headers)?
         };
 
-        // RFC 9113 Section 5.2: 受信したストリームの場合、
+        // RFC 9113 Section 6.5.2 / Section 6.9.2: 受信したストリームの場合、
         // 送信ウィンドウはリモートの initial_window_size、
         // 受信ウィンドウはローカルの initial_window_size で初期化する
         let is_closed = {

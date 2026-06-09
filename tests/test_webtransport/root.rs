@@ -112,6 +112,7 @@ fn test_close_emits_wt_close_session_capsule() {
 }
 
 /// reason が 1024 バイトの境界値までは正常に close() できることを確認する。
+/// (draft-ietf-webtrans-http2-14 Section 6.12: メッセージ長は 1024 バイトを超えてはならない (MUST NOT))
 #[test]
 fn test_close_reason_max_length_ok() {
     let mut session = WtSession::client(WtConfig::default());
@@ -123,6 +124,7 @@ fn test_close_reason_max_length_ok() {
 }
 
 /// reason が 1024 バイトを超えると close() がエラーを返すことを確認する。
+/// (draft-ietf-webtrans-http2-14 Section 6.12: メッセージ長は 1024 バイトを超えてはならない (MUST NOT))
 #[test]
 fn test_close_reason_exceeds_max_length_errors() {
     let mut session = WtSession::client(WtConfig::default());

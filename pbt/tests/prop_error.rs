@@ -1,6 +1,7 @@
 //! HTTP/2 エラー型の PBT
 //!
-//! RFC 9113 Section 7 で定義されるエラーコードのプロパティをテストする。
+//! RFC 9113 Section 7 および draft-ietf-webtrans-http2-14 Section 11.3 のエラーコードのプロパティをテストする
+//! (WebTransport 系コードは draft では 0xTBD のため、0x100-0x102 は本実装の暫定値)。
 
 use proptest::prelude::*;
 use shiguredo_http2::{Error, ErrorCode, ErrorKind};

@@ -352,7 +352,7 @@ proptest! {
 
     /// Unknown フレームのエンコード/デコード往復テスト
     ///
-    /// RFC 9113 Section 4.1: 未知のフレームタイプは無視すべき
+    /// RFC 9113 Section 4.1: 未知のフレームタイプは無視し破棄しなければならない (MUST)
     #[test]
     fn prop_unknown_frame_roundtrip(
         // 未知のフレームタイプ (0x0a-0x0f, 0x11-0xff)
@@ -681,7 +681,7 @@ proptest! {
     // デコーダーエラーケースのテスト
     // ========================================
 
-    /// DATA フレームの stream ID 0 はエラー
+    /// DATA フレームの stream ID 0 はエラー (RFC 9113 Section 6.1: stream ID 0 の DATA は PROTOCOL_ERROR の接続エラー)
     #[test]
     fn prop_data_stream_id_zero_error(
         data in arbitrary_bytes(100),
@@ -704,7 +704,7 @@ proptest! {
         prop_assert!(result.is_err(), "DATA frame with stream_id 0 should error");
     }
 
-    /// HEADERS フレームの stream ID 0 はエラー
+    /// HEADERS フレームの stream ID 0 はエラー (RFC 9113 Section 6.2)
     #[test]
     fn prop_headers_stream_id_zero_error(
         header_block in arbitrary_bytes(50),
@@ -726,7 +726,7 @@ proptest! {
         prop_assert!(result.is_err(), "HEADERS frame with stream_id 0 should error");
     }
 
-    /// RST_STREAM フレームの stream ID 0 はエラー
+    /// RST_STREAM フレームの stream ID 0 はエラー (RFC 9113 Section 6.4)
     #[test]
     fn prop_rst_stream_stream_id_zero_error(
         error_code in any::<u32>(),
@@ -745,7 +745,7 @@ proptest! {
         prop_assert!(result.is_err(), "RST_STREAM frame with stream_id 0 should error");
     }
 
-    /// CONTINUATION フレームの stream ID 0 はエラー
+    /// CONTINUATION フレームの stream ID 0 はエラー (RFC 9113 Section 6.10)
     #[test]
     fn prop_continuation_stream_id_zero_error(
         header_block in arbitrary_bytes(50),
@@ -767,7 +767,7 @@ proptest! {
         prop_assert!(result.is_err(), "CONTINUATION frame with stream_id 0 should error");
     }
 
-    /// SETTINGS フレームの stream ID != 0 はエラー
+    /// SETTINGS フレームの stream ID != 0 はエラー (RFC 9113 Section 6.5: SETTINGS の stream ID は 0 でなければならない)
     #[test]
     fn prop_settings_non_zero_stream_id_error(
         stream_id in valid_stream_id(),
@@ -790,7 +790,7 @@ proptest! {
         prop_assert!(result.is_err(), "SETTINGS frame with non-zero stream_id should error");
     }
 
-    /// PING フレームの stream ID != 0 はエラー
+    /// PING フレームの stream ID != 0 はエラー (RFC 9113 Section 6.7)
     #[test]
     fn prop_ping_non_zero_stream_id_error(
         stream_id in valid_stream_id(),
@@ -815,7 +815,7 @@ proptest! {
         prop_assert!(result.is_err(), "PING frame with non-zero stream_id should error");
     }
 
-    /// GOAWAY フレームの stream ID != 0 はエラー
+    /// GOAWAY フレームの stream ID != 0 はエラー (RFC 9113 Section 6.8)
     #[test]
     fn prop_goaway_non_zero_stream_id_error(
         stream_id in valid_stream_id(),
@@ -846,7 +846,7 @@ proptest! {
         prop_assert!(result.is_err(), "GOAWAY frame with non-zero stream_id should error");
     }
 
-    /// PRIORITY_UPDATE フレームの stream ID != 0 はエラー
+    /// PRIORITY_UPDATE フレームの stream ID != 0 はエラー (RFC 9218 Section 7.1: PRIORITY_UPDATE の Stream Identifier は 0 でなければならない)
     #[test]
     fn prop_priority_update_non_zero_stream_id_error(
         stream_id in valid_stream_id(),
@@ -1120,7 +1120,7 @@ proptest! {
         }
     }
 
-    /// PRIORITY フレームの stream ID 0 はエラー
+    /// PRIORITY フレームの stream ID 0 はエラー (RFC 9113 Section 6.3)
     #[test]
     fn prop_priority_stream_id_zero_error(
         stream_dependency in 0..=0x7FFF_FFFFu32,

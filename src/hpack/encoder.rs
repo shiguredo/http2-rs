@@ -201,7 +201,7 @@ impl Encoder {
         self.encode_string(buf, value);
     }
 
-    /// 文字列をエンコードする
+    /// 文字列をエンコードする (RFC 7541 Section 5.2: String Literal Representation)
     fn encode_string(&self, buf: &mut Vec<u8>, data: &[u8]) {
         if self.use_huffman {
             let encoded = huffman::encode_to_vec(data);

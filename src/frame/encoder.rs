@@ -71,6 +71,7 @@ impl FrameEncoder {
         // Flags (8 bits)
         self.buf.push(header.flags.bits());
         // Stream ID (31 bits, R bit is reserved)
+        // RFC 9113 Section 4.1: Reserved ビットは送信時に 0 にしなければならない (MUST)
         self.buf.push(((header.stream_id >> 24) & 0x7f) as u8);
         self.buf.push(((header.stream_id >> 16) & 0xff) as u8);
         self.buf.push(((header.stream_id >> 8) & 0xff) as u8);

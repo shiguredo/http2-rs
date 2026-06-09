@@ -127,7 +127,7 @@ pub enum Capsule {
     /// WT_DRAIN_SESSION (draft-ietf-webtrans-http2-14 Section 6.13, Length=0)
     WtDrainSession,
 
-    /// 未知の Capsule タイプ (RFC 9297: MUST silently drop)
+    /// 未知の Capsule タイプ (RFC 9297 Section 3.2: MUST silently drop)
     Unknown { capsule_type: u64, data: Vec<u8> },
 }
 

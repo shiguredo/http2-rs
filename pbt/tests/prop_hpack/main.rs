@@ -106,7 +106,7 @@ proptest! {
     #[test]
     fn prop_huffman_encoded_len_bounds(data in arbitrary_bytes(128)) {
         let encoded_len = shiguredo_http2::hpack::huffman::encoded_len(&data);
-        // 最悪ケースでも 30 ビット / 8 ビット = 3.75 倍程度
+        // 最悪ケースでも 30 ビット (RFC 7541 Appendix B の最大符号長) / 8 ビット = 3.75 倍程度
         prop_assert!(encoded_len <= data.len() * 4 + 1);
     }
 

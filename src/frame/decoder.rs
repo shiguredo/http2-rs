@@ -59,7 +59,7 @@ impl FrameDecoder {
 
             let header = decode_header(&self.buf[..FRAME_HEADER_SIZE])?;
 
-            // フレームサイズチェック
+            // RFC 9113 Section 4.2 (Frame Size): SETTINGS_MAX_FRAME_SIZE を超えるフレームは FRAME_SIZE_ERROR (MUST)
             if header.length > self.max_frame_size {
                 return Err(Error::frame_size_error(format!(
                     "frame size {} exceeds max frame size {}",
@@ -139,7 +139,7 @@ pub fn decode_header(buf: &[u8]) -> Result<FrameHeader> {
     // Flags (8 bits)
     let flags = FrameFlags::from_bits(buf[4]);
 
-    // Stream ID (31 bits)
+    // Stream ID (31 bits)。RFC 9113 Section 4.1: Reserved ビットは受信時に無視しなければならない (MUST)
     let stream_id = ((u32::from(buf[5]) & 0x7f) << 24)
         | (u32::from(buf[6]) << 16)
         | (u32::from(buf[7]) << 8)
@@ -333,7 +333,7 @@ fn decode_rst_stream(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 
 /// SETTINGS フレームをデコードする
 fn decode_settings(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
-    // SETTINGS フレームはストリーム ID が 0 でなければならない
+    // RFC 9113 Section 6.5 (SETTINGS): SETTINGS フレームはストリーム ID が 0 でなければならない
     if header.stream_id != 0 {
         return Err(Error::protocol_error(
             "SETTINGS frame with non-zero stream ID",
@@ -342,7 +342,7 @@ fn decode_settings(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 
     let ack = header.flags.is_ack();
 
-    // ACK フラグが設定されている場合、ペイロードは空でなければならない
+    // RFC 9113 Section 6.5 (SETTINGS): ACK フラグが設定されている場合、ペイロードは空でなければならない
     if ack {
         if !payload.is_empty() {
             return Err(Error::frame_size_error(
@@ -352,7 +352,7 @@ fn decode_settings(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
         return Ok(Frame::Settings(SettingsFrame::ack()));
     }
 
-    // ペイロードは 6 バイトの倍数でなければならない
+    // RFC 9113 Section 6.5 (SETTINGS): ペイロードは 6 バイトの倍数でなければならない
     if !payload.len().is_multiple_of(6) {
         return Err(Error::frame_size_error(
             "SETTINGS frame payload must be a multiple of 6 bytes",
@@ -380,12 +380,12 @@ fn decode_settings(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
 
 /// PING フレームをデコードする
 fn decode_ping(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
-    // PING フレームはストリーム ID が 0 でなければならない
+    // RFC 9113 Section 6.7 (PING): PING フレームはストリーム ID が 0 でなければならない
     if header.stream_id != 0 {
         return Err(Error::protocol_error("PING frame with non-zero stream ID"));
     }
 
-    // PING フレームは常に 8 バイト
+    // RFC 9113 Section 6.7 (PING): PING フレームは常に 8 バイト。それ以外は FRAME_SIZE_ERROR (MUST)
     if payload.len() != 8 {
         return Err(Error::frame_size_error("PING frame must be 8 bytes"));
     }
@@ -406,7 +406,7 @@ fn decode_goaway(header: FrameHeader, payload: &[u8]) -> Result<Frame> {
         ));
     }
 
-    // GOAWAY フレームは最低 8 バイト
+    // RFC 9113 Section 4.2 (Frame Size): 必須フィールドを収められないフレームは FRAME_SIZE_ERROR (MUST)。GOAWAY は最低 8 バイト
     if payload.len() < 8 {
         return Err(Error::frame_size_error(
             "GOAWAY frame must be at least 8 bytes",

@@ -80,7 +80,7 @@ proptest! {
         // apply は検証済み Setting を受け取るため、常に成功する
     }
 
-    /// 無効な ENABLE_PUSH wire 値は from_wire で拒否される
+    /// 無効な ENABLE_PUSH wire 値は from_wire で拒否される (RFC 9113 Section 6.5.2: 0/1 以外は PROTOCOL_ERROR)
     ///
     /// 数学的意義: 二値性の検証 (0 または 1 のみ)
     #[test]
@@ -140,6 +140,7 @@ proptest! {
     /// 無効な NO_RFC7540_PRIORITIES wire 値は from_wire で拒否される
     ///
     /// 数学的意義: 二値性の検証 (0 または 1 のみ)
+    /// RFC 9218 Section 2.1: NO_RFC7540_PRIORITIES の値は 0 または 1 でなければならない (MUST)。
     #[test]
     fn prop_invalid_no_rfc7540_priorities_rejected(
         (id, value) in invalid_no_rfc7540_priorities_wire(),
@@ -206,7 +207,7 @@ proptest! {
         prop_assert_eq!(settings, after_first);
     }
 
-    /// ENABLE_PUSH wire 値は 0 または 1 のみ有効
+    /// ENABLE_PUSH wire 値は 0 または 1 のみ有効 (RFC 9113 Section 6.5.2: 0/1 以外は PROTOCOL_ERROR)
     ///
     /// 数学的意義: 二値性
     #[test]
@@ -265,7 +266,7 @@ proptest! {
 
     /// デフォルト値の検証
     ///
-    /// RFC 9113 Section 6.5.2 のデフォルト値
+    /// RFC 9113 Section 6.5.2 のデフォルト値 (ただし ENABLE_PUSH は RFC 初期値 1 に対し、本実装はサーバープッシュ非サポートのため独自デフォルト 0 を採用)
     #[test]
     fn prop_default_values(_dummy in Just(())) {
         let settings = Settings::default();

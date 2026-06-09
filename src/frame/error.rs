@@ -47,8 +47,8 @@ pub enum FrameError {
     /// PRIORITY の weight が範囲外
     ///
     /// RFC 9113 §6.3 はフィールド型 (unsigned 8-bit integer) を定義する。
-    /// 「wire 0..=255 / 実体 1..=256」の意味付けは RFC 7540 §5.3.2 由来
-    /// (RFC 9113 §5.3.1 で deprecated だが受信処理用に維持)。
+    /// 「wire 0..=255 / 実体 1..=256」の意味付けは廃止済み RFC 7540 の優先度スキーム由来
+    /// (RFC 9113 §5.3.2 で deprecated だが受信処理用に維持)。
     InvalidWeight {
         /// 違反した weight (wire 表現で 0..=255 を超えた値)
         value: u16,

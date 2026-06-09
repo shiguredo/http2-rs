@@ -30,6 +30,7 @@ fn test_recv_window_update() {
     assert_eq!(fc.send_window(), 60535);
 }
 
+/// RFC 9113 Section 6.9.1: フロー制御ウィンドウは 2^31-1 オクテットを超えてはならない (MUST NOT)。超過させる WINDOW_UPDATE はエラー。
 #[test]
 fn test_window_update_overflow() {
     let mut fc = FlowControl::new(MAX_WINDOW_SIZE);
@@ -45,6 +46,7 @@ fn test_should_send_window_update() {
     assert!(fc.should_send_window_update());
 }
 
+/// RFC 9113 Section 6.9.2: SETTINGS_INITIAL_WINDOW_SIZE 変更時は新旧値の差分で全ストリームのウィンドウを調整しなければならない (MUST)。
 #[test]
 fn test_update_initial_window_size() {
     let mut fc = FlowControl::new(65535);

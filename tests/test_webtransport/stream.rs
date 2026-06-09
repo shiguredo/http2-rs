@@ -1,5 +1,6 @@
 use shiguredo_http2::webtransport::stream::{RecvState, SendState, WtStream, stream_id};
 
+// draft-ietf-webtrans-http2-14 Section 5.2: クライアント起点は偶数、サーバー起点は奇数、下位から 2 ビット目が単方向/双方向を示す (RFC 9000 Section 2.1 と同セマンティクス)。
 #[test]
 fn test_stream_id_client_bidi() {
     let id = stream_id::first(true, true);

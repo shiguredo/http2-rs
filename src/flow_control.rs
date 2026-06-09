@@ -35,7 +35,7 @@ impl FlowControl {
 
     /// 送信/受信ウィンドウを個別に設定して生成する
     ///
-    /// RFC 9113 Section 5.2: ストリームのフロー制御において、
+    /// RFC 9113 Section 6.5.2 / Section 6.9.2: ストリームのフロー制御において、
     /// 送信ウィンドウはリモートの initial_window_size、
     /// 受信ウィンドウはローカルの initial_window_size で初期化する。
     #[must_use]
@@ -118,6 +118,7 @@ impl FlowControl {
 
     /// WINDOW_UPDATE 受信時に送信ウィンドウを増やす
     pub fn recv_window_update(&mut self, increment: u32) -> Result<(), Error> {
+        // RFC 9113 Section 6.9 (WINDOW_UPDATE): 増分 0 の WINDOW_UPDATE はエラーとして扱わなければならない (MUST)
         if increment == 0 {
             return Err(Error::connection_error(
                 ErrorCode::ProtocolError,
@@ -125,6 +126,7 @@ impl FlowControl {
             ));
         }
 
+        // RFC 9113 Section 6.9.1: フロー制御ウィンドウは 2^31-1 オクテットを超えてはならない (MUST NOT)。超過は FLOW_CONTROL_ERROR
         let new_window = self.send_window + i64::from(increment);
         if new_window > i64::from(MAX_WINDOW_SIZE) {
             return Err(Error::connection_error(
@@ -146,6 +148,7 @@ impl FlowControl {
             ));
         }
 
+        // RFC 9113 Section 6.9.1: フロー制御ウィンドウは 2^31-1 オクテットを超えてはならない (MUST NOT)。超過は FLOW_CONTROL_ERROR
         let new_window = self.recv_window + i64::from(increment);
         if new_window > i64::from(MAX_WINDOW_SIZE) {
             return Err(Error::connection_error(

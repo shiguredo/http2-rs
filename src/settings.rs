@@ -10,8 +10,8 @@ pub const DEFAULT_HEADER_TABLE_SIZE: u32 = 4096;
 
 /// SETTINGS_ENABLE_PUSH のデフォルト値
 ///
-/// RFC 9113 Section 8.4: サーバープッシュは主要ブラウザでサポートが削除されているため、
-/// デフォルトで無効にする。
+/// RFC 9113 Section 6.5.2 の初期値は 1 だが、サーバープッシュは実効性が低く (RFC 9113 Section 8.4)、
+/// 主要ブラウザでもサポートが削除されているため、本ライブラリではデフォルトで無効にする (実装判断)。
 pub const DEFAULT_ENABLE_PUSH: bool = false;
 
 /// SETTINGS_MAX_CONCURRENT_STREAMS のデフォルト値（無制限）

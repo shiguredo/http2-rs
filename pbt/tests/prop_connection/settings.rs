@@ -13,6 +13,7 @@ use super::encode_frame;
 
 proptest! {
     /// クライアントがサーバーから ENABLE_PUSH=1 を受信した場合、PROTOCOL_ERROR
+    /// RFC 9113 Section 6.5.2: クライアントは ENABLE_PUSH=1 の受信を PROTOCOL_ERROR の接続エラーとして扱わなければならない (MUST)。
     #[test]
     fn prop_client_rejects_enable_push_from_server(_dummy in Just(())) {
         let mut client = Connection::client(Limits::default());

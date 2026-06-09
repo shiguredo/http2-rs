@@ -1,3 +1,5 @@
+//! RFC 9113 Section 5.1.1: ストリーム ID は符号なし 31 ビット整数で、クライアント起点は奇数、サーバー起点は偶数でなければならない (MUST)。ID 0 は接続制御用に予約される。
+
 use shiguredo_http2::frame::StreamId;
 use shiguredo_http2::stream_id::{
     ClientStreamId, NonZeroStreamId, Parity, ServerStreamId, StreamIdError,

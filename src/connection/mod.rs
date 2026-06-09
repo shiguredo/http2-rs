@@ -560,7 +560,7 @@ impl Connection {
             .expect("next_stream_id is always non-zero");
         self.next_stream_id += 2;
 
-        // RFC 9113 §5.2: 送信ウィンドウはリモートの initial_window_size、
+        // RFC 9113 Section 6.5.2 / Section 6.9.2: 送信ウィンドウはリモートの initial_window_size、
         // 受信ウィンドウはローカルの initial_window_size で初期化する
         let mut stream = Stream::new(
             stream_id,
@@ -924,7 +924,8 @@ impl Connection {
             Frame::RstStream(f) => self.handle_rst_stream(f)?,
             Frame::Settings(f) => self.handle_settings(f)?,
             Frame::PushPromise { .. } => {
-                // RFC 9113 Section 6.6: PUSH_PROMISE はサーバーのみが送信可能
+                // RFC 9113 Section 8.4 (Server Push): クライアントはプッシュできないため、サーバーは
+                // PUSH_PROMISE の受信を PROTOCOL_ERROR の接続エラーとして扱わなければならない (MUST)
                 // このライブラリはサーバープッシュをサポートしないため、
                 // 受信した場合は常に PROTOCOL_ERROR を返す
                 return Err(Error::connection_error(
@@ -964,7 +965,7 @@ impl Connection {
         // RFC 9113 Section 5.1: アイドルストリームへのフレームは接続エラー
         self.check_not_idle_stream(sid, "DATA")?;
 
-        // RFC 9113 Section 6.9.1: フロー制御はペイロード全体に適用
+        // RFC 9113 Section 6.1 (DATA): フロー制御はペイロード全体に適用
         // (Pad Length フィールド + データ + パディング)
         let flow_control_size = if let Some(pad_length) = frame.pad_length {
             1 + frame.data.len() + pad_length as usize
@@ -992,8 +993,8 @@ impl Connection {
 
             stream.state_machine_mut().recv_data(frame.end_stream)?;
 
-            // RFC 9113 §6.9: ストリームレベルのフロー制御違反は
-            // RST_STREAM(FLOW_CONTROL_ERROR) で応答する（接続エラーではない）。
+            // RFC 9113 Section 6.9: フロー制御違反の受信者は FLOW_CONTROL_ERROR のストリームエラーまたは接続エラーで応答してよい (MAY)。
+            // 本実装はストリームレベル違反を RST_STREAM(FLOW_CONTROL_ERROR) で処理する (接続エラーに昇格しない実装判断)。
             if stream
                 .flow_control_mut()
                 .consume_recv(flow_control_size)
@@ -1087,7 +1088,8 @@ impl Connection {
     /// SETTINGS フレームを処理する
     fn handle_settings(&mut self, frame: SettingsFrame) -> Result<()> {
         if frame.is_ack() {
-            // RFC 9113 Section 6.5: 対応する SETTINGS がない ACK は接続エラー
+            // RFC 9113 Section 6.5.3 (Settings Synchronization) は ACK を最古の未 ACK SETTINGS への応答と定義する。
+            // 未送信 SETTINGS への ACK は同期が取れないため、本実装では PROTOCOL_ERROR の接続エラーとする (実装判断)
             if self.pending_settings_count == 0 {
                 return Err(Error::connection_error(
                     ErrorCode::ProtocolError,
@@ -1102,7 +1104,7 @@ impl Connection {
             self.events.push_back(Event::SettingsReceived { ack: true });
         } else {
             // SETTINGS を受信
-            // RFC 9113 Section 6.5.2: SETTINGS_INITIAL_WINDOW_SIZE 変更時に
+            // RFC 9113 Section 6.9.2: SETTINGS_INITIAL_WINDOW_SIZE 変更時に
             // 既存ストリームのウィンドウサイズを調整する
             let old_initial_window_size = self.remote_settings.initial_window_size().get();
 
@@ -1133,7 +1135,7 @@ impl Connection {
                 }
 
                 // RFC 8441 §3: SETTINGS_ENABLE_CONNECT_PROTOCOL を 1 に設定した後に
-                // 0 を送信してはならない (MUST NOT)。違反は PROTOCOL_ERROR。
+                // 0 を送信してはならない (MUST NOT)。違反時のエラーコードは RFC 8441 未規定のため PROTOCOL_ERROR とする (実装判断)。
                 if let Setting::EnableConnectProtocol(value) = setting {
                     if *value {
                         self.peer_sent_enable_connect_protocol = true;
@@ -1183,7 +1185,7 @@ impl Connection {
             // remote_settings.max_frame_size は送信フレームの上限として使用する。
             // frame_decoder の max_frame_size はローカル設定で初期化済みなので更新不要。
 
-            // SETTINGS ACK を送信
+            // RFC 9113 Section 6.5.3 (Settings Synchronization): 全値処理後、即座に ACK 付き SETTINGS を送出しなければならない (MUST)
             self.send_frame(&Frame::Settings(SettingsFrame::ack()))?;
 
             self.events
@@ -1200,7 +1202,7 @@ impl Connection {
 
     /// SETTINGS_INITIAL_WINDOW_SIZE 変更時に既存ストリームのウィンドウサイズを調整する
     ///
-    /// RFC 9113 Section 6.5.2: When the value of SETTINGS_INITIAL_WINDOW_SIZE changes,
+    /// RFC 9113 Section 6.9.2 (Initial Flow-Control Window Size): When the value of SETTINGS_INITIAL_WINDOW_SIZE changes,
     /// a receiver MUST adjust the size of all stream flow-control windows that it
     /// maintains by the difference between the new value and the old value.
     fn update_stream_windows(&mut self, new_initial_window_size: u32) -> Result<()> {
@@ -1215,7 +1217,7 @@ impl Connection {
     /// PING フレームを処理する
     fn handle_ping(&mut self, frame: PingFrame) -> Result<()> {
         if !frame.ack {
-            // PING ACK を送信
+            // RFC 9113 Section 6.7 (PING): ACK なし PING には同一ペイロードの ACK 付き PING で応答しなければならない (MUST)
             let ack_frame = PingFrame::ack(frame.opaque_data);
             self.send_frame(&Frame::Ping(ack_frame))?;
         }
@@ -1303,7 +1305,8 @@ impl Connection {
             ));
         }
 
-        // RFC 9218 §7.1: Prioritized Stream ID はクライアント開始ストリーム (奇数) でなければならない
+        // RFC 9218 Section 7.1: idle 状態の push stream を指す PRIORITY_UPDATE は PROTOCOL_ERROR の接続エラー (MUST)。
+        // 本実装はプッシュ非サポートのため偶数 (サーバー開始) ID は常に idle push stream であり、一律拒否する。
         // stream_id = 0 は NonZeroStreamId により構造的に排除済み
         match frame.prioritized_element_id {
             NonZeroStreamId::Client(_) => {}

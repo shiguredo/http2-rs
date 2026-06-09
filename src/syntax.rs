@@ -6,7 +6,7 @@
 //!
 //! 以下の RFC 節に基づく検査を提供する:
 //!
-//! - field-name = token: RFC 9113 §8.2.1 + RFC 9110 §5.6.2 (token = 1*tchar)
+//! - field-name = token: RFC 9110 §5.1 + §5.6.2 (token = 1*tchar) + RFC 9113 §8.2.1
 //! - field-name lowercase ASCII 必須 (MUST NOT 0x41-0x5a): RFC 9113 §8.2.1
 //! - field-value NUL / CR / LF 禁止: RFC 9113 §8.2.1
 //! - field-value 先頭末尾 SP / HTAB 禁止: RFC 9113 §8.2.1
@@ -15,7 +15,7 @@
 //! - `:method` 値 token: RFC 9110 §9.1
 //! - `:scheme` 値構文: RFC 3986 §3.1
 //! - `:path` absolute-path / asterisk-form: RFC 9113 §8.3.1, RFC 9110 §4.1
-//! - `:status` 3DIGIT: RFC 9110 §15
+//! - `:status` 3DIGIT: RFC 9112 §4, RFC 9110 §15
 //! - `:protocol` 値 HTTP Upgrade Token: RFC 8441 §4 + RFC 9110 §7.8
 //!
 //! const fn 版 (`check_*_const`) と runtime 版 (`validate_*`) は同じ規則を
@@ -153,14 +153,16 @@ pub(crate) const fn check_pseudo_header_const(name: &[u8], value: &[u8]) {
     }
     if bytes_eq(name, b":status") {
         if value.len() != 3 {
-            panic!("HeaderField::from_static: :status value must be 3 ASCII digits (RFC 9110 15)");
+            panic!(
+                "HeaderField::from_static: :status value must be 3 ASCII digits (RFC 9112 4, RFC 9110 15)"
+            );
         }
         let mut i = 0;
         while i < 3 {
             let b = value[i];
             if !b.is_ascii_digit() {
                 panic!(
-                    "HeaderField::from_static: :status value must be 3 ASCII digits (RFC 9110 15)"
+                    "HeaderField::from_static: :status value must be 3 ASCII digits (RFC 9112 4, RFC 9110 15)"
                 );
             }
             i += 1;
@@ -359,7 +361,7 @@ pub(crate) fn validate_pseudo_header(name: &[u8], value: &[u8]) -> Result<(), He
             }
         }
         b":status" => {
-            // RFC 9110 §15: 3DIGIT
+            // RFC 9112 §4, RFC 9110 §15: 3DIGIT
             if value.len() != 3 || !value.iter().all(u8::is_ascii_digit) {
                 return Err(HeaderFieldError::InvalidPseudoHeaderValue {
                     name: name.to_vec(),

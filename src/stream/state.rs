@@ -202,7 +202,7 @@ impl StateMachine {
     /// validate (本メソッド) と state 遷移 (`complete_send_data`) を分離している。
     /// 状態遷移を先に進めると、送信完了前に Closed 扱いになり、ピアからの
     /// WINDOW_UPDATE が「Closed への WINDOW_UPDATE は無視」のルールで捨てられ、
-    /// 永久に送信再開できなくなる (RFC 9113 §5.1 / §6.9.1)。
+    /// 永久に送信再開できなくなる (RFC 9113 §5.1 / §6.9)。
     pub fn send_data(&mut self, _end_stream: bool) -> Result<(), Error> {
         match self.state {
             StreamState::Open | StreamState::HalfClosedRemote => Ok(()),

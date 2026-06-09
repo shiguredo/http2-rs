@@ -27,7 +27,7 @@ fn test_parse_ignores_unknown_keys() {
     assert_eq!(init.br, None);
 }
 
-/// known キーに付随するパラメータも無視されること (RFC 8941 §3.1.2)
+/// known キーに付随するパラメータも無視されること (draft-ietf-webtrans-http2-14 Section 4.3.2 の MUST。パラメータの定義は RFC 8941 §3.1.2)
 #[test]
 fn test_parse_ignores_parameters_on_known_key() {
     let init = WtInit::parse(b"u=100;foo=bar").expect("パラメータは無視されるはず");
@@ -132,7 +132,7 @@ fn test_parse_empty_input_returns_default() {
     assert_eq!(init, WtInit::default());
 }
 
-/// 末尾カンマは拒否されること (RFC 8941 §4.2.2 step 2.9)
+/// 末尾カンマは拒否されること (RFC 8941 §4.2.2 step 2.10)
 #[test]
 fn test_parse_rejects_trailing_comma() {
     let err = WtInit::parse(b"u=100,").expect_err("末尾カンマは拒否されるべき");
@@ -228,7 +228,7 @@ fn test_apply_init_none_does_not_touch_config() {
     );
 }
 
-/// 先頭・末尾 OWS は破棄されること (RFC 8941 §4.2 step 2)
+/// 先頭・末尾の SP は破棄されること (RFC 8941 §4.2 step 2 および step 6)
 #[test]
 fn test_parse_handles_leading_and_trailing_ows() {
     let init = WtInit::parse(b"  u=100, bl=200  ").expect("先頭末尾の OWS は破棄されるべき");

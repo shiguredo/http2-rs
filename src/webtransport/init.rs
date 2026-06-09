@@ -39,8 +39,8 @@ const SF_INTEGER_MAX: u64 = 999_999_999_999_999;
 impl WtInit {
     /// HTTP ヘッダー値バイト列をパースする
     ///
-    /// 入力は HPACK でデコードされたヘッダー値そのまま (RFC 8941 §3.0 で
-    /// 規定される ASCII 範囲)。RFC 8941 のパース手順を必要最小限で実装する。
+    /// 入力は HPACK でデコードされたヘッダー値そのまま (RFC 8941 Section 4.2 step 1:
+    /// ASCII 変換に失敗した入力はパース失敗)。RFC 8941 のパース手順を必要最小限で実装する。
     pub fn parse(value: &[u8]) -> Result<Self, WtError> {
         // RFC 8941 Section 4.2 step 1: 入力は ASCII であること
         if value.iter().any(|&b| b >= 0x80) {
@@ -52,7 +52,8 @@ impl WtInit {
         let mut parser = DictionaryParser::new(value);
         let mut out = WtInit::default();
 
-        // RFC 8941 Section 4.2 step 2: 先頭の OWS を破棄してからパース開始
+        // RFC 8941 Section 4.2 step 2 は先頭の SP のみ破棄を規定する。
+        // 本実装は OWS (SP / HTAB) まで許容する独自緩和
         parser.skip_ows();
 
         while !parser.is_empty() {

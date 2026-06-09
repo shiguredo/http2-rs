@@ -140,7 +140,7 @@ proptest! {
         }
     }
 
-    /// 最大サイズより大きいエントリはテーブルをクリアする
+    /// 最大サイズより大きいエントリはテーブルをクリアする (RFC 7541 Section 4.4)
     ///
     /// 数学的意義: 境界条件
     #[test]
@@ -176,7 +176,7 @@ proptest! {
         }
     }
 
-    /// set_max_size は即座に不変条件を回復する
+    /// set_max_size は即座に不変条件を回復する (RFC 7541 Section 4.3)
     ///
     /// 数学的意義: 不変条件の即時回復
     #[test]
@@ -376,7 +376,7 @@ proptest! {
 
     /// get_by_absolute_index の検証
     ///
-    /// 絶対インデックス 62 以降が動的テーブルを指す
+    /// 絶対インデックス 62 以降が動的テーブルを指す (RFC 7541 Section 2.3.3、静的テーブル長は 61)
     #[test]
     fn prop_get_by_absolute_index(
         max_size in 1000..10000usize,

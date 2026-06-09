@@ -116,6 +116,7 @@ impl WtFlowControl {
     /// 送信を消費する
     pub fn consume_send(&mut self, size: u64) -> WtResult<()> {
         let new_offset = self.send_offset.saturating_add(size);
+        // draft-ietf-webtrans-http2-14 Section 6.5: 送信総量は受信者が広告した値を超えてはならない (MUST NOT)
         if new_offset > self.send_max {
             return Err(WtError::flow_control_error("send window exhausted"));
         }
@@ -126,6 +127,8 @@ impl WtFlowControl {
     /// 受信を消費する
     pub fn consume_recv(&mut self, size: u64) -> WtResult<()> {
         let new_offset = self.recv_offset.saturating_add(size);
+        // draft-ietf-webtrans-http2-14 Section 6.5: 上限を超える受信は
+        // WEBTRANSPORT_FLOW_CONTROL_ERROR のセッションエラー (MUST)
         if new_offset > self.recv_max {
             return Err(WtError::flow_control_error("recv window exceeded"));
         }
@@ -178,7 +181,7 @@ impl WtFlowControl {
     /// ピアからのストリームを受け入れ可能かどうかを返す
     ///
     /// RFC 9000 Section 4.6: stream_id < (max_streams * 4 + first_stream_id_of_type)
-    /// のストリームのみ開設可能。順序外の stream ID は下位 ID も全て開いた扱いになる。
+    /// のストリームのみ開設可能。順序外の stream ID は下位 ID も全て開いた扱いになる (RFC 9000 Section 2.1)。
     /// draft-ietf-webtrans-http2-14 Section 5.2 は QUIC のストリーム ID セマンティクスを継承する。
     ///
     /// 注: draft-ietf-webtrans-http2-14 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。

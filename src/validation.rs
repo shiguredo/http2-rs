@@ -385,7 +385,8 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
             return Err(malformed_error(ValidationError::EmptyPath));
         }
 
-        // RFC 9113 Section 8.3.1: http/https スキームでは :authority または Host が必須
+        // RFC 9113 Section 8.3.1 (:authority) + RFC 9110 Section 7.2 (Host and :authority):
+        // http/https スキームでは :authority または Host で authority 情報を伝える
         if let Some(scheme) = scheme_value
             && (scheme.eq_ignore_ascii_case(b"http") || scheme.eq_ignore_ascii_case(b"https"))
             && !seen_authority
@@ -555,7 +556,7 @@ fn is_valid_connect_authority(authority: &[u8]) -> bool {
     is_valid_port(port)
 }
 
-/// ポート番号が有効かどうかを検証する (RFC 3986 port = *DIGIT, 0-65535)
+/// ポート番号が有効かどうかを検証する (RFC 3986 Section 3.2.3: port = *DIGIT。0-65535 は TCP ポート範囲としての実装上の制限)
 fn is_valid_port(port: &[u8]) -> bool {
     if port.is_empty() || !port.iter().all(|b| b.is_ascii_digit()) {
         return false;

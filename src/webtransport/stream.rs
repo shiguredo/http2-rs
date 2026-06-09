@@ -66,45 +66,42 @@ pub mod stream_id {
     }
 }
 
-/// 送信側ストリーム状態 (RFC 9000 Section 3.1)
+/// 送信側ストリーム状態 (RFC 9000 Section 3.1, Figure 2: States for Sending Parts of Streams)
 ///
 /// ```text
-///          o
-///          | Open Stream (Sending)
-///          | Peer Opens Bidirectional Stream
-///          v
-///      +-------+
-///      | Ready | Send STREAM / STREAM_DATA_BLOCKED
-///      +-------+
-///          |
-///          | Send STREAM / STREAM_DATA_BLOCKED
-///          |
-///          v
-///      +-------+
-///      | Send  | Send STREAM / STREAM_DATA_BLOCKED
-///      +-------+
-///          |
-///          | Send STREAM + FIN
-///          v
-///      +----------+
-///      | Data     | Recv all ACKs
-///      | Sent     |--------------.
-///      +----------+              |
-///          |                     |
-///          | Recv STOP_SENDING   |
-///          v                     |
-///      +----------+              |
-///      | Reset    |              |
-///      | Sent     |              |
-///      +----------+              |
-///          |                     |
-///          | Recv All ACKs       |
-///          v                     v
-///      +----------+         +----------+
-///      | Reset    |         | Data     |
-///      | Recvd    |         | Recvd    |
-///      +----------+         +----------+
+///        o
+///        | Create Stream (Sending)
+///        | Peer Creates Bidirectional Stream
+///        v
+///    +-------+
+///    | Ready | Send RESET_STREAM
+///    |       |-----------------------.
+///    +-------+                       |
+///        |                           |
+///        | Send STREAM /             |
+///        |      STREAM_DATA_BLOCKED  |
+///        v                           |
+///    +-------+                       |
+///    | Send  | Send RESET_STREAM     |
+///    |       |---------------------->|
+///    +-------+                       |
+///        |                           |
+///        | Send STREAM + FIN         |
+///        v                           v
+///    +-------+                   +-------+
+///    | Data  | Send RESET_STREAM | Reset |
+///    | Sent  |------------------>| Sent  |
+///    +-------+                   +-------+
+///        |                           |
+///        | Recv All ACKs             | Recv ACK
+///        v                           v
+///    +-------+                   +-------+
+///    | Data  |                   | Reset |
+///    | Recvd |                   | Recvd |
+///    +-------+                   +-------+
 /// ```
+///
+/// RFC 9000 Section 3.1: STOP_SENDING を受信したエンドポイントは RESET_STREAM を送信する
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SendState {
     /// 初期状態
@@ -136,45 +133,40 @@ impl SendState {
     }
 }
 
-/// 受信側ストリーム状態 (RFC 9000 Section 3.2)
+/// 受信側ストリーム状態 (RFC 9000 Section 3.2, Figure 3: States for Receiving Parts of Streams)
 ///
 /// ```text
-///          o
-///          | Recv STREAM / STREAM_DATA_BLOCKED / RESET_STREAM
-///          | Open Bidirectional Stream (Sending)
-///          | Open Unidirectional Stream (Peer)
-///          v
-///      +-------+
-///      | Recv  | Recv STREAM / STREAM_DATA_BLOCKED
-///      +-------+
-///          |
-///          | Recv STREAM + FIN
-///          v
-///      +----------+
-///      | Size     | Recv STREAM
-///      | Known    |
-///      +----------+
-///          |
-///          | Recv all data
-///          v
-///      +----------+
-///      | Data     | App reads data
-///      | Recvd    |-------------.
-///      +----------+             |
-///          |                    |
-///          | Recv RESET_STREAM  |
-///          v                    v
-///      +----------+        +----------+
-///      | Reset    |        | Data     |
-///      | Recvd    |        | Read     |
-///      +----------+        +----------+
-///          |
-///          | App reads reset
-///          v
-///      +----------+
-///      | Reset    |
-///      | Read     |
-///      +----------+
+///        o
+///        | Recv STREAM / STREAM_DATA_BLOCKED / RESET_STREAM
+///        | Create Bidirectional Stream (Sending)
+///        | Recv MAX_STREAM_DATA / STOP_SENDING (Bidirectional)
+///        | Create Higher-Numbered Stream
+///        v
+///    +-------+
+///    | Recv  | Recv RESET_STREAM
+///    |       |-----------------------.
+///    +-------+                       |
+///        |                           |
+///        | Recv STREAM + FIN         |
+///        v                           |
+///    +-------+                       |
+///    | Size  | Recv RESET_STREAM     |
+///    | Known |---------------------->|
+///    +-------+                       |
+///        |                           |
+///        | Recv All Data             |
+///        v                           v
+///    +-------+ Recv RESET_STREAM +-------+
+///    | Data  |--- (optional) --->| Reset |
+///    | Recvd |  Recv All Data    | Recvd |
+///    +-------+<-- (optional) ----+-------+
+///        |                           |
+///        | App Read All Data         | App Read Reset
+///        v                           v
+///    +-------+                   +-------+
+///    | Data  |                   | Reset |
+///    | Read  |                   | Read  |
+///    +-------+                   +-------+
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RecvState {
@@ -342,7 +334,7 @@ impl WtStream {
             return Err(WtError::stream_state_error("cannot send in current state"));
         }
 
-        // draft-ietf-webtrans-http2-14: ストリームレベルのフロー制御上限チェック
+        // draft-ietf-webtrans-http2-14 Section 6.6: ストリームレベルのフロー制御上限チェック
         let new_offset = self.send_offset.saturating_add(size);
         if new_offset > self.send_max {
             return Err(WtError::flow_control_error("stream send limit exceeded"));
@@ -375,7 +367,7 @@ impl WtStream {
             ));
         }
 
-        // draft-ietf-webtrans-http2-14: ストリームレベルのフロー制御上限チェック
+        // draft-ietf-webtrans-http2-14 Section 6.6: ストリームレベルのフロー制御上限チェック
         let new_offset = self.recv_offset.saturating_add(size);
         if new_offset > self.recv_max {
             return Err(WtError::flow_control_error("stream recv limit exceeded"));

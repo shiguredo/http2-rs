@@ -129,8 +129,8 @@ impl WtConfig {
     /// > session is established, the endpoint MUST use the greater of the two values
     /// > for each corresponding initial flow control value.
     ///
-    /// Section 4.3.2 (L527-L537) の各キーの意味は受信側 (= recipient) 視点で:
-    /// - `u`: ピアが開く単方向ストリームの初期最大データ量 → `initial_max_stream_data_uni`
+    /// Section 4.3.2 の各キーの意味は受信側 (= recipient) 視点で:
+    /// - `u`: 自身 (= recipient) が開く単方向ストリームの初期最大データ量 → `initial_max_stream_data_uni`
     /// - `bl`: ピア (= sender) が開く双方向ストリームの初期最大データ量 →
     ///   自身視点で「ピアが開いた」ストリームなので `initial_max_stream_data_bidi_remote`
     /// - `br`: 自身 (= recipient) が開く双方向ストリームの初期最大データ量 →
@@ -335,8 +335,8 @@ impl WtSession {
             id
         };
 
-        // draft-ietf-webtrans-http2-14 Section 4.3.1:
-        // LOCAL はこのエンドポイントが開始したストリーム向けの初期フロー制御上限
+        // draft-ietf-webtrans-http2-14 Section 11.2:
+        // BIDI_LOCAL はこの設定の送信者が開始した双方向ストリームの受信データに対する初期フロー制御上限
         let initial_max_data = if bidirectional {
             self.config.initial_max_stream_data_bidi_local
         } else {
@@ -799,7 +799,7 @@ impl WtSession {
         }
 
         if is_new_stream {
-            // draft-ietf-webtrans-http2-14 Section 5, RFC 9000 Section 2.1:
+            // draft-ietf-webtrans-http2-14 Section 5.2, RFC 9000 Section 2.1:
             // ストリーム ID の開始主体がピア側であることを検証する。
             // ローカル開始用 ID をピアが注入すると状態管理の一貫性が崩れる。
             let is_peer_initiated = match self.role {
@@ -812,16 +812,16 @@ impl WtSession {
                 ));
             }
 
-            // RFC 9000 Section 4.6, draft-ietf-webtrans-http2-14 Section 5.2:
+            // RFC 9000 Section 4.6, draft-ietf-webtrans-http2-14 Section 6.7:
             // stream ID に基づいてストリーム上限を検証する。
-            // 順序外の stream ID は下位 ID も全て開いた扱いになる。
+            // 順序外の stream ID は下位 ID も全て開いた扱いになる (RFC 9000 Section 2.1)。
             if !self.flow_control.can_accept_stream(stream_id) {
                 return Err(WtError::flow_control_error("peer exceeded stream limit"));
             }
 
             let bidirectional = stream::stream_id::is_bidirectional(stream_id);
-            // draft-ietf-webtrans-http2-14 Section 4.3.1:
-            // REMOTE はピアが開始したストリーム向けの初期フロー制御上限
+            // draft-ietf-webtrans-http2-14 Section 11.2:
+            // BIDI_REMOTE はこの設定の受信者が開始した双方向ストリームの受信データに対する初期フロー制御上限
             let initial_max_data = if bidirectional {
                 self.config.initial_max_stream_data_bidi_remote
             } else {
