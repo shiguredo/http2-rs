@@ -3,6 +3,7 @@
 - Priority: High
 - Created: 2026-06-08
 - Polished: 2026-06-09
+- Completed: 2026-06-09
 - Model: deepseek-v4-pro
 - Branch: feature/add-webtransport-init-header
 
@@ -137,104 +138,13 @@ HTTP/2 では同一 field name のヘッダーが複数回現れる可能性が�
 
 ## 解決方法
 
-### 1. Sans I/O 層: `WtInit` と RFC 8941 必要最小限パーサーを追加
-
-`src/webtransport/init.rs` を新規追加し、`src/webtransport/mod.rs` に `pub mod init;` と `pub use init::WtInit;` を追加する (re-export がないと `tokio-http2` 層から `shiguredo_http2::webtransport::WtInit::parse(&bytes)` で呼べない)。
-
-```rust
-// src/webtransport/init.rs
-use crate::webtransport::error::WtError;
-
-#[derive(Debug, Default, Clone)]
-pub struct WtInit {
-    pub u: Option<u64>,
-    pub bl: Option<u64>,
-    pub br: Option<u64>,
-}
-
-impl WtInit {
-    pub fn parse(value: &[u8]) -> Result<Self, WtError> {
-        // RFC 8941 Section 4.2.2 (Parsing a Dictionary) に基づく必要最小限実装。
-        // u/bl/br キーのみ Integer 値として抽出し、それ以外の bare item 型
-        // (String / Token / Boolean / Byte Sequence / Decimal / Inner List) が来たら
-        // u/bl/br については WtError::invalid_input、未知キーについては値型を識別して読み飛ばす。
-        // パラメータ (`;param=value`) は読み飛ばす。OWS、`,` 区切り、重複キーは last-wins。
-        ...
-    }
-}
-```
-
-RFC 8941 のパース範囲は仕様の §4.2 各 step に従う。実装上の要点:
-
-- **入力バイト範囲**: RFC 8941 §4.2 step 1 (refs/rfc8941.txt L1022-L1023) に従い、0x80-0xFF を含む入力はパース失敗。0x00-0x7F の範囲では OWS (SP / HTAB) を §4.2 step 2 の規則で discard し、それ以外の制御文字 (0x00-0x08, 0x0A-0x1F, 0x7F) は各 sub-step (Parsing a Key / Parsing a Bare Item) のエラーで自然に失敗する
-- **Dictionary key**: RFC 8941 §3.2 の ABNF (`lcalpha *( lcalpha / DIGIT / "_" / "-" / "*" / "." )`) に従う
-- **bare item の型識別**: 先頭文字で `-` または DIGIT → Integer/Decimal、`"` → String、`?` → Boolean、`:` → Byte Sequence、`*` または ALPHA → Token
-- **Integer の規定**: `["-"] 1*15DIGIT` (RFC 8941 §3.3.1)。16 桁目で fail (§4.2.4 step 7.5, L1359-L1360)
-- **未知キーの読み飛ばし**: 値の型を識別したうえで bare item 末尾まで読み進め、続くパラメータ列 (`;` 始まり) も読み飛ばし、`,` 区切りで次のエントリへ
-- **trailing comma**: 許容しない (RFC 8941 §4.2.2 step 5)
-
-`WtConfig::apply_init` は設計判断 2 の通り `src/webtransport/mod.rs` の `WtConfig` impl に追加する。
-
-### 2. tokio-http2 層: `webtransport_init()` helper と `accept()` 内処理
-
-`crates/tokio-http2/src/webtransport.rs` の `WtServerRequest` に helper を追加:
-
-```rust
-impl WtServerRequest {
-    /// `WebTransport-Init` ヘッダー値を取得する
-    #[must_use]
-    pub fn webtransport_init(&self) -> Option<&[u8]> {
-        self.header(b"webtransport-init")
-    }
-}
-```
-
-`accept()` のシグネチャを `pub async fn accept(self, mut config: WtConfig, allowed_origin: Option<&[u8]>) -> Result<WtServerSession>` に変更する (`mut` バインディング追加のみで公開 API は不変)。本体は以下の順で処理する。0063 で追加した TLS チェックの後、Origin 検証の後ろに WebTransport-Init パース・マージブロックを挿入する:
-
-```rust
-pub async fn accept(
-    self,
-    mut config: WtConfig,
-    allowed_origin: Option<&[u8]>,
-) -> Result<WtServerSession> {
-    // 1. TLS バージョンチェック (0063 で追加)
-    // ... ServerConnection::with_tls(...) ...
-
-    // 2. 部分ムーブ前に &self 借用が必要な値を取得 (origin / init_bytes)
-    let origin = self.origin().map(|o| o.to_vec());
-    let init_bytes = self.webtransport_init().map(|v| v.to_vec());
-    let Self { mut conn, stream_id, .. } = self;
-
-    // 3. Origin 検証 (0062 で実装済み、403 自動送信)
-    // ...
-
-    // 4. WebTransport-Init パースとマージ (本 issue で追加)
-    // draft-ietf-webtrans-http2-14 Section 4.3 (L480-L483) / Section 4.3.2 (L525-L526, L539-L540):
-    // パース失敗・値が invalid の場合は MUST reject with 4xx。
-    if let Some(bytes) = init_bytes {
-        match shiguredo_http2::webtransport::WtInit::parse(&bytes) {
-            Ok(init) => config.apply_init(&init),
-            Err(e) => {
-                let response = vec![HeaderField::from_static(b":status", b"400")];
-                conn.send_response(stream_id, response, true).await?;
-                return Err(Error::InvalidArgument(format!(
-                    "WebTransport-Init parse error: {e}"
-                )));
-            }
-        }
-    }
-
-    // 5. :status=200 送信と WtSession::server(config) 生成 (既存)
-    // ...
-}
-```
-
-`mut config: WtConfig` でシグネチャ側に `mut` を置くため、`let mut config = config;` の shadowing は不要。`init_bytes` が `None` の場合は `config` への可変アクセスが発生しないが、`mut` バインディングは外部から見えない実装詳細であり `unused_mut` 警告は出ない (引数 pattern 上の `mut` は使用判定の対象外)。
-
-### 3. テスト戦略
-
-- **Sans I/O 単体テスト**: `tests/test_webtransport/init.rs` (もしくは `tests/test_webtransport_init.rs`) に「完了条件」で列挙した境界値ケース全件を追加する。テストログは AGENTS.md 規約に従い日本語
-- **tokio-http2 統合テスト**: `crates/tokio-http2/tests/test_webtransport.rs` に既存の `test_wt_origin_*` (L774-L939 周辺) と同じパターンで `connect_request_with_webtransport_init(value: &str)` helper を追加し、正常マージ・小さい値の無視・パース失敗時 400 の 3 ケースを検証する
+- `src/webtransport/init.rs` を新規追加し、`pub struct WtInit { pub u: Option<u64>, pub bl: Option<u64>, pub br: Option<u64> }` と `WtInit::parse(value: &[u8]) -> Result<WtInit, WtError>` を実装。RFC 8941 §4.2 系の Dictionary パーサーを必要最小限で自前実装 (外部依存ゼロ)。known キー以外は値型を識別して読み飛ばし、known キーで Integer 以外/負値/16 桁以上などはすべて `WtError::invalid_input` を返す。
+- `src/webtransport/mod.rs` に `pub mod init;` / `pub use init::WtInit;` を追加し、`WtConfig::apply_init(&mut self, init: &WtInit)` を実装。`u`/`bl`/`br` の `Some(_)` 値のみ `max` で上書きする。docstring に「WebTransport-Init を受信した側 (recipient) の `WtConfig` 用」と明記し、sender/recipient の解釈逆転で誤用しないよう注意を残した。
+- `crates/tokio-http2/src/webtransport.rs` の `WtServerRequest` に `webtransport_init() -> Option<&[u8]>` を追加。`accept(mut self, mut config: WtConfig, allowed_origin: Option<&[u8]>)` の Origin 検証の後ろで自動的に `WtInit::parse` → `config.apply_init(&init)` を実行し、パース失敗時は `:status=400` を END_STREAM 付きで送って `Err(Error::InvalidArgument(...))` を返す。
+- Sans I/O 単体テスト 25 件を `tests/test_webtransport/init.rs` に追加 (issue 完了条件のパース系ケース全件 + `apply_init` の伝搬テストとして `WtSession::server(config)` 経由で uni/bidi ストリームの `send_available()` が反映されることを検証)。
+- tokio-http2 統合テスト 3 件を `crates/tokio-http2/tests/test_webtransport.rs` に追加 (大きい値で `accept` 成功、小さい値で `accept` 成功、`u=-1` で `:status=400` 拒否 + END_STREAM)。
+- 既知の制限: 同名 `webtransport-init` ヘッダーが複数あった場合の RFC 8941 §4.2 comma-concat 結合は未対応。最初の 1 個のみを参照する。コメントに明記し将来の別 issue で扱う。
+- `CHANGES.md` の `## develop` に `[ADD]` エントリを追加。
 
 ## 参照仕様
 

@@ -761,6 +761,18 @@ async fn test_wt_close_same_frame_end_stream() {
     server_task.await.expect("server join");
 }
 
+/// `WebTransport-Init` ヘッダーつきの CONNECT 要求ヘッダー
+fn connect_request_with_webtransport_init(init: &str) -> Vec<HeaderField> {
+    vec![
+        HeaderField::new(":method", "CONNECT").unwrap(),
+        HeaderField::new(":scheme", "https").unwrap(),
+        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":protocol", "webtransport").unwrap(),
+        HeaderField::new("webtransport-init", init).unwrap(),
+    ]
+}
+
 /// Origin ヘッダーつきの CONNECT 要求ヘッダー
 fn connect_request_with_origin(origin: &str) -> Vec<HeaderField> {
     vec![
@@ -1061,4 +1073,179 @@ async fn test_wt_origin_missing_rejected() {
 
     // サーバー側のエラーチェックのみで十分
     server_task.await.expect("server join");
+}
+
+/// draft-ietf-webtrans-http2-14 Section 4.3 (L480-L483):
+/// WebTransport-Init で SETTINGS より大きい値を送ると `accept()` が成功し、
+/// セッションが確立できる (パースが成功する経路の確認)。
+#[tokio::test]
+async fn test_wt_init_accept_with_large_value() {
+    let tls = test_tls();
+    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
+        .await
+        .expect("バインドに失敗");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続受け入れに失敗");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        // WtServerRequest 経由で WebTransport-Init ヘッダー値が取得できることも確認する
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let init_value = req
+            .webtransport_init()
+            .map(|v| v.to_vec())
+            .expect("WebTransport-Init ヘッダーが取得できること");
+        assert!(
+            init_value.starts_with(b"u="),
+            "WebTransport-Init は 'u=...' で始まること、実際は {:?}",
+            String::from_utf8_lossy(&init_value)
+        );
+        // SETTINGS 由来のデフォルトより大きい値を送っているのでパース成功する
+        let _session = req
+            .accept(WtConfig::default(), None)
+            .await
+            .expect("WebTransport-Init パース成功なら accept() は成功すべき");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗");
+    loop {
+        let ev = client
+            .next_event()
+            .await
+            .expect("クライアント next_event に失敗");
+        if matches!(ev, Event::SettingsReceived { ack: false }) {
+            break;
+        }
+    }
+    let _connect_stream = client
+        .send_request(connect_request_with_webtransport_init("u=999999"), false)
+        .await
+        .expect("CONNECT 送信に失敗");
+
+    server_task.await.expect("サーバータスクの join に失敗");
+}
+
+/// WebTransport-Init で SETTINGS より小さい値を送っても `accept()` が成功し、
+/// (apply_init の max マージで実値は SETTINGS 由来のまま維持される)。
+#[tokio::test]
+async fn test_wt_init_accept_with_small_value() {
+    let tls = test_tls();
+    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
+        .await
+        .expect("バインドに失敗");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続受け入れに失敗");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let _session = req
+            .accept(WtConfig::default(), None)
+            .await
+            .expect("小さい値でも accept() は成功すべき (max マージで無視されるだけ)");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗");
+    loop {
+        let ev = client
+            .next_event()
+            .await
+            .expect("クライアント next_event に失敗");
+        if matches!(ev, Event::SettingsReceived { ack: false }) {
+            break;
+        }
+    }
+    let _connect_stream = client
+        .send_request(connect_request_with_webtransport_init("u=10"), false)
+        .await
+        .expect("CONNECT 送信に失敗");
+
+    server_task.await.expect("サーバータスクの join に失敗");
+}
+
+/// draft-ietf-webtrans-http2-14 Section 4.3.2 (L525-L540):
+/// WebTransport-Init のパース失敗 (負値) で `:status=400` レスポンスが返り、
+/// CONNECT ストリームが END_STREAM で閉じられる。
+#[tokio::test]
+async fn test_wt_init_rejected_on_invalid_value() {
+    let tls = test_tls();
+    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
+        .await
+        .expect("バインドに失敗");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続受け入れに失敗");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        match req.accept(WtConfig::default(), None).await {
+            Ok(_) => panic!("負値の WebTransport-Init で accept() が成功してしまった"),
+            Err(err) => assert!(
+                format!("{err}").contains("WebTransport-Init parse error"),
+                "WebTransport-Init パースエラーが期待だが、実際は {err}"
+            ),
+        }
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗");
+    loop {
+        let ev = client
+            .next_event()
+            .await
+            .expect("クライアント next_event に失敗");
+        if matches!(ev, Event::SettingsReceived { ack: false }) {
+            break;
+        }
+    }
+    let connect_stream = client
+        .send_request(connect_request_with_webtransport_init("u=-1"), false)
+        .await
+        .expect("CONNECT 送信に失敗");
+
+    // クライアントは :status=400 と END_STREAM を受信する
+    let mut got_400 = false;
+    let recv = async {
+        loop {
+            let ev = client
+                .next_event()
+                .await
+                .expect("クライアントイベント取得に失敗");
+            if let Event::HeadersReceived {
+                stream_id,
+                headers,
+                end_stream,
+                ..
+            } = ev
+                && stream_id == connect_stream
+            {
+                let status = headers
+                    .iter()
+                    .find(|h| h.name() == b":status")
+                    .expect("status ヘッダーが必要")
+                    .value()
+                    .to_vec();
+                assert_eq!(status.as_slice(), b"400", "期待: 400, 実際: {:?}", status);
+                assert!(
+                    end_stream,
+                    "CONNECT ストリームは END_STREAM で閉じられるべき"
+                );
+                got_400 = true;
+                break;
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), recv)
+        .await
+        .expect("タイムアウト");
+
+    server_task.await.expect("サーバータスクの join に失敗");
+    assert!(got_400, ":status=400 を受信しなかった");
 }

@@ -17,7 +17,8 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use shiguredo_http2::webtransport::{
-    WtConfig, WtEvent, WtSession, WtSessionState, WtStreamId, stream::stream_id as wt_stream_id,
+    WtConfig, WtEvent, WtInit, WtSession, WtSessionState, WtStreamId,
+    stream::stream_id as wt_stream_id,
 };
 use shiguredo_http2::{ErrorCode, Event, HeaderField, StreamId};
 
@@ -89,6 +90,20 @@ impl WtServerRequest {
         self.header(b"origin")
     }
 
+    /// `WebTransport-Init` ヘッダー値 (RFC 8941 Dictionary バイト列) を取得する
+    ///
+    /// draft-ietf-webtrans-http2-14 Section 4.3.2 (L519-L541) で規定される
+    /// 初期フロー制御値のヘッダー。HTTP/2 では field name は小文字なので
+    /// `webtransport-init` (lowercase) で照合する。
+    ///
+    /// 既知の制限: 同名ヘッダーが複数あった場合は最初の 1 個のみを返し、
+    /// RFC 8941 §4.2 (L1042-L1046) が MUST 要求する comma-concat 結合は未対応。
+    /// 通常のクライアント実装が複数行を送ることは稀だが、必要に応じて将来別 issue で対応する。
+    #[must_use]
+    pub fn webtransport_init(&self) -> Option<&[u8]> {
+        self.header(b"webtransport-init")
+    }
+
     fn header(&self, name: &[u8]) -> Option<&[u8]> {
         self.headers
             .iter()
@@ -107,7 +122,7 @@ impl WtServerRequest {
     /// `None` を指定すると検証をスキップする (非 Web context 向け)。
     pub async fn accept(
         mut self,
-        config: WtConfig,
+        mut config: WtConfig,
         allowed_origin: Option<&[u8]>,
     ) -> Result<WtServerSession> {
         // draft-ietf-webtrans-http2-14 Section 7 (L1425-L1438):
@@ -132,8 +147,9 @@ impl WtServerRequest {
         // draft-ietf-webtrans-http2-14 Section 3.2 (L290-L301):
         // Web context では Origin ヘッダーを MUST verify する。
         // Origin の形式は RFC 6454 Section 7 で定義される。
-        // self の部分ムーブ前に origin を取得する必要がある。
+        // self の部分ムーブ前に &self 借用が必要な値 (origin / webtransport-init) を取得する。
         let origin = self.origin().map(|o| o.to_vec());
+        let init_bytes = self.webtransport_init().map(|v| v.to_vec());
 
         let Self {
             mut conn,
@@ -155,6 +171,22 @@ impl WtServerRequest {
                     String::from_utf8_lossy(allowed),
                     String::from_utf8_lossy(&actual),
                 )));
+            }
+        }
+
+        // draft-ietf-webtrans-http2-14 Section 4.3 (L480-L483) / Section 4.3.2 (L525-L540):
+        // WebTransport-Init が存在する場合は RFC 8941 Dictionary としてパースし、
+        // SETTINGS 値と max マージする。パース失敗・型不一致・値範囲外は MUST 4xx 拒否。
+        if let Some(bytes) = init_bytes {
+            match WtInit::parse(&bytes) {
+                Ok(init) => config.apply_init(&init),
+                Err(e) => {
+                    let response = vec![HeaderField::from_static(b":status", b"400")];
+                    conn.send_response(stream_id, response, true).await?;
+                    return Err(Error::InvalidArgument(format!(
+                        "WebTransport-Init parse error: {e}"
+                    )));
+                }
             }
         }
 
