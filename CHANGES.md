@@ -142,6 +142,8 @@
   - @voluntas
 - [FIX] WT_CLOSE_SESSION の reason が 1024 バイト超過時にエラーを返す (issue 0061)
   - @voluntas
+- [FIX] `WtServerRequest::accept()` で TLS 1.3 未達の WebTransport セッションを `RST_STREAM(PROTOCOL_ERROR)` で拒否する (draft-ietf-webtrans-http2-14 §7 / RFC 9113 §8.1.1) (issue 0063)
+  - @voluntas
 
 ### misc
 

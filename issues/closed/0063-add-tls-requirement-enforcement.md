@@ -3,8 +3,9 @@
 - Priority: High
 - Created: 2026-06-08
 - Polished: 2026-06-09
+- Completed: 2026-06-09
 - Model: deepseek-v4-pro
-- Branch: feature/add-tls-requirement-enforcement
+- Branch: feature/fix-tls-requirement-enforcement
 
 ## 目的
 
@@ -92,58 +93,15 @@ TLS チェックを最先頭に置くのは、Origin 不一致が 403 HEADERS �
 
 ## 解決方法
 
-### 1. ServerConnection への共通 API 追加
-
-`crates/tokio-http2/src/server.rs`:
-
-```rust
-impl ServerConnection {
-    pub(crate) fn with_tls<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&rustls::ServerConnection) -> R,
-    {
-        let (_io, tls_conn) = self.conn.get_ref().get_ref();
-        f(tls_conn)
-    }
-}
-```
-
-`self.conn.get_ref()` で `&TlsStream` (= `&tokio_rustls::server::TlsStream<TcpStream>`) を得て、その `get_ref()` でタプル `(&TcpStream, &rustls::ServerConnection)` の **`.1`** を取り出す。
-
-### 2. WtServerRequest::accept() への TLS チェック追加
-
-`crates/tokio-http2/src/webtransport.rs` の `accept()` 冒頭、Origin 検証より前に挿入する。あわせてファイル先頭の `use` 文に `use shiguredo_http2::ErrorCode;` を追加する (現状の `use shiguredo_http2::{Event, HeaderField, StreamId};` には `ErrorCode` が含まれていない)。`rustls::ProtocolVersion` は完全修飾で参照するため追加 `use` は不要。
-
-```rust
-// draft-ietf-webtrans-http2-14 Section 7 (L1425-L1438): TLS 1.3 を要求する。
-// TLS 1.2 + EMS は rustls 0.23 の API 制約により動的判定不可のため、
-// 当面サポートせず安全側に倒す。
-let tls_version = self.conn.with_tls(|tls| tls.protocol_version());
-if !matches!(tls_version, Some(rustls::ProtocolVersion::TLSv1_3)) {
-    // RFC 9113 Section 8.1.1 (L2463-L2466) / Section 5.4.2:
-    // malformed request は stream error of type PROTOCOL_ERROR で扱う。
-    // ServerConnection::reset_stream は内部で flush するため、ここで即座に
-    // ネットワークへ RST_STREAM が送出される (driver タスク未起動の状況でも問題ない)。
-    let stream_id = self.stream_id;
-    self.conn
-        .reset_stream(stream_id, ErrorCode::ProtocolError)
-        .await?;
-    return Err(Error::InvalidArgument(format!(
-        "WebTransport requires TLS 1.3 (got {tls_version:?})"
-    )));
-}
-```
-
-`accept()` 到達時には `Server::accept` (`server.rs` L58-L83) で TLS ハンドシェイクが完了しているため `protocol_version()` は通常 `Some(_)` を返す。防御的に `None` も拒否扱いとする。
-
-なお `reset_stream` の `?` が `Err(Error::Io(_))` を返す経路があるが、その場合は I/O エラーとして上位に伝搬され、後続の `Err(Error::InvalidArgument(...))` には到達しない。これは I/O 失敗時の動作として妥当 (ストリームを破棄できない以上、接続レベルの異常を優先する)。
-
-### 3. テスト戦略
-
-`crates/tokio-http2/tests/test_webtransport.rs` に追加 (テストログのメッセージは AGENTS.md 規約に従い日本語):
-
-- **TLS 1.3 成功ケース**: 既存テストと同じ経路 (`rcgen` で自己署名証明書を作り、`TlsServerConfig::new` でサーバー設定、`TlsClientConfig::insecure` でクライアント設定) で `accept()` が成功することを確認する
-- **TLS 1.2 拒否ケース**: テスト内で `rustls::ServerConfig` と `rustls::ClientConfig` を **テストコード内で直接構築** し、`with_protocol_versions(&[&rustls::version::TLS12])` 相当 (rustls 0.23 の具体 API 呼び出しはテスト実装時に確認する) で TLS 1.2 限定にして起動する。`TlsServerConfig` 公開 API には新 API を追加しない (スコープ外)。CONNECT 送信 → `RST_STREAM(PROTOCOL_ERROR)` 受信を確認する
+- `ServerConnection::with_tls<F, R>(&self, f: F) -> R` を `pub(crate)` で追加し (`crates/tokio-http2/src/server.rs`)、内部の `rustls::ServerConnection` への閉包経由アクセスを提供する。0065 でも再利用する想定。
+- `WtServerRequest::accept(mut self, ...)` 冒頭で TLS バージョンを取得し、`Some(rustls::ProtocolVersion::TLSv1_3)` 以外なら CONNECT ストリームに `RST_STREAM(PROTOCOL_ERROR)` を送って `Err(Error::InvalidArgument)` を返す (`crates/tokio-http2/src/webtransport.rs`)。比較は `#[non_exhaustive]` 対策として `matches!` で完全一致パターンを使用する。
+- TLS 1.2 + extended master secret は rustls 0.23 の API 制約で動的判定できないため、当面 TLS 1.3 のみ許可する安全側の判断を採用 (仕様より厳しい)。
+- エラーメッセージは `rustls::ProtocolVersion` の `Debug` 出力に依存しないよう、`describe_tls_version` ヘルパーで固定の英語ラベルに変換する。
+- テスト用に `TlsClientConfig::insecure_tls12_only` を `#[doc(hidden)] pub` で追加 (`crates/tokio-http2/src/tls.rs`)。これによりクライアント側で TLS 1.2 限定ハンドシェイクを強制できる。本番では使わない。
+- 統合テスト 2 件を追加 (`crates/tokio-http2/tests/test_webtransport.rs`):
+  - `test_wt_tls13_accept`: TLS 1.3 経路で `accept()` が成功することのリグレッション防止
+  - `test_wt_tls12_rejected`: TLS 1.2 限定クライアントから CONNECT を送り、`RST_STREAM(PROTOCOL_ERROR)` をクライアントが受信し、サーバー側 `accept()` が `Err` を返すこと (I/O エラーが先に伝搬する経路も許容)
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加 (ユーザー判断: 仕様 MUST 要件の遵守としてバグ修正扱い)。
 
 ## 参照仕様
 
