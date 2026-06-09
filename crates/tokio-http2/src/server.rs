@@ -174,4 +174,17 @@ impl ServerConnection {
     pub async fn shutdown(&mut self) -> Result<()> {
         self.conn.send_goaway(ErrorCode::NoError, vec![]).await
     }
+
+    /// 内部の `rustls::ServerConnection` を参照する閉包を実行する
+    ///
+    /// `Server::accept()` で TLS ハンドシェイクが完了している前提。
+    /// WebTransport の TLS バージョン検査 (draft-ietf-webtrans-http2-14 Section 7) や
+    /// TLS Keying Material Exporter といった TLS 直接アクセスが必要な処理から呼ぶ。
+    pub(crate) fn with_tls<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&rustls::ServerConnection) -> R,
+    {
+        let (_io, tls_conn) = self.conn.get_ref().get_ref();
+        f(tls_conn)
+    }
 }

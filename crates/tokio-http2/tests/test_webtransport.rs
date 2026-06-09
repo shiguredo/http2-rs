@@ -10,7 +10,10 @@ use shiguredo_http2::webtransport::{
     WtConfig, WtEvent, WtSession, stream::stream_id as wt_stream_id,
 };
 
-use tokio_http2::{Client, Event, HeaderField, Limits, Server, TlsServerConfig, WtServerRequest};
+use tokio_http2::{
+    Client, ErrorCode, Event, HeaderField, Limits, Server, TlsClientConfig, TlsServerConfig,
+    WtServerRequest,
+};
 
 /// テストで繰り返し使う CONNECT 要求ヘッダー
 fn connect_request() -> Vec<HeaderField> {
@@ -893,6 +896,128 @@ async fn test_wt_origin_rejected() {
     }
     assert!(got_403, "Origin が拒否されなかった");
     server_task.await.expect("server join");
+}
+
+/// draft-ietf-webtrans-http2-14 Section 7 (L1425-L1438):
+/// TLS 1.3 で WebTransport セッションを要求した場合は `accept()` が成功する。
+/// (既存テストでも TLS 1.3 経路は通っているが、リグレッション防止のため明示テストを置く)
+#[tokio::test]
+async fn test_wt_tls13_accept() {
+    let tls = test_tls();
+    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
+        .await
+        .expect("バインドに失敗");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続受け入れに失敗");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        // TLS 1.3 がネゴシエートされているため accept() は成功する想定
+        let _session = req
+            .accept(WtConfig::default(), None)
+            .await
+            .expect("TLS 1.3 では accept() が成功すべき");
+        // driver タスクが少なくとも 1 回 select! を回す程度の余地を確保してから drop で終了
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗");
+    let _connect_stream = perform_connect(&mut client).await;
+    server_task.await.expect("サーバータスクの join に失敗");
+}
+
+/// draft-ietf-webtrans-http2-14 Section 7 (L1425-L1438) + RFC 9113 Section 8.1.1 (L2463-L2465):
+/// TLS 1.2 で WebTransport セッションを要求した場合は malformed として扱い、
+/// CONNECT ストリームに `RST_STREAM(PROTOCOL_ERROR)` を送出して拒否する。
+#[tokio::test]
+async fn test_wt_tls12_rejected() {
+    let tls = test_tls();
+    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
+        .await
+        .expect("バインドに失敗");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続受け入れに失敗");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        // TLS 1.2 がネゴシエートされているため accept() は TLS 要件未達で失敗する。
+        // ただし RST_STREAM 送信 (reset_stream の内部 ?) で I/O エラーが先に伝搬する
+        // 可能性もあるため、その経路も許容する。
+        match req.accept(WtConfig::default(), None).await {
+            Ok(_) => panic!("TLS 1.2 で accept() が成功してしまった"),
+            Err(err) => {
+                let msg = format!("{err}");
+                assert!(
+                    msg.contains("TLS 1.3") || matches!(err, tokio_http2::Error::Io(_)),
+                    "期待: TLS 1.3 要求エラーまたは I/O エラー、実際: {err}"
+                );
+            }
+        }
+    });
+
+    // クライアントを TLS 1.2 限定で構築し、TLS 1.2 のハンドシェイクを強制する
+    let tls_client_config =
+        TlsClientConfig::insecure_tls12_only().expect("TLS 1.2 限定設定の構築に失敗");
+    let mut client = Client::connect(addr, "localhost", tls_client_config, Limits::default())
+        .await
+        .expect("接続に失敗");
+
+    // サーバーの SETTINGS を待ってから CONNECT を送る
+    loop {
+        let ev = client
+            .next_event()
+            .await
+            .expect("クライアント next_event に失敗");
+        if matches!(ev, Event::SettingsReceived { ack: false }) {
+            break;
+        }
+    }
+
+    let connect_stream = client
+        .send_request(connect_request(), false)
+        .await
+        .expect("CONNECT 送信に失敗");
+
+    // クライアントは CONNECT ストリームに対する RST_STREAM(PROTOCOL_ERROR) を受信する。
+    // 5 秒のグローバルタイムアウトでループを保護し、目的のイベントが来るまで待ち続ける。
+    let mut got_reset = false;
+    let mut got_error_code: Option<ErrorCode> = None;
+    let recv = async {
+        loop {
+            let ev = client
+                .next_event()
+                .await
+                .expect("クライアントイベント取得に失敗");
+            if let Event::StreamReset {
+                stream_id,
+                error_code,
+            } = ev
+                && stream_id == connect_stream
+            {
+                got_reset = true;
+                got_error_code = Some(error_code);
+                break;
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), recv)
+        .await
+        .expect("タイムアウト");
+
+    // server_task の panic を取りこぼさないよう、got_reset の assert より先に
+    // サーバー側の join 結果を確認する
+    server_task.await.expect("サーバータスクの join に失敗");
+
+    assert!(got_reset, "RST_STREAM(PROTOCOL_ERROR) を受信しなかった");
+    assert_eq!(
+        got_error_code,
+        Some(ErrorCode::ProtocolError),
+        "期待される error_code は PROTOCOL_ERROR"
+    );
 }
 
 /// Origin ヘッダーが存在しない場合に 403 で拒否されることを確認する。

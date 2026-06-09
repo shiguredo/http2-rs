@@ -76,6 +76,30 @@ impl TlsClientConfig {
         })
     }
 
+    /// TLS 1.2 限定で証明書検証を無効化した設定を作成（テスト専用）
+    ///
+    /// WebTransport の TLS 要件 (draft-ietf-webtrans-http2-14 Section 7: TLS 1.3 か
+    /// TLS 1.2 + extended master secret) を満たさない接続パターンを再現するための
+    /// 専用ヘルパー。本番では絶対に呼ばない。本番用途では `with_platform_verifier`
+    /// か `with_custom_ca` を使う。`#[doc(hidden)]` で公開ドキュメントから除外する。
+    #[doc(hidden)]
+    pub fn insecure_tls12_only() -> Result<Self> {
+        let provider = rustls::crypto::aws_lc_rs::default_provider();
+        let mut config = ClientConfig::builder_with_provider(Arc::new(provider))
+            .with_protocol_versions(&[&rustls::version::TLS12])
+            .map_err(|e| Error::Tls(Box::new(e)))?
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(InsecureVerifier))
+            .with_no_client_auth();
+
+        // RFC 9113 Section 3.3: ALPN で h2 を設定する
+        config.alpn_protocols = vec![b"h2".to_vec()];
+
+        Ok(Self {
+            inner: Arc::new(config),
+        })
+    }
+
     /// 内部の ClientConfig を取得
     pub(crate) fn inner(&self) -> Arc<ClientConfig> {
         Arc::clone(&self.inner)

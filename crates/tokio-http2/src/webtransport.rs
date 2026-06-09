@@ -19,7 +19,7 @@ use tokio::task::JoinHandle;
 use shiguredo_http2::webtransport::{
     WtConfig, WtEvent, WtSession, WtSessionState, WtStreamId, stream::stream_id as wt_stream_id,
 };
-use shiguredo_http2::{Event, HeaderField, StreamId};
+use shiguredo_http2::{ErrorCode, Event, HeaderField, StreamId};
 
 use crate::error::{Error, Result};
 use crate::server::ServerConnection;
@@ -106,10 +106,29 @@ impl WtServerRequest {
     /// Origin が一致しないか存在しない場合は 403 を返す。
     /// `None` を指定すると検証をスキップする (非 Web context 向け)。
     pub async fn accept(
-        self,
+        mut self,
         config: WtConfig,
         allowed_origin: Option<&[u8]>,
     ) -> Result<WtServerSession> {
+        // draft-ietf-webtrans-http2-14 Section 7 (L1425-L1438):
+        // WebTransport over HTTP/2 は TLS 1.3 か、TLS 1.2 + extended master secret を要求する。
+        // rustls 0.23 は extended master secret のネゴシエーション状態を外部公開していないため、
+        // 動的判定不可。安全側に倒して TLS 1.3 のみを許可する (仕様より厳しい)。
+        // 将来 `TLSv1_4` 等の新バリアントが追加された場合は本箇所の見直しが必要。
+        // `ProtocolVersion` は `#[non_exhaustive]` のため `matches!` で完全一致比較する。
+        let tls_version = self.conn.with_tls(|tls| tls.protocol_version());
+        if !matches!(tls_version, Some(rustls::ProtocolVersion::TLSv1_3)) {
+            // RFC 9113 Section 8.1.1 (L2463-L2465) / Section 5.4.2:
+            // malformed request は stream error of type PROTOCOL_ERROR で処理する。
+            self.conn
+                .reset_stream(self.stream_id, ErrorCode::ProtocolError)
+                .await?;
+            return Err(Error::InvalidArgument(format!(
+                "WebTransport requires TLS 1.3 (got {})",
+                describe_tls_version(tls_version),
+            )));
+        }
+
         // draft-ietf-webtrans-http2-14 Section 3.2 (L290-L301):
         // Web context では Origin ヘッダーを MUST verify する。
         // Origin の形式は RFC 6454 Section 7 で定義される。
@@ -1001,4 +1020,19 @@ impl DriverState {
 
 fn wt_err(e: shiguredo_http2::webtransport::WtError) -> Error {
     Error::InvalidArgument(format!("webtransport: {e}"))
+}
+
+/// TLS バージョンをエラー文字列に埋め込むための説明文字列に変換する
+///
+/// `rustls::ProtocolVersion` の `Debug` 実装に依存すると将来の表現変更で
+/// 文言がブレるため、固定の英語ラベルにマップする (issue 0055 の方針との整合)。
+fn describe_tls_version(version: Option<rustls::ProtocolVersion>) -> &'static str {
+    match version {
+        Some(rustls::ProtocolVersion::TLSv1_3) => "TLS 1.3",
+        Some(rustls::ProtocolVersion::TLSv1_2) => "TLS 1.2",
+        Some(rustls::ProtocolVersion::TLSv1_0) => "TLS 1.0",
+        Some(rustls::ProtocolVersion::TLSv1_1) => "TLS 1.1",
+        Some(_) => "unsupported TLS version",
+        None => "no TLS version negotiated",
+    }
 }
