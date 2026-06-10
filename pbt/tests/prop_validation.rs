@@ -232,52 +232,6 @@ proptest! {
         prop_assert!(validation::validate_request_headers(&headers).is_err());
     }
 
-    /// 疑似ヘッダーの重複は拒否される (RFC 9113 Section 8.3)
-    #[test]
-    fn prop_duplicate_pseudo_header_rejected(
-        pseudo in prop_oneof![
-            Just(":method"),
-            Just(":scheme"),
-            Just(":path"),
-        ],
-    ) {
-        let mut headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
-        ];
-
-        // 重複を追加。pseudo の値構文要件をかわすため、各 pseudo に対応した
-        // valid な値を選ぶ。
-        let dup_value: &str = match pseudo {
-            ":method" => "POST",
-            ":scheme" => "http",
-            ":path" => "/dup",
-            _ => "value",
-        };
-        headers.push(HeaderField::new(pseudo, dup_value).unwrap());
-
-        prop_assert!(validation::validate_request_headers(&headers).is_err());
-    }
-
-    /// 通常ヘッダー後の疑似ヘッダーは拒否される (RFC 9113 Section 8.3)
-    #[test]
-    fn prop_pseudo_after_regular_rejected(
-        extra_pseudo in prop_oneof![
-            Just(":authority"),
-        ],
-    ) {
-        let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
-            HeaderField::new("content-type", "text/html").unwrap(),
-            HeaderField::new(extra_pseudo, "example.com").unwrap(),
-        ];
-
-        prop_assert!(validation::validate_request_headers(&headers).is_err());
-    }
-
     /// 有効なトレーラーは検証を通過する
     #[test]
     fn prop_valid_trailers_passes(
@@ -304,33 +258,6 @@ proptest! {
         prop_assert!(validation::validate_trailers(&headers).is_ok());
     }
 
-    /// トレーラーに疑似ヘッダーがあると拒否される (RFC 9113 Section 8.3)
-    #[test]
-    fn prop_trailers_with_pseudo_rejected(
-        pseudo in prop_oneof![
-            Just(":status"),
-            Just(":method"),
-            Just(":path"),
-            Just(":scheme"),
-            Just(":authority"),
-        ],
-    ) {
-        // 各 pseudo の値構文要件をかわすため、対応した valid 値を選ぶ。
-        let value: &str = match pseudo {
-            ":status" => "200",
-            ":method" => "GET",
-            ":scheme" => "https",
-            ":path" => "/",
-            _ => "example.com",
-        };
-        let headers = vec![
-            HeaderField::new(pseudo, value).unwrap(),
-            HeaderField::new("x-trailer", "value").unwrap(),
-        ];
-
-        prop_assert!(validation::validate_trailers(&headers).is_err());
-    }
-
     /// 有効な Extended CONNECT リクエストは検証を通過する (RFC 8441)
     #[test]
     fn prop_valid_extended_connect_passes(
@@ -351,38 +278,6 @@ proptest! {
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
-    }
-
-    /// Extended CONNECT に :scheme がない場合は拒否される (RFC 8441 Section 4: :protocol を含むリクエストには :scheme と :path が必須)
-    #[test]
-    fn prop_extended_connect_without_scheme_rejected(
-        path in http_path(),
-        authority in "[a-z][a-z0-9]{0,10}\\.[a-z]{2,3}:[0-9]{1,5}",
-    ) {
-        let headers = vec![
-            HeaderField::new(":method", "CONNECT").unwrap(),
-            HeaderField::new(":path", &path).unwrap(),
-            HeaderField::new(":authority", &authority).unwrap(),
-            HeaderField::new(":protocol", "webtransport").unwrap(),
-        ];
-
-        prop_assert!(validation::validate_request_headers(&headers).is_err());
-    }
-
-    /// Extended CONNECT に :path がない場合は拒否される (RFC 8441 Section 4: :protocol を含むリクエストには :scheme と :path が必須)
-    #[test]
-    fn prop_extended_connect_without_path_rejected(
-        scheme in http_scheme(),
-        authority in "[a-z][a-z0-9]{0,10}\\.[a-z]{2,3}:[0-9]{1,5}",
-    ) {
-        let headers = vec![
-            HeaderField::new(":method", "CONNECT").unwrap(),
-            HeaderField::new(":scheme", scheme).unwrap(),
-            HeaderField::new(":authority", &authority).unwrap(),
-            HeaderField::new(":protocol", "webtransport").unwrap(),
-        ];
-
-        prop_assert!(validation::validate_request_headers(&headers).is_err());
     }
 
     /// Host と :authority が不一致の場合は拒否される (RFC 9113 Section 8.3.1)
@@ -422,28 +317,6 @@ proptest! {
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
-    }
-
-    /// CONNECT 以外で :protocol を使うと拒否される
-    #[test]
-    fn prop_protocol_on_non_connect_rejected(
-        method in prop_oneof![
-            Just("GET"),
-            Just("POST"),
-            Just("PUT"),
-            Just("DELETE"),
-        ],
-        scheme in http_scheme(),
-        path in http_path(),
-    ) {
-        let headers = vec![
-            HeaderField::new(":method", method).unwrap(),
-            HeaderField::new(":scheme", scheme).unwrap(),
-            HeaderField::new(":path", &path).unwrap(),
-            HeaderField::new(":protocol", "webtransport").unwrap(),
-        ];
-
-        prop_assert!(validation::validate_request_headers(&headers).is_err());
     }
 
     /// http/https スキームで :authority も Host もない場合は拒否される (RFC 9113 Section 8.3.1)
@@ -551,28 +424,6 @@ proptest! {
         prop_assert!(validation::validate_request_headers(&headers).is_err());
     }
 
-    /// :status = "101" のレスポンスは拒否される (RFC 9113 Section 8.6: HTTP/2 は 101 (Switching Protocols) をサポートしない)
-    #[test]
-    fn prop_response_status_101_rejected(
-        regular_headers in prop::collection::vec(
-            (valid_header_name(), valid_header_value()),
-            0..=4
-        ),
-    ) {
-        let mut headers = vec![HeaderField::new(":status", "101").unwrap()];
-
-        for (name, value) in regular_headers {
-            let name_str = String::from_utf8_lossy(&name);
-            if !FORBIDDEN_FOR_VALIDATION
-                .contains(&name_str.as_ref())
-            {
-                headers.push(HeaderField::new(name, value).unwrap());
-            }
-        }
-
-        prop_assert!(validation::validate_response_headers(&headers).is_err());
-    }
-
     /// 先頭に SP/HTAB があるヘッダー値は拒否される (RFC 9113 Section 8.2.1)
     #[test]
     fn prop_header_value_leading_whitespace_rejected(
@@ -632,20 +483,6 @@ proptest! {
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
     }
 
-    /// CONNECT の :authority にポートがない場合は拒否される (RFC 9113 Section 8.5)
-    #[test]
-    fn prop_connect_authority_without_port_rejected(
-        host in "[a-z][a-z0-9]{0,10}\\.[a-z]{2,3}",
-    ) {
-        // host のみ (ポートなし) は authority-form ではないため拒否される
-        let headers = vec![
-            HeaderField::new(":method", "CONNECT").unwrap(),
-            HeaderField::new(":authority", &host).unwrap(),
-        ];
-
-        prop_assert!(validation::validate_request_headers(&headers).is_err());
-    }
-
     /// CONNECT の :authority が authority-form (host:port) なら通過する (RFC 9113 Section 8.5)
     #[test]
     fn prop_connect_authority_with_port_accepted(
@@ -656,57 +493,6 @@ proptest! {
         let headers = vec![
             HeaderField::new(":method", "CONNECT").unwrap(),
             HeaderField::new(":authority", &authority).unwrap(),
-        ];
-
-        prop_assert!(validation::validate_request_headers(&headers).is_ok());
-    }
-
-    /// CONNECT の :authority が IPv6 の authority-form なら通過する (RFC 9113 Section 8.5)
-    #[test]
-    fn prop_connect_ipv6_authority_accepted(
-        port in 1u16..=65535u16,
-    ) {
-        let authority = format!("[::1]:{port}");
-        let headers = vec![
-            HeaderField::new(":method", "CONNECT").unwrap(),
-            HeaderField::new(":authority", &authority).unwrap(),
-        ];
-
-        prop_assert!(validation::validate_request_headers(&headers).is_ok());
-    }
-
-    /// OPTIONS 以外で :path = "*" は拒否される (RFC 9113 Section 8.3.1)
-    #[test]
-    fn prop_asterisk_path_on_non_options_rejected(
-        method in prop_oneof![
-            Just("GET"),
-            Just("POST"),
-            Just("PUT"),
-            Just("DELETE"),
-            Just("HEAD"),
-            Just("PATCH"),
-        ],
-    ) {
-        let headers = vec![
-            HeaderField::new(":method", method).unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", "*").unwrap(),
-            HeaderField::new(":authority", "example.com").unwrap(),
-        ];
-
-        prop_assert!(validation::validate_request_headers(&headers).is_err());
-    }
-
-    /// OPTIONS で :path = "*" は通過する (RFC 9113 Section 8.3.1)
-    #[test]
-    fn prop_asterisk_path_on_options_accepted(
-        scheme in http_scheme(),
-    ) {
-        let headers = vec![
-            HeaderField::new(":method", "OPTIONS").unwrap(),
-            HeaderField::new(":scheme", scheme).unwrap(),
-            HeaderField::new(":path", "*").unwrap(),
-            HeaderField::new(":authority", "example.com").unwrap(),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());

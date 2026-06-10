@@ -64,6 +64,27 @@ fn error_kind_display_hpack_error() {
     assert_eq!(kind.to_string(), "HpackError");
 }
 
+/// ConnectionError と StreamError の ErrorKind は Display 出力にバリアント名 (含意としてエラーコード) を含む。
+#[test]
+fn test_error_kind_with_code_display_contains_code() {
+    // 代表値として ProtocolError を選び、両バリアントで Display 出力を検査する。
+    let code = ErrorCode::ProtocolError;
+    let conn_kind = ErrorKind::ConnectionError(code);
+    let stream_kind = ErrorKind::StreamError(code);
+
+    let conn_display = format!("{conn_kind}");
+    let stream_display = format!("{stream_kind}");
+
+    assert!(
+        conn_display.contains("ConnectionError"),
+        "ConnectionError の Display にバリアント名が含まれるべき: {conn_display}"
+    );
+    assert!(
+        stream_display.contains("StreamError"),
+        "StreamError の Display にバリアント名が含まれるべき: {stream_display}"
+    );
+}
+
 /// RFC 9113 Section 7 で定義された既知のエラーコード (0x00-0x0d) と、
 /// draft-ietf-webtrans-http2-14 Section 11.3 由来の WebTransport エラーコード
 /// (本実装の暫定値 0x100-0x102) のマッピングをテスト

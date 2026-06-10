@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-10
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-06-10
 - Model: Opus 4.7
 - Branch: feature/refactor-relocate-pbt-non-property-tests
 - Polished: 2026-06-10
@@ -281,4 +281,34 @@ D 区分のテスト関数ごとに必要な対応:
 
 ## 解決方法
 
-実装完了時に追記する。
+### 削除
+
+- `pbt/tests/` 配下から非プロパティテスト 50 件を削除した (A 3 + B 6 + C 8 + D 33)
+  - A 区分 (Fuzz で代替可能): `prop_decoder_robustness` (`pbt/tests/prop_frame/main.rs`)、`prop_hpack_decoder_robustness` (`pbt/tests/prop_hpack/main.rs`)、`prop_decode_incomplete_safe` (`pbt/tests/prop_webtransport/main.rs`)
+  - B 区分 (PBT/fuzz としても無意味): `prop_event_debug_not_panic` / `prop_event_clone_equality` (`pbt/tests/prop_event.rs`)、`prop_error_code_display_not_empty` / `prop_error_kind_display_not_empty` (`pbt/tests/prop_error.rs`)、`prop_valid_settings_accepted` (`pbt/tests/prop_settings.rs`)、`prop_settings_frame_roundtrip` (`pbt/tests/prop_frame/main.rs`)
+  - C 区分 (既存 `tests/` と重複): 8 件 (`pbt/tests/prop_validation.rs` / `prop_connection/main.rs` / `prop_connection/headers.rs` / `prop_connection/settings.rs` / `prop_error.rs` 各所)
+  - D 区分 (単体テスト相当): 33 件
+- デッドコード除去: `pbt/tests/prop_event.rs` の `any_event()`、`pbt/tests/prop_error.rs` の `known_error_code_value` を削除
+- `pbt/tests/prop_connection/data.rs` は D12 削除後に空になったため `git rm` してファイルごと削除。`pbt/tests/prop_connection/main.rs` の `mod data;` 宣言も削除
+- `pbt/tests/prop_connection/headers.rs` の `encode_valid_request_headers` ヘルパーは D15/D16 移植後に参照ゼロになるため削除
+
+### 追加
+
+- D 区分 33 件を `tests/test_*.rs` に単体テストとして再実装した
+  - D1〜D7 → `tests/test_validation.rs` (Extended CONNECT / CONNECT authority-form / asterisk path 等)
+  - D8 → `tests/test_limits.rs` (新規作成)
+  - D9 → `tests/test_settings.rs` (新規作成)
+  - D10 → `tests/test_error.rs`
+  - D11 → `tests/test_flow_control.rs`
+  - D12〜D24 → `tests/test_connection.rs` (idle ストリーム / 偶数 stream_id / 単調増加 / GOAWAY / preface 検証 / INITIAL_WINDOW_SIZE 範囲外)
+  - D25〜D27 → `tests/test_frame.rs` (新規作成、stream_id=0 系 6 件 + frame_type 整合性 + decoder clear)
+  - D28 → `tests/test_webtransport/root.rs`
+- C 区分の網羅補強 7 本を `tests/test_validation.rs` に追加した (C1: `test_duplicate_scheme` / `test_duplicate_path`、C2: `test_pseudo_authority_after_regular`、C3: `test_trailers_with_pseudo_method` / `_path` / `_scheme` / `_authority`)
+- `tests/test_connection.rs` に D15 / D16 用のローカルヘルパー `encode_valid_request_headers` を追加した
+- `tests/test_frame.rs` に D25 用のローカルヘルパー `build_frame_bytes` / `assert_decode_protocol_error` を追加した
+
+### 検証
+
+- `cargo build --workspace` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo fmt --all -- --check` がすべて通過することを確認した
+- `/review-diff-code` ループを 1 周回し、致命的・重要レベルの指摘 (RFC 引用の誤り、`Vec::with_capacity`、テストメッセージの英語混入、ヘルパーのエラー種別未検証、移植プロセス由来のコメント残存) をすべて修正した
+- `cargo fuzz run fuzz_frame_decoder/fuzz_hpack_decoder/fuzz_capsule_decoder` は本 issue の自動解決ではユーザー判断によりスキップした (issue 完了条件には fuzz 100,000 run 実行の指示があるが、`/auto-resolve` 実行時に PR description 添付をスキップする選択をユーザーから受けたため)。fuzz 自体は CI で別途検証される

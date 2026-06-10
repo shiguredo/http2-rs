@@ -56,6 +56,30 @@ fn test_duplicate_method() {
     assert!(validate_request_headers(&headers).is_err());
 }
 
+// RFC 9113 Section 8.3: :scheme の重複も拒否される
+#[test]
+fn test_duplicate_scheme() {
+    let headers = vec![
+        h(":method", "GET"),
+        h(":scheme", "https"),
+        h(":scheme", "http"),
+        h(":path", "/"),
+    ];
+    assert!(validate_request_headers(&headers).is_err());
+}
+
+// RFC 9113 Section 8.3: :path の重複も拒否される
+#[test]
+fn test_duplicate_path() {
+    let headers = vec![
+        h(":method", "GET"),
+        h(":scheme", "https"),
+        h(":path", "/"),
+        h(":path", "/dup"),
+    ];
+    assert!(validate_request_headers(&headers).is_err());
+}
+
 // RFC 9113 Section 8.3: 擬似ヘッダーは全ての通常フィールドより前に現れなければならない (MUST)。違反は malformed。
 #[test]
 fn test_pseudo_header_after_regular() {
@@ -63,6 +87,19 @@ fn test_pseudo_header_after_regular() {
         h(":method", "GET"),
         h("content-type", "text/html"),
         h(":scheme", "https"),
+    ];
+    assert!(validate_request_headers(&headers).is_err());
+}
+
+// RFC 9113 Section 8.3: 通常ヘッダーの後ろに :authority が現れた場合も拒否される
+#[test]
+fn test_pseudo_authority_after_regular() {
+    let headers = vec![
+        h(":method", "GET"),
+        h(":scheme", "https"),
+        h(":path", "/"),
+        h("content-type", "text/html"),
+        h(":authority", "example.com"),
     ];
     assert!(validate_request_headers(&headers).is_err());
 }
@@ -204,10 +241,124 @@ fn test_trailers_with_pseudo_header() {
     assert!(validate_trailers(&headers).is_err());
 }
 
+// RFC 9113 Section 8.3: トレーラーに :method が含まれる場合も拒否される
+#[test]
+fn test_trailers_with_pseudo_method() {
+    let headers = vec![h(":method", "GET"), h("x-trailer", "value")];
+    assert!(validate_trailers(&headers).is_err());
+}
+
+// RFC 9113 Section 8.3: トレーラーに :path が含まれる場合も拒否される
+#[test]
+fn test_trailers_with_pseudo_path() {
+    let headers = vec![h(":path", "/"), h("x-trailer", "value")];
+    assert!(validate_trailers(&headers).is_err());
+}
+
+// RFC 9113 Section 8.3: トレーラーに :scheme が含まれる場合も拒否される
+#[test]
+fn test_trailers_with_pseudo_scheme() {
+    let headers = vec![h(":scheme", "https"), h("x-trailer", "value")];
+    assert!(validate_trailers(&headers).is_err());
+}
+
+// RFC 9113 Section 8.3: トレーラーに :authority が含まれる場合も拒否される
+#[test]
+fn test_trailers_with_pseudo_authority() {
+    let headers = vec![h(":authority", "example.com"), h("x-trailer", "value")];
+    assert!(validate_trailers(&headers).is_err());
+}
+
 #[test]
 fn test_response_status_101_disallowed() {
     // HeaderField::new は 101 を通す (3DIGIT 検査のみ)。
     // RFC 9113 Section 8.6: HTTP/2 は 101 (Switching Protocols) をサポートしないため validation 側で弾く。
     let headers = vec![h(":status", "101")];
     assert!(validate_response_headers(&headers).is_err());
+}
+
+// RFC 8441 Section 4: Extended CONNECT に :scheme がない場合は拒否される
+// (:protocol を含むリクエストには :scheme と :path が必須)。
+#[test]
+fn test_extended_connect_without_scheme_rejected() {
+    let headers = vec![
+        h(":method", "CONNECT"),
+        h(":path", "/"),
+        h(":authority", "example.com:443"),
+        h(":protocol", "webtransport"),
+    ];
+    assert!(validate_request_headers(&headers).is_err());
+}
+
+// RFC 8441 Section 4: Extended CONNECT に :path がない場合は拒否される。
+#[test]
+fn test_extended_connect_without_path_rejected() {
+    let headers = vec![
+        h(":method", "CONNECT"),
+        h(":scheme", "https"),
+        h(":authority", "example.com:443"),
+        h(":protocol", "webtransport"),
+    ];
+    assert!(validate_request_headers(&headers).is_err());
+}
+
+// RFC 8441 Section 4: CONNECT 以外のメソッドで :protocol を使うと拒否される。
+#[test]
+fn test_protocol_on_non_connect_rejected() {
+    for method in ["GET", "POST", "PUT", "DELETE"] {
+        let headers = vec![
+            h(":method", method),
+            h(":scheme", "https"),
+            h(":path", "/"),
+            h(":protocol", "webtransport"),
+        ];
+        assert!(
+            validate_request_headers(&headers).is_err(),
+            "method={method} は :protocol を含むときに拒否されるべき"
+        );
+    }
+}
+
+// RFC 9113 Section 8.5: CONNECT の :authority にポートがない場合は拒否される
+// (authority-form は host:port を要求する)。
+#[test]
+fn test_connect_authority_without_port_rejected() {
+    let headers = vec![h(":method", "CONNECT"), h(":authority", "example.com")];
+    assert!(validate_request_headers(&headers).is_err());
+}
+
+// RFC 9113 Section 8.5: CONNECT の :authority が IPv6 の authority-form なら通過する。
+#[test]
+fn test_connect_ipv6_authority_accepted() {
+    let headers = vec![h(":method", "CONNECT"), h(":authority", "[::1]:443")];
+    assert!(validate_request_headers(&headers).is_ok());
+}
+
+// RFC 9113 Section 8.3.1: OPTIONS 以外のメソッドで :path = "*" は拒否される。
+#[test]
+fn test_asterisk_path_on_non_options_rejected() {
+    for method in ["GET", "POST", "PUT", "DELETE", "HEAD", "PATCH"] {
+        let headers = vec![
+            h(":method", method),
+            h(":scheme", "https"),
+            h(":path", "*"),
+            h(":authority", "example.com"),
+        ];
+        assert!(
+            validate_request_headers(&headers).is_err(),
+            "method={method} で :path = * は拒否されるべき"
+        );
+    }
+}
+
+// RFC 9113 Section 8.3.1: OPTIONS で :path = "*" は通過する。
+#[test]
+fn test_asterisk_path_on_options_accepted() {
+    let headers = vec![
+        h(":method", "OPTIONS"),
+        h(":scheme", "https"),
+        h(":path", "*"),
+        h(":authority", "example.com"),
+    ];
+    assert!(validate_request_headers(&headers).is_ok());
 }

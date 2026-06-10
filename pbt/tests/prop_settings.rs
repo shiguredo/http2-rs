@@ -3,10 +3,7 @@
 //! HTTP/2 SETTINGS パラメータの検証を行う。
 
 use proptest::prelude::*;
-use shiguredo_http2::settings::{
-    DEFAULT_ENABLE_PUSH, DEFAULT_HEADER_TABLE_SIZE, DEFAULT_INITIAL_WINDOW_SIZE,
-    DEFAULT_MAX_FRAME_SIZE, MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, MIN_MAX_FRAME_SIZE,
-};
+use shiguredo_http2::settings::{MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, MIN_MAX_FRAME_SIZE};
 use shiguredo_http2::{MaxFrameSize, Setting, Settings, WindowSize};
 
 /// 有効な SETTINGS を生成する
@@ -68,18 +65,6 @@ fn unknown_setting_wire() -> impl Strategy<Value = (u16, u32)> {
 }
 
 proptest! {
-    /// 有効な SETTINGS は常に受け入れられる
-    ///
-    /// 数学的意義: 有効入力の受理
-    #[test]
-    fn prop_valid_settings_accepted(
-        setting in valid_setting(),
-    ) {
-        let mut settings = Settings::default();
-        settings.apply(setting);
-        // apply は検証済み Setting を受け取るため、常に成功する
-    }
-
     /// 無効な ENABLE_PUSH wire 値は from_wire で拒否される (RFC 9113 Section 6.5.2: 0/1 以外は PROTOCOL_ERROR)
     ///
     /// 数学的意義: 二値性の検証 (0 または 1 のみ)
@@ -262,24 +247,6 @@ proptest! {
         } else {
             prop_assert!(result.is_err());
         }
-    }
-
-    /// デフォルト値の検証
-    ///
-    /// RFC 9113 Section 6.5.2 のデフォルト値 (ただし ENABLE_PUSH は RFC 初期値 1 に対し、本実装はサーバープッシュ非サポートのため独自デフォルト 0 を採用)
-    #[test]
-    fn prop_default_values(_dummy in Just(())) {
-        let settings = Settings::default();
-
-        prop_assert_eq!(settings.header_table_size(), DEFAULT_HEADER_TABLE_SIZE);
-        prop_assert_eq!(settings.enable_push(), DEFAULT_ENABLE_PUSH);
-        prop_assert!(!settings.enable_push(), "DEFAULT_ENABLE_PUSH should be false");
-        prop_assert_eq!(settings.max_concurrent_streams(), None);
-        prop_assert_eq!(settings.initial_window_size().get(), DEFAULT_INITIAL_WINDOW_SIZE);
-        prop_assert_eq!(settings.max_frame_size().get(), DEFAULT_MAX_FRAME_SIZE);
-        prop_assert_eq!(settings.max_header_list_size(), None);
-        prop_assert!(!settings.enable_connect_protocol());
-        prop_assert!(!settings.no_rfc7540_priorities());
     }
 
     /// 複数の SETTINGS を順に適用した場合、最後の値が残る

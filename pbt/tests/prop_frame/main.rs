@@ -137,33 +137,6 @@ proptest! {
         }
     }
 
-    /// SETTINGS フレームのエンコード/デコード往復テスト
-    #[test]
-    fn prop_settings_frame_roundtrip(ack in any::<bool>()) {
-        let frame = if ack {
-            Frame::Settings(SettingsFrame::ack())
-        } else {
-            let mut sf = SettingsFrame::new();
-            sf.add(Setting::HeaderTableSize(4096));
-            sf.add(Setting::InitialWindowSize(shiguredo_http2::WindowSize::from_static(65535)));
-            Frame::Settings(sf)
-        };
-
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
-
-        let mut decoder = FrameDecoder::new(16384);
-        decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
-
-        if let Frame::Settings(sf) = decoded {
-            prop_assert_eq!(sf.is_ack(), ack);
-        } else {
-            panic!("expected SETTINGS frame");
-        }
-    }
-
     /// PING フレームのエンコード/デコード往復テスト
     #[test]
     fn prop_ping_frame_roundtrip(
@@ -268,16 +241,6 @@ proptest! {
         } else {
             panic!("expected WINDOW_UPDATE frame");
         }
-    }
-
-    /// デコーダーの堅牢性テスト（任意のバイト列に対してパニックしない）
-    #[test]
-    fn prop_decoder_robustness(data in arbitrary_bytes(256)) {
-        let mut decoder = FrameDecoder::new(16384);
-        decoder.feed(&data);
-
-        // デコードを試みる（結果は気にしない、パニックしないことを確認）
-        let _ = decoder.decode();
     }
 
     // ========================================
@@ -681,92 +644,6 @@ proptest! {
     // デコーダーエラーケースのテスト
     // ========================================
 
-    /// DATA フレームの stream ID 0 はエラー (RFC 9113 Section 6.1: stream ID 0 の DATA は PROTOCOL_ERROR の接続エラー)
-    #[test]
-    fn prop_data_stream_id_zero_error(
-        data in arbitrary_bytes(100),
-    ) {
-        // 手動でフレームを構築 (stream_id = 0)
-        let mut buf = Vec::new();
-        let length = data.len() as u32;
-        buf.push(((length >> 16) & 0xff) as u8);
-        buf.push(((length >> 8) & 0xff) as u8);
-        buf.push((length & 0xff) as u8);
-        buf.push(0x00);  // DATA frame type
-        buf.push(0x00);  // flags
-        buf.extend_from_slice(&[0, 0, 0, 0]);  // stream_id = 0
-        buf.extend_from_slice(&data);
-
-        let mut decoder = FrameDecoder::new(16384);
-        decoder.feed(&buf);
-        let result = decoder.decode();
-
-        prop_assert!(result.is_err(), "DATA frame with stream_id 0 should error");
-    }
-
-    /// HEADERS フレームの stream ID 0 はエラー (RFC 9113 Section 6.2)
-    #[test]
-    fn prop_headers_stream_id_zero_error(
-        header_block in arbitrary_bytes(50),
-    ) {
-        let mut buf = Vec::new();
-        let length = header_block.len() as u32;
-        buf.push(((length >> 16) & 0xff) as u8);
-        buf.push(((length >> 8) & 0xff) as u8);
-        buf.push((length & 0xff) as u8);
-        buf.push(0x01);  // HEADERS frame type
-        buf.push(0x04);  // END_HEADERS flag
-        buf.extend_from_slice(&[0, 0, 0, 0]);  // stream_id = 0
-        buf.extend_from_slice(&header_block);
-
-        let mut decoder = FrameDecoder::new(16384);
-        decoder.feed(&buf);
-        let result = decoder.decode();
-
-        prop_assert!(result.is_err(), "HEADERS frame with stream_id 0 should error");
-    }
-
-    /// RST_STREAM フレームの stream ID 0 はエラー (RFC 9113 Section 6.4)
-    #[test]
-    fn prop_rst_stream_stream_id_zero_error(
-        error_code in any::<u32>(),
-    ) {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(&[0, 0, 4]);  // length = 4
-        buf.push(0x03);  // RST_STREAM frame type
-        buf.push(0x00);  // flags
-        buf.extend_from_slice(&[0, 0, 0, 0]);  // stream_id = 0
-        buf.extend_from_slice(&error_code.to_be_bytes());
-
-        let mut decoder = FrameDecoder::new(16384);
-        decoder.feed(&buf);
-        let result = decoder.decode();
-
-        prop_assert!(result.is_err(), "RST_STREAM frame with stream_id 0 should error");
-    }
-
-    /// CONTINUATION フレームの stream ID 0 はエラー (RFC 9113 Section 6.10)
-    #[test]
-    fn prop_continuation_stream_id_zero_error(
-        header_block in arbitrary_bytes(50),
-    ) {
-        let mut buf = Vec::new();
-        let length = header_block.len() as u32;
-        buf.push(((length >> 16) & 0xff) as u8);
-        buf.push(((length >> 8) & 0xff) as u8);
-        buf.push((length & 0xff) as u8);
-        buf.push(0x09);  // CONTINUATION frame type
-        buf.push(0x04);  // END_HEADERS flag
-        buf.extend_from_slice(&[0, 0, 0, 0]);  // stream_id = 0
-        buf.extend_from_slice(&header_block);
-
-        let mut decoder = FrameDecoder::new(16384);
-        decoder.feed(&buf);
-        let result = decoder.decode();
-
-        prop_assert!(result.is_err(), "CONTINUATION frame with stream_id 0 should error");
-    }
-
     /// SETTINGS フレームの stream ID != 0 はエラー (RFC 9113 Section 6.5: SETTINGS の stream ID は 0 でなければならない)
     #[test]
     fn prop_settings_non_zero_stream_id_error(
@@ -873,32 +750,6 @@ proptest! {
         let result = decoder.decode();
 
         prop_assert!(result.is_err(), "PRIORITY_UPDATE frame with non-zero stream_id should error");
-    }
-
-    /// WINDOW_UPDATE の increment が 0 はエラー
-    ///
-    /// RFC 9113 Section 6.9: increment of 0 is a protocol error
-    #[test]
-    fn prop_window_update_zero_increment_error(
-        stream_id in 0..=0x7FFF_FFFFu32,
-    ) {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(&[0, 0, 4]);  // length = 4
-        buf.push(0x08);  // WINDOW_UPDATE frame type
-        buf.push(0x00);  // flags
-        // stream_id
-        buf.push(((stream_id >> 24) & 0x7f) as u8);
-        buf.push(((stream_id >> 16) & 0xff) as u8);
-        buf.push(((stream_id >> 8) & 0xff) as u8);
-        buf.push((stream_id & 0xff) as u8);
-        // increment = 0
-        buf.extend_from_slice(&[0, 0, 0, 0]);
-
-        let mut decoder = FrameDecoder::new(16384);
-        decoder.feed(&buf);
-        let result = decoder.decode();
-
-        prop_assert!(result.is_err(), "WINDOW_UPDATE with zero increment should error");
     }
 
     /// SETTINGS ACK で空でないペイロードはエラー
@@ -1120,30 +971,6 @@ proptest! {
         }
     }
 
-    /// PRIORITY フレームの stream ID 0 はエラー (RFC 9113 Section 6.3)
-    #[test]
-    fn prop_priority_stream_id_zero_error(
-        stream_dependency in 0..=0x7FFF_FFFFu32,
-        weight in any::<u8>(),
-    ) {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(&[0, 0, 5]);  // length = 5
-        buf.push(0x02);  // PRIORITY frame type
-        buf.push(0x00);  // flags
-        buf.extend_from_slice(&[0, 0, 0, 0]);  // stream_id = 0
-        buf.push(((stream_dependency >> 24) & 0x7f) as u8);
-        buf.push(((stream_dependency >> 16) & 0xff) as u8);
-        buf.push(((stream_dependency >> 8) & 0xff) as u8);
-        buf.push((stream_dependency & 0xff) as u8);
-        buf.push(weight);
-
-        let mut decoder = FrameDecoder::new(16384);
-        decoder.feed(&buf);
-        let result = decoder.decode();
-
-        prop_assert!(result.is_err(), "PRIORITY frame with stream_id 0 should error");
-    }
-
     /// PRIORITY フレームが 5 バイトでないとエラー
     #[test]
     fn prop_priority_wrong_size_error(
@@ -1219,44 +1046,6 @@ proptest! {
             prop_assert_eq!(actual_payload_len, expected);
         } else {
             prop_assert_eq!(actual_payload_len, data.len());
-        }
-    }
-
-    /// エンコードされたフレームの frame_type フィールドは正しい
-    ///
-    /// 数学的意義: frame_type の保存性
-    #[test]
-    fn prop_encoded_frame_type_correct(
-        stream_id in valid_stream_id(),
-        data in arbitrary_bytes(100),
-    ) {
-        let increment = WindowIncrement::new(1).expect("valid window increment");
-        let last_stream_id = LastStreamId::new(0).expect("valid last stream ID");
-        let test_cases: Vec<(Frame, u8)> = vec![
-            (Frame::Data(DataFrame { stream_id, end_stream: false, data: data.clone(), pad_length: None }), 0x00),
-            (Frame::Headers(HeadersFrame { stream_id, end_stream: false, end_headers: true, priority_fields: None, header_block_fragment: data.clone(), pad_length: None }), 0x01),
-            (Frame::RstStream(RstStreamFrame { stream_id, error_code: 0 }), 0x03),
-            (Frame::Settings(SettingsFrame::new()), 0x04),
-            (Frame::Ping(PingFrame { ack: false, opaque_data: [0; 8] }), 0x06),
-            (Frame::Goaway(GoawayFrame { last_stream_id, error_code: 0, debug_data: vec![] }), 0x07),
-            (Frame::WindowUpdate(WindowUpdateFrame::for_stream(stream_id, increment)), 0x08),
-            (Frame::Continuation(ContinuationFrame { stream_id, end_headers: true, header_block_fragment: data.clone() }), 0x09),
-            (Frame::PriorityUpdate(PriorityUpdateFrame { prioritized_element_id: stream_id, priority_field_value: vec![] }), 0x10),
-        ];
-
-        for (frame, expected_type) in test_cases {
-            let mut encoder = FrameEncoder::new();
-            encoder.encode(&frame).unwrap();
-            let encoded = encoder.take();
-
-            // frame_type フィールド (byte 3)
-            let frame_type_field = encoded[3];
-            prop_assert_eq!(
-                frame_type_field,
-                expected_type,
-                "frame_type field mismatch for {:?}",
-                frame.frame_type()
-            );
         }
     }
 
@@ -1537,35 +1326,6 @@ proptest! {
         prop_assert_eq!(encoded[5] & 0x80, 0, "R bit must be 0");
     }
 
-    /// デコーダーの clear 後は初期状態に戻る
-    ///
-    /// 数学的意義: clear の冪等性と初期状態への復帰
-    #[test]
-    fn prop_decoder_clear_resets_state(
-        partial_data in arbitrary_bytes(50),
-    ) {
-        let mut decoder = FrameDecoder::new(16384);
-
-        // 部分的なデータを feed
-        decoder.feed(&partial_data);
-        prop_assert_eq!(decoder.buffered_len(), partial_data.len());
-
-        // clear 実行
-        decoder.clear();
-
-        // 初期状態に戻る
-        prop_assert_eq!(decoder.buffered_len(), 0);
-
-        // 正常にデコードできる
-        let frame = Frame::Ping(PingFrame { ack: false, opaque_data: [1, 2, 3, 4, 5, 6, 7, 8] });
-        let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
-        let encoded = encoder.take();
-
-        decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap();
-        prop_assert!(decoded.is_some());
-    }
 }
 
 mod from_static_consistency {

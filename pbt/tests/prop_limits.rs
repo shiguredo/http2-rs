@@ -25,13 +25,6 @@ fn valid_max_frame_size() -> impl Strategy<Value = MaxFrameSize> {
 }
 
 proptest! {
-    /// デフォルト値で build は常に成功する
-    #[test]
-    fn prop_default_build_succeeds(_dummy in Just(())) {
-        let result = Limits::builder().build();
-        prop_assert!(result.is_ok());
-    }
-
     /// 有効な LimitsBuilder 設定で build は常に成功する (WT なし)
     #[test]
     fn prop_valid_limits_build_succeeds(

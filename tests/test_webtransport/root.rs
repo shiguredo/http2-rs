@@ -137,3 +137,23 @@ fn test_close_reason_exceeds_max_length_errors() {
         shiguredo_http2::webtransport::WtErrorKind::CapsuleDecode
     );
 }
+
+/// draft-ietf-webtrans-http2-14 Section 6.2 / 6.3: `reset_stream` / `stop_sending` の
+/// 重複送信はエラーになる。
+#[test]
+fn test_duplicate_operations_are_errors() {
+    let error_code = 42;
+    let mut session = WtSession::client(WtConfig::default());
+    session.initiate().unwrap();
+
+    let stream_id = session.open_bidi_stream().unwrap();
+
+    // reset_stream: 1 回目は成功、2 回目はエラー
+    session.reset_stream(stream_id, error_code).unwrap();
+    assert!(session.reset_stream(stream_id, error_code).is_err());
+
+    // 別のストリームで stop_sending: 1 回目は成功、2 回目はエラー
+    let stream_id2 = session.open_bidi_stream().unwrap();
+    session.stop_sending(stream_id2, error_code).unwrap();
+    assert!(session.stop_sending(stream_id2, error_code).is_err());
+}

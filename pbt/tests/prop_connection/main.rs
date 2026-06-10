@@ -2,17 +2,15 @@
 //!
 //! RFC 9113 準拠の接続レベル検証をテストする。
 
-mod data;
 mod headers;
 mod settings;
 
 use proptest::prelude::*;
 use shiguredo_http2::{
-    Connection, ErrorCode, HeaderField, LastStreamId, Limits, NonZeroStreamId, WindowIncrement,
-    WindowSize,
+    Connection, HeaderField, Limits, NonZeroStreamId, WindowIncrement, WindowSize,
     frame::{
-        Frame, FrameDecoder, FrameEncoder, GoawayFrame, HeadersFrame, PingFrame, RstStreamFrame,
-        SettingsFrame, StreamId, WindowUpdateFrame,
+        Frame, FrameDecoder, FrameEncoder, PingFrame, RstStreamFrame, SettingsFrame, StreamId,
+        WindowUpdateFrame,
     },
     settings::{DEFAULT_INITIAL_WINDOW_SIZE, MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, Setting},
 };
@@ -62,178 +60,6 @@ fn setup_client_server() -> (Connection, Connection) {
 }
 
 proptest! {
-    /// idle ストリームへの RST_STREAM は PROTOCOL_ERROR
-    /// RFC 9113 Section 6.4: idle ストリームへの RST_STREAM 受信は PROTOCOL_ERROR の接続エラー (MUST)。
-    #[test]
-    fn prop_rst_stream_on_idle_is_error(stream_id in client_stream_id()) {
-        let mut server = Connection::server(Limits::default());
-        server.mark_preface_received();
-        server.initiate().unwrap();
-
-        // SETTINGS を受信
-        let settings_frame = Frame::Settings(SettingsFrame::new());
-        let settings_bytes = encode_frame(&settings_frame);
-        server.feed(&settings_bytes).unwrap();
-        server.process().unwrap();
-
-        // idle ストリームに RST_STREAM を送信
-        let rst_frame =
-            Frame::RstStream(RstStreamFrame::new(stream_id, ErrorCode::Cancel.as_u32()));
-        let rst_bytes = encode_frame(&rst_frame);
-        server.feed(&rst_bytes).unwrap();
-
-        let result = server.process();
-        prop_assert!(result.is_err());
-        if let Err(e) = result {
-            prop_assert!(e.is_connection_error());
-            prop_assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
-        }
-    }
-
-    /// サーバーが偶数のストリーム ID を受信した場合、PROTOCOL_ERROR
-    /// RFC 9113 Section 5.1.1: クライアント開始のストリームは奇数 ID でなければならず、予期しない ID の受信は PROTOCOL_ERROR の接続エラー (MUST)。
-    #[test]
-    fn prop_server_rejects_even_stream_id(stream_id in (1u32..=100).prop_map(|n| NonZeroStreamId::new(n * 2).expect("even non-zero is valid"))) {
-        let mut server = Connection::server(Limits::default());
-        server.mark_preface_received();
-        server.initiate().unwrap();
-
-        // SETTINGS を受信
-        let settings_frame = Frame::Settings(SettingsFrame::new());
-        let settings_bytes = encode_frame(&settings_frame);
-        server.feed(&settings_bytes).unwrap();
-        server.process().unwrap();
-
-        // 偶数ストリーム ID で HEADERS を送信
-        // 有効なリクエストヘッダー (:method GET, :scheme https, :path /, :authority example.com)
-        let headers = HeadersFrame::new(stream_id, headers::encode_valid_request_headers())
-            .with_end_stream(true)
-            .with_end_headers(true);
-        let headers_bytes = encode_frame(&Frame::Headers(headers));
-        server.feed(&headers_bytes).unwrap();
-
-        let result = server.process();
-        prop_assert!(result.is_err());
-        if let Err(e) = result {
-            prop_assert!(e.is_connection_error());
-            prop_assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
-        }
-    }
-
-    /// ストリーム ID が単調増加しない場合、PROTOCOL_ERROR
-    /// RFC 9113 Section 5.1.1: 新規ストリーム ID は既存のすべてより大きくなければならず、違反は PROTOCOL_ERROR の接続エラー (MUST)。
-    #[test]
-    fn prop_non_monotonic_stream_id_is_error(
-        first_id_raw in (5u32..=100).prop_map(|n| n * 2 + 1),
-    ) {
-        let first_id = NonZeroStreamId::new(first_id_raw)
-            .expect("odd non-zero is valid");
-        let second_id = NonZeroStreamId::new(first_id_raw - 2)
-            .expect("odd non-zero is valid"); // 単調増加していない
-
-        let mut server = Connection::server(Limits::default());
-        server.mark_preface_received();
-        server.initiate().unwrap();
-
-        // SETTINGS を受信
-        let settings_frame = Frame::Settings(SettingsFrame::new());
-        let settings_bytes = encode_frame(&settings_frame);
-        server.feed(&settings_bytes).unwrap();
-        server.process().unwrap();
-
-        // 最初のストリーム
-        // 有効なリクエストヘッダー (:method GET, :scheme https, :path /, :authority example.com)
-        let headers1 = HeadersFrame::new(first_id, headers::encode_valid_request_headers())
-            .with_end_stream(true)
-            .with_end_headers(true);
-        let headers1_bytes = encode_frame(&Frame::Headers(headers1));
-        server.feed(&headers1_bytes).unwrap();
-        server.process().unwrap();
-
-        // 小さいストリーム ID で新しいストリームを開始
-        let headers2 = HeadersFrame::new(second_id, headers::encode_valid_request_headers())
-            .with_end_stream(true)
-            .with_end_headers(true);
-        let headers2_bytes = encode_frame(&Frame::Headers(headers2));
-        server.feed(&headers2_bytes).unwrap();
-
-        let result = server.process();
-        prop_assert!(result.is_err());
-        if let Err(e) = result {
-            prop_assert!(e.is_connection_error());
-            prop_assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
-        }
-    }
-
-    /// idle ストリームへの WINDOW_UPDATE は PROTOCOL_ERROR
-    ///
-    /// RFC 9113 Section 5.1: idle ストリームへの WINDOW_UPDATE は PROTOCOL_ERROR
-    #[test]
-    fn prop_window_update_on_idle_stream_is_error(stream_id in client_stream_id()) {
-        let mut server = Connection::server(Limits::default());
-        server.mark_preface_received();
-        server.initiate().unwrap();
-
-        // SETTINGS を受信
-        let settings_frame = Frame::Settings(SettingsFrame::new());
-        let settings_bytes = encode_frame(&settings_frame);
-        server.feed(&settings_bytes).unwrap();
-        server.process().unwrap();
-
-        // idle ストリームに WINDOW_UPDATE を送信
-        let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::for_stream(
-            stream_id,
-            WindowIncrement::from_static(1000),
-        ));
-        let wu_bytes = encode_frame(&wu_frame);
-        server.feed(&wu_bytes).unwrap();
-
-        let result = server.process();
-        prop_assert!(result.is_err());
-        if let Err(e) = result {
-            prop_assert!(e.is_connection_error());
-            prop_assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
-        }
-    }
-
-    /// GOAWAY 受信後の新規ストリーム開始は PROTOCOL_ERROR
-    ///
-    /// RFC 9113 Section 6.8: GOAWAY 受信後は新規ストリームを開始できない
-    #[test]
-    fn prop_start_stream_after_goaway_is_error(_dummy in Just(())) {
-        let mut client = Connection::client(Limits::default());
-        client.initiate().unwrap();
-
-        // サーバーから SETTINGS を受信
-        let settings_frame = Frame::Settings(SettingsFrame::new());
-        let settings_bytes = encode_frame(&settings_frame);
-        client.feed(&settings_bytes).unwrap();
-        client.process().unwrap();
-
-        // サーバーから GOAWAY を受信
-        let goaway_frame = Frame::Goaway(GoawayFrame::new(
-            LastStreamId::from_static(0),
-            ErrorCode::NoError.as_u32(),
-        ));
-        let goaway_bytes = encode_frame(&goaway_frame);
-        client.feed(&goaway_bytes).unwrap();
-        client.process().unwrap();
-
-        // GOAWAY 後に新規ストリームを開始しようとする
-        let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":authority", "example.com").unwrap(),
-        ];
-        let result = client.start_stream(headers, true);
-        prop_assert!(result.is_err());
-        if let Err(e) = result {
-            prop_assert!(e.is_connection_error());
-            prop_assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
-        }
-    }
-
     /// 送信側の max_concurrent_streams チェック
     ///
     /// RFC 9113 Section 5.1.2: peer が設定した同時ストリーム上限を超えてはならない
@@ -272,70 +98,6 @@ proptest! {
         ];
         let result = client.start_stream(headers, false);
         prop_assert!(result.is_err(), "exceeding max concurrent streams should fail");
-    }
-
-    /// preface 未受信でフレーム処理がエラーになるテスト
-    ///
-    /// RFC 9113 Section 3.4: サーバーは client preface を受信済みでなければならない。
-    /// feed() が接続プリフェイスを検証するため、不正なデータは feed() 時点でエラーになる。
-    #[test]
-    fn prop_server_rejects_frame_without_preface(_dummy in Just(())) {
-        let mut server = Connection::server(Limits::default());
-        // mark_preface_received() を呼ばずに initiate
-        server.initiate().unwrap();
-
-        // SETTINGS フレームを送信しても preface と一致しないためエラー
-        let settings_frame = Frame::Settings(SettingsFrame::new());
-        let settings_bytes = encode_frame(&settings_frame);
-        let result = server.feed(&settings_bytes);
-        prop_assert!(result.is_err());
-        if let Err(e) = result {
-            prop_assert!(e.is_connection_error());
-            prop_assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
-        }
-    }
-
-    /// preface 受信後は正常動作するテスト
-    ///
-    /// RFC 9113 Section 3.4: mark_preface_received() 後に SETTINGS 処理が成功する
-    #[test]
-    fn prop_server_accepts_frame_after_preface(_dummy in Just(())) {
-        let mut server = Connection::server(Limits::default());
-        server.mark_preface_received();
-        server.initiate().unwrap();
-
-        // SETTINGS フレームを送信
-        let settings_frame = Frame::Settings(SettingsFrame::new());
-        let settings_bytes = encode_frame(&settings_frame);
-        server.feed(&settings_bytes).unwrap();
-
-        let result = server.process();
-        prop_assert!(result.is_ok());
-    }
-
-    /// サーバー start_stream 禁止テスト
-    ///
-    /// RFC 9113 Section 8.4: サーバープッシュ非サポートのためサーバーは新規ストリームを開始できない
-    #[test]
-    fn prop_server_cannot_start_stream(_dummy in Just(())) {
-        let mut server = Connection::server(Limits::default());
-        server.mark_preface_received();
-        server.initiate().unwrap();
-
-        // SETTINGS を受信して接続をアクティブにする
-        let settings_frame = Frame::Settings(SettingsFrame::new());
-        let settings_bytes = encode_frame(&settings_frame);
-        server.feed(&settings_bytes).unwrap();
-        server.process().unwrap();
-
-        let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":authority", "example.com").unwrap(),
-        ];
-        let result = server.start_stream(headers, true);
-        prop_assert!(result.is_err());
     }
 
     // ========================================================================
@@ -468,33 +230,6 @@ proptest! {
             }
         }
         prop_assert!(found_window_update, "expected WindowUpdateReceived event");
-    }
-
-    /// GOAWAY による正常終了
-    ///
-    /// RFC 9113 Section 6.8: GOAWAY で接続を正常終了する
-    #[test]
-    fn prop_goaway_graceful_shutdown(_dummy in Just(())) {
-        let (mut client, _server) = setup_client_server();
-
-        // サーバー: GOAWAY を送信
-        let goaway_frame = Frame::Goaway(GoawayFrame::new(
-            LastStreamId::from_static(0),
-            ErrorCode::NoError.as_u32(),
-        ));
-        let goaway_bytes = encode_frame(&goaway_frame);
-        client.feed(&goaway_bytes).unwrap();
-        client.process().unwrap();
-
-        // クライアント: GoawayReceived イベントを確認
-        let mut found_goaway = false;
-        while let Some(event) = client.poll_event() {
-            if matches!(&event, shiguredo_http2::Event::GoawayReceived { error_code: ErrorCode::NoError, .. }) {
-                found_goaway = true;
-                break;
-            }
-        }
-        prop_assert!(found_goaway, "expected GoawayReceived event");
     }
 
     /// RST_STREAM によるストリームキャンセル

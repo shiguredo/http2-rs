@@ -134,11 +134,6 @@ fn connection_level_event() -> impl Strategy<Value = Event> {
     ]
 }
 
-/// すべての Event を生成する Strategy
-fn any_event() -> impl Strategy<Value = Event> {
-    prop_oneof![stream_level_event(), connection_level_event(),]
-}
-
 proptest! {
     /// ストリームレベルイベントは stream_id() が Some を返す
     #[test]
@@ -204,17 +199,4 @@ proptest! {
         }
     }
 
-    /// Event の Debug 実装が機能する
-    #[test]
-    fn prop_event_debug_not_panic(event in any_event()) {
-        let debug_str = format!("{:?}", event);
-        prop_assert!(!debug_str.is_empty());
-    }
-
-    /// Event の Clone が等価性を保持する
-    #[test]
-    fn prop_event_clone_equality(event in any_event()) {
-        let cloned = event.clone();
-        prop_assert_eq!(event, cloned);
-    }
 }

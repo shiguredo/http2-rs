@@ -58,3 +58,11 @@ fn test_update_initial_window_size() {
     // 55535 + (100000 - 65535) = 90000
     assert_eq!(fc.send_window(), 90000);
 }
+
+/// RFC 9113 Section 6.9: add_recv_window に increment == 0 を渡すとエラーになる
+/// (PROTOCOL_ERROR 相当の境界値)。
+#[test]
+fn test_add_recv_window_zero_rejected() {
+    let mut fc = FlowControl::new(65535);
+    assert!(fc.add_recv_window(0).is_err());
+}
