@@ -6,29 +6,6 @@
 use proptest::prelude::*;
 use shiguredo_http2::{Error, ErrorCode, ErrorKind};
 
-/// 既知のエラーコード値を生成する Strategy
-fn known_error_code_value() -> impl Strategy<Value = u32> {
-    prop_oneof![
-        Just(0x00),
-        Just(0x01),
-        Just(0x02),
-        Just(0x03),
-        Just(0x04),
-        Just(0x05),
-        Just(0x06),
-        Just(0x07),
-        Just(0x08),
-        Just(0x09),
-        Just(0x0a),
-        Just(0x0b),
-        Just(0x0c),
-        Just(0x0d),
-        Just(0x100),
-        Just(0x101),
-        Just(0x102),
-    ]
-}
-
 /// 未知のエラーコード値を生成する Strategy
 fn unknown_error_code_value() -> impl Strategy<Value = u32> {
     (0u32..=u32::MAX).prop_filter(
@@ -81,18 +58,6 @@ proptest! {
         prop_assert_eq!(roundtripped, code);
     }
 
-    /// 既知のエラーコード値のラウンドトリップ
-    ///
-    /// RFC 9113 Section 7: 既知のエラーコードは正しい variant に変換される
-    #[test]
-    fn prop_known_error_code_from_u32(value in known_error_code_value()) {
-        let code = ErrorCode::from_u32(value);
-        // Unknown にならないことを確認
-        prop_assert!(!matches!(code, ErrorCode::Unknown(_)));
-        // ラウンドトリップ
-        prop_assert_eq!(code.as_u32(), value);
-    }
-
     /// 未知のエラーコード値の保持
     ///
     /// RFC 9113 Section 7: 未知のエラーコードは Unknown として保持され、
@@ -113,13 +78,6 @@ proptest! {
         prop_assert_eq!(code.as_u32(), value);
     }
 
-    /// ErrorCode の Display 実装が空でない
-    #[test]
-    fn prop_error_code_display_not_empty(code in error_code_strategy()) {
-        let display = format!("{}", code);
-        prop_assert!(!display.is_empty());
-    }
-
     /// Unknown エラーコードの Display が値を含む
     #[test]
     fn prop_unknown_error_code_display_contains_value(value in unknown_error_code_value()) {
@@ -129,27 +87,6 @@ proptest! {
         // 16 進数表記で値を含む
         let hex_value = format!("{:x}", value);
         prop_assert!(display.contains(&hex_value));
-    }
-
-    /// ErrorKind の Display 実装が空でない
-    #[test]
-    fn prop_error_kind_display_not_empty(kind in error_kind_strategy()) {
-        let display = format!("{}", kind);
-        prop_assert!(!display.is_empty());
-    }
-
-    /// ConnectionError と StreamError の ErrorKind は ErrorCode を含む
-    #[test]
-    fn prop_error_kind_with_code_display_contains_code(code in error_code_strategy()) {
-        let conn_kind = ErrorKind::ConnectionError(code);
-        let stream_kind = ErrorKind::StreamError(code);
-
-        let conn_display = format!("{}", conn_kind);
-        let stream_display = format!("{}", stream_kind);
-
-        // ConnectionError/StreamError という文字列を含む
-        prop_assert!(conn_display.contains("ConnectionError"));
-        prop_assert!(stream_display.contains("StreamError"));
     }
 
     /// Error の is_connection_error と is_stream_error の相互排他性

@@ -149,6 +149,8 @@
 
 ### misc
 
+- [UPDATE] pbt/tests/ から非プロパティテスト 50 件を削除し、うち 33 件を tests/test_*.rs に単体テストとして再実装、加えて C 区分の網羅補強 7 本を tests/test_validation.rs に追加する (issue 0067)
+  - @voluntas
 - [UPDATE] `nghttp2-sys` のビルド依存を cmake から shiguredo_cmake に切り替える
   - @voluntas
 - [UPDATE] 依存ライブラリを更新する (nghttp2 1.69.0, rustls-platform-verifier 0.7, shiguredo_toml 2026.2)

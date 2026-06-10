@@ -222,19 +222,6 @@ proptest! {
         prop_assert!(decoder.decode().unwrap().is_none());
     }
 
-    /// 不完全データでのデコード安全性テスト
-    #[test]
-    fn prop_decode_incomplete_safe(
-        data in prop::collection::vec(any::<u8>(), 0..50),
-    ) {
-        let mut decoder = CapsuleDecoder::new();
-        decoder.feed(&data);
-
-        // デコードを試みる - panic しないことを確認
-        // 成功するかもしれないし、失敗するかもしれないが、panic はしない
-        let _ = decoder.decode();
-    }
-
     /// Unknown Capsule タイプの往復テスト
     #[test]
     fn prop_unknown_capsule_roundtrip(
@@ -655,29 +642,6 @@ proptest! {
                 }
             }
         }
-    }
-
-    /// 重複操作の禁止
-    ///
-    /// draft-ietf-webtrans-http2-14 Section 6.2, 6.3:
-    /// reset_stream / stop_sending の重複送信はエラーとなる
-    #[test]
-    fn prop_duplicate_operations_are_errors(
-        error_code in small_varint_value(),
-    ) {
-        let mut session = WtSession::client(WtConfig::default());
-        session.initiate().unwrap();
-
-        let stream_id = session.open_bidi_stream().unwrap();
-
-        // reset_stream: 1 回目は成功、2 回目はエラー
-        session.reset_stream(stream_id, error_code).unwrap();
-        prop_assert!(session.reset_stream(stream_id, error_code).is_err());
-
-        // 別のストリームで stop_sending: 1 回目は成功、2 回目はエラー
-        let stream_id2 = session.open_bidi_stream().unwrap();
-        session.stop_sending(stream_id2, error_code).unwrap();
-        prop_assert!(session.stop_sending(stream_id2, error_code).is_err());
     }
 
     /// Capsule のラウンドトリップ: encode -> decode -> encode == encode

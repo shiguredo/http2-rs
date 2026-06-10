@@ -120,15 +120,6 @@ proptest! {
         }
     }
 
-    /// add_recv_window に increment == 0 を渡すとエラーになる (RFC 9113 Section 6.9)
-    #[test]
-    fn prop_add_recv_window_zero_rejected(
-        initial_window in valid_window_size(),
-    ) {
-        let mut fc = FlowControl::new(initial_window);
-        prop_assert!(fc.add_recv_window(0).is_err());
-    }
-
     /// should_send_window_update / window_update_increment が send_initial に依存しないことを検証する
     ///
     /// 任意の (send_initial_a, send_initial_b, recv_initial, consume_amount) に対して、

@@ -110,14 +110,6 @@ proptest! {
         prop_assert!(encoded_len <= data.len() * 4 + 1);
     }
 
-    /// デコーダーの堅牢性テスト（任意のバイト列に対してパニックしない）
-    #[test]
-    fn prop_hpack_decoder_robustness(data in arbitrary_bytes(256)) {
-        let mut decoder = HpackDecoder::new(4096);
-        // デコードを試みる（結果は気にしない、パニックしないことを確認）
-        let _ = decoder.decode(&data);
-    }
-
     /// 動的テーブルのサイズ管理テスト
     #[test]
     fn prop_dynamic_table_size_management(
