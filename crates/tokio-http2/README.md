@@ -6,6 +6,8 @@
 
 tokio-http2 は Sans I/O な HTTP/2 実装 (shiguredo_http2) の上に、Tokio ベースの非同期 I/O 層を提供します。TLS には [Rustls](https://github.com/rustls/rustls) を、暗号ライブラリには [aws-lc-rs](https://github.com/aws/aws-lc-rs) を使用しています。
 
+WebTransport over HTTP/2 (draft-ietf-webtrans-http2-14) のサーバー実装も `webtransport` モジュールで提供します。
+
 ## 依存ライブラリ
 
 - [shiguredo_http2](https://github.com/shiguredo/http2-rs) - Sans I/O な HTTP/2 実装
@@ -17,7 +19,7 @@ tokio-http2 は Sans I/O な HTTP/2 実装 (shiguredo_http2) の上に、Tokio �
 ## クライアント
 
 ```rust
-use tokio_http2::{Client, HeaderField, Limits, TlsClientConfig};
+use tokio_http2::{Client, Event, HeaderField, Limits, TlsClientConfig};
 
 let limits = Limits::default();
 let tls_config = TlsClientConfig::with_platform_verifier()?;
@@ -47,10 +49,38 @@ loop {
 }
 ```
 
+### Client API
+
+#### 接続
+
+- `Client::connect()` - サーバーに接続
+- `Client::connect_insecure()` - 証明書検証なしで接続 (テスト用)
+- `Client::local_addr()` / `Client::remote_addr()` - 接続アドレスを取得
+
+#### リクエスト送信
+
+- `Client::send_request()` - リクエスト HEADERS を送信
+- `Client::send_data()` - ストリームに DATA を追加送信
+- `Client::send_trailers()` - END_STREAM 付きトレーラー HEADERS を送信
+
+#### イベントループ
+
+- `Client::poll_event()` - キューからイベントを取り出す
+- `Client::next_event()` - イベントを待機
+- `Client::drive()` - I/O とイベント処理を 1 回まわす
+- `Client::recv()` - ネットワークから受信
+- `Client::flush()` - 送信バッファをフラッシュ
+
+#### コネクション制御
+
+- `Client::ping()` - PING を送信
+- `Client::send_window_update()` - WINDOW_UPDATE を送信
+- `Client::shutdown()` - GOAWAY (NoError) を送信して接続を終了
+
 ## サーバー
 
 ```rust
-use tokio_http2::{Server, HeaderField, Limits, TlsServerConfig};
+use tokio_http2::{Event, HeaderField, Limits, Server, TlsServerConfig};
 
 let tls_config = TlsServerConfig::new(cert_pem, key_pem)?;
 let limits = Limits::default();
@@ -75,6 +105,107 @@ loop {
     }
 }
 ```
+
+### Server / ServerConnection API
+
+#### サーバー起動
+
+- `Server::bind()` - アドレスにバインド
+- `Server::accept()` - 接続を受け入れ
+- `Server::local_addr()` - バインドアドレスを取得
+
+#### レスポンス送信
+
+- `ServerConnection::send_response()` - レスポンス HEADERS を送信
+- `ServerConnection::send_data()` - DATA を送信
+- `ServerConnection::send_trailers()` - END_STREAM 付きトレーラー HEADERS を送信
+
+#### イベントループ
+
+- `ServerConnection::poll_event()` - キューからイベントを取り出す
+- `ServerConnection::next_event()` - イベントを待機
+- `ServerConnection::drive()` - I/O とイベント処理を 1 回まわす
+- `ServerConnection::recv()` - ネットワークから受信
+- `ServerConnection::flush()` - 送信バッファをフラッシュ
+
+#### コネクション制御
+
+- `ServerConnection::reset_stream()` - RST_STREAM を送信
+- `ServerConnection::send_window_update()` - WINDOW_UPDATE を送信
+- `ServerConnection::shutdown()` - GOAWAY (NoError) を送信して接続を終了
+
+## WebTransport
+
+`webtransport` モジュールは draft-ietf-webtrans-http2-14 ベースの WebTransport over HTTP/2 サーバー実装を提供します。Extended CONNECT (`:protocol=webtransport`) で確立されたセッション上で、Capsule Protocol によって双方向 / 単方向ストリームと DATAGRAM を多重化します。
+
+```rust
+use shiguredo_http2::webtransport::WtConfig;
+use tokio_http2::{Event, Server, TlsServerConfig};
+use tokio_http2::webtransport::{WEBTRANSPORT_PROTOCOL, WtServerRequest};
+
+let server = Server::bind(addr, tls_config, limits).await?;
+let mut conn = server.accept().await?;
+
+loop {
+    match conn.next_event().await? {
+        Event::HeadersReceived { stream_id, headers, end_stream, .. } => {
+            // Extended CONNECT (`:method=CONNECT` + `:protocol=webtransport`) を判定
+            let is_webtransport = headers.iter().any(|h| {
+                h.name() == b":protocol" && h.value() == WEBTRANSPORT_PROTOCOL
+            });
+            if is_webtransport {
+                let request = WtServerRequest::from_connection(conn, stream_id, headers);
+                // 第 2 引数は Origin 検証用 (draft-ietf-webtrans-http2-14 Section 3.2)。
+                // None で Origin 検証をスキップする。Web context では Some(b"https://...") を指定する
+                let mut session = request.accept(WtConfig::default(), None).await?;
+
+                // 双方向ストリームを受け入れる
+                while let Some(mut bidi) = session.accept_bidi().await {
+                    let data = bidi.recv().await?;
+                    bidi.send(b"hello".to_vec(), true).await?;
+                }
+                break;
+            }
+        }
+        _ => {}
+    }
+}
+```
+
+### 公開型
+
+- `WtServerRequest` - 受信した Extended CONNECT 要求。 `accept()` で受諾、 `reject(status)` で拒否
+- `WtServerSession` - 受諾後の WebTransport セッション
+- `WtSessionHandle` / `WtSessionParts` - セッションを複数タスクで共有するためのハンドル
+- `WtBidiStream` - 双方向ストリーム (`send` / `recv` / `stop_sending` / `reset`)
+- `WtUniRecvStream` - 受信専用単方向ストリーム (`recv` / `stop_sending`)
+- `WtUniSendStream` - 送信専用単方向ストリーム (`send` / `reset`)
+- `WEBTRANSPORT_PROTOCOL` - `:protocol` 擬似ヘッダー値 (`b"webtransport"`) の定数
+
+### `WtServerRequest`
+
+- `from_connection()` - Extended CONNECT を受信済みの `ServerConnection` から要求を構築
+- `stream_id()` / `headers()` / `path()` / `authority()` / `scheme()` / `origin()` - 要求情報を参照
+- `webtransport_init()` - `WebTransport-Init` ヘッダー値 (RFC 8941 Dictionary) を取得
+- `accept(config)` - セッションを受諾して `WtServerSession` を返す
+- `reject(status)` - 指定ステータスで拒否
+
+### `WtServerSession`
+
+- `session_id()` - CONNECT ストリーム ID
+- `accept_bidi()` / `accept_uni()` - ピアからのストリームを受け入れ
+- `recv_datagram()` - DATAGRAM を受信
+- `open_bidi()` / `open_uni()` - こちらからストリームを開く
+- `send_datagram()` - DATAGRAM を送信
+- `close()` - セッションを閉じる
+- `drain()` - 送信中データの完了を待つ
+- `into_parts()` - `WtSessionParts` に分解 (handle と receiver を独立タスクで扱う)
+
+## 再エクスポート
+
+- `Connection<S>` - 任意の `AsyncRead + AsyncWrite` ストリーム上に HTTP/2 を載せる低レベル型
+- `shiguredo_http2` からの再エクスポート: `ErrorCode` / `Event` / `HeaderField` / `Limits` / `LimitsBuilder` / `StreamId`
+- `CONNECTION_PREFACE` - HTTP/2 コネクションプリフェイス定数
 
 ## TLS 設定
 

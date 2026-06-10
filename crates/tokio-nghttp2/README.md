@@ -25,21 +25,78 @@ tokio-http2 は Sans I/O な shiguredo_http2 (純 Rust 実装) を使用して�
 
 HTTP/2 クライアントです。TLS 接続、リクエスト送信、レスポンス受信を行います。
 
+#### 接続
+
 - `Client::connect()` - サーバーに接続
+- `Client::connect_with_options()` - `SessionOptions` 付きで接続
 - `Client::connect_insecure()` - 証明書検証なしで接続 (テスト用)
-- `Client::send_request()` - リクエストを送信 (ヘッダーのみ。 DATA 送信は未実装)
+- `Client::local_addr()` / `Client::remote_addr()` - 接続アドレスを取得
+
+#### リクエスト送信
+
+- `Client::send_request()` - リクエストを送信。引数は `(headers, data: Option<&[u8]>, end_stream)` で初期 DATA も同時送信可能
+- `Client::send_data()` - ストリームに DATA を追加送信
+- `Client::send_data_for_trailer()` - トレーラー前の最終 DATA を送信
+- `Client::send_trailer()` - トレーラー HEADERS を送信
+
+#### イベントループ
+
+- `Client::poll_event()` - キューからイベントを取り出す
 - `Client::next_event()` - イベントを待機
-- `Client::shutdown()` - GOAWAY を送信して接続を終了
+- `Client::drive()` - I/O とイベント処理を 1 回まわす
+- `Client::recv()` - ネットワークから受信
+- `Client::flush()` - 送信バッファをフラッシュ
+
+#### コネクション制御
+
+- `Client::ping()` - PING を送信
+- `Client::shutdown()` - GOAWAY (NoError) を送信して接続を終了
+- `Client::terminate()` - 任意の `ErrorCode` で GOAWAY を送信
+- `Client::get_remote_settings()` / `Client::get_local_settings()` - SETTINGS 値を取得
+- `Client::last_error_message()` - nghttp2 の最後のエラーメッセージを取得
 
 ### Server / ServerConnection
 
 HTTP/2 サーバーです。TLS 接続の受け入れ、リクエスト受信、レスポンス送信を行います。
 
+#### サーバー起動
+
 - `Server::bind()` - アドレスにバインド
 - `Server::accept()` - 接続を受け入れ
-- `ServerConnection::send_response()` - レスポンスを送信
+- `Server::accept_with_options()` - `SessionOptions` 付きで接続を受け入れ
+- `Server::local_addr()` - バインドアドレスを取得
+
+#### レスポンス送信
+
+- `ServerConnection::send_response()` - レスポンス HEADERS を送信
+- `ServerConnection::send_data()` - DATA を送信
+- `ServerConnection::send_data_for_trailer()` - トレーラー前の最終 DATA を送信
+- `ServerConnection::send_trailer()` - トレーラー HEADERS を送信
+- `ServerConnection::send_headers()` - 追加 HEADERS (情報レスポンスなど) を送信
+
+#### イベントループ
+
+- `ServerConnection::poll_event()` - キューからイベントを取り出す
 - `ServerConnection::next_event()` - イベントを待機
-- `ServerConnection::shutdown()` - GOAWAY を送信して接続を終了
+- `ServerConnection::drive()` - I/O とイベント処理を 1 回まわす
+- `ServerConnection::recv()` - ネットワークから受信
+- `ServerConnection::flush()` - 送信バッファをフラッシュ
+
+#### コネクション制御
+
+- `ServerConnection::reset_stream()` - RST_STREAM を送信
+- `ServerConnection::shutdown()` - `last_stream_id` を指定して GOAWAY (NoError) を送信
+- `ServerConnection::shutdown_graceful()` - graceful shutdown 通知 (`last_stream_id = (1 << 31) - 1` の GOAWAY) を送信
+- `ServerConnection::terminate()` - 任意の `ErrorCode` で GOAWAY を送信
+- `ServerConnection::get_remote_settings()` / `ServerConnection::get_local_settings()` - SETTINGS 値を取得
+- `ServerConnection::last_error_message()` - nghttp2 の最後のエラーメッセージを取得
+- `ServerConnection::local_addr()` / `ServerConnection::remote_addr()` - 接続アドレスを取得
+
+### 再エクスポート
+
+- `Connection<S>` - 任意の `AsyncRead + AsyncWrite` ストリーム上に HTTP/2 を載せる低レベル型
+- `shiguredo_nghttp2` からの再エクスポート: `ErrorCode` / `FrameType` / `Header` / `Http2Event` / `SessionOptions` / `SettingsId` / `StreamId`
+- `CONNECTION_PREFACE` - HTTP/2 コネクションプリフェイス定数
 
 ### TLS 設定
 
