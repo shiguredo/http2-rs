@@ -28,10 +28,10 @@ let mut client = Client::connect(addr, "example.com", tls_config, limits).await?
 
 // リクエスト送信
 let headers = vec![
-    HeaderField::from_str(":method", "GET"),
-    HeaderField::from_str(":scheme", "https"),
-    HeaderField::from_str(":path", "/"),
-    HeaderField::from_str(":authority", "example.com"),
+    HeaderField::new(":method", "GET")?,
+    HeaderField::new(":scheme", "https")?,
+    HeaderField::new(":path", "/")?,
+    HeaderField::new(":authority", "example.com")?,
 ];
 let stream_id = client.send_request(headers, true).await?;
 
@@ -93,8 +93,8 @@ loop {
         Event::HeadersReceived { stream_id, headers, end_stream, .. } => {
             // レスポンスヘッダー送信
             let response_headers = vec![
-                HeaderField::from_str(":status", "200"),
-                HeaderField::from_str("content-type", "text/plain"),
+                HeaderField::new(":status", "200")?,
+                HeaderField::new("content-type", "text/plain")?,
             ];
             conn.send_response(stream_id, response_headers, false).await?;
 
