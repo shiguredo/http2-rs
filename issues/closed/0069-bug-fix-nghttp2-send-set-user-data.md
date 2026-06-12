@@ -2,7 +2,8 @@
 
 - Priority: High
 - Created: 2026-06-11
-- Polished: 2026-06-11
+- Polished: 2026-06-13
+- Completed: 2026-06-13
 - Model: deepseek-v4-pro
 - Branch: feature/fix-nghttp2-send-set-user-data
 
@@ -15,7 +16,7 @@
 結果として、`recv()` を経由せず `send()` を先に呼ぶ経路で次の問題が起きる:
 
 1. data provider read callback (`data_source_read_callback`) で `get_session()` が `None` を返し、`NGHTTP2_ERR_CALLBACK_FAILURE` (-902, fatal) を返してセッションが壊れる
-2. データを伴わない送信経路でも、`on_frame_send_callback` 等の諸 callback が `get_session()` の None 分岐で握り潰され、`Http2Event::FrameSent` 等のイベント発行や `last_error_message` 取得が欠落する (fatal ではないが観測不能になる)
+2. データを伴わない送信経路でも、`on_frame_send_callback` 等の諸 callback が `get_session()` の None 分岐で握り潰され、`Http2Event::FrameSent` 等のイベント発行が欠落する (fatal ではないが観測不能になる)。同様に `error_callback2` 経由で設定される `last_error_message` も取得できなくなる
 
 ## 優先度根拠
 
@@ -56,13 +57,12 @@ pub fn send(&mut self) -> Result<Vec<u8>> {
 
 ### 再現条件
 
-- `Session::client()` / `Session::server()` 直後は `user_data` 未設定
+- `Session::client()` / `Session::server()` / `Session::client_with_options()` / `Session::server_with_options()` 直後は `user_data` 未設定
 - そのまま `recv()` を 1 度も呼ばずに送信側を駆動すると `send()` 内の `nghttp2_session_mem_send` が `user_data` が NULL のまま各 callback を発火させる
 
 read callback が走り fatal となる経路:
 - `Session::submit_request(headers, Some(data), end_stream=true)` → `send()`: `build_data_provider2()` で `data_source_read_callback` が登録されており、DATA 送信時に発火 → `get_session()` で None → CALLBACK_FAILURE
-- `Session::submit_request(headers, None, end_stream=false)` → `submit_data(stream_id, data, true)` → `send()`: 同様
-- `Session::submit_response(stream_id, headers, end_stream=false)` → `submit_data(stream_id, data, true)` → `send()`: サーバー側で同等
+- `Session::submit_response(stream_id, headers, end_stream=false)` → `submit_data(stream_id, data, true)` → `send()`: サーバー側で同等。ただし `submit_data()` 内の `nghttp2_session_resume_data()` は data provider が deferred 状態のストリームに対してのみ有効なため、実際に `send()` まで到達させるには `submit_data()` 呼び出し前に 1 度 `send()` を呼んで deferred 状態にする必要がある
 
 callback は走るが fatal ではない経路 (`submit_settings` 等) の具体例は直後の「tokio-nghttp2 経由での影響」セクションで詳述する。
 
@@ -94,8 +94,8 @@ callback は走るが fatal ではない経路 (`submit_settings` 等) の具体
 
 1. 作業ブランチ `feature/fix-nghttp2-send-set-user-data` を作成する
 2. `crates/shiguredo_nghttp2/src/session.rs` の `Session::send()` メソッド冒頭 (`self.output.clear();` の直前) に `self.set_user_data();` を 1 行追加する。`recv()` と同様にコメントは付けない (対称性を保つ)
-3. `crates/shiguredo_nghttp2/tests/test_session.rs` を新規作成する。本 issue 着手時点で `crates/shiguredo_nghttp2/tests/` ディレクトリは存在せず、これが初の追加。`shiguredo-rust` 規約の「単体テストのファイル名は `tests/test_<module>.rs`」に従う。Cargo は `tests/*.rs` を自動で integration test として認識するため `Cargo.toml` の `[[test]]` エントリ追加は不要
-4. 上記テストファイルに以下のテストを追加する。テストは `Session` の公開 API (`submit_*` / `send` / `poll_event` / `last_error_message`) のみを用い、private フィールドへのアクセスや `#[cfg(test)] pub(crate)` の追加は行わない。失敗時メッセージは `expect("理由")` で日本語明示する。テスト関数の doc コメントは日本語で書く:
+3. `crates/shiguredo_nghttp2/tests/test_session.rs` を新規作成する。`shiguredo-rust` 規約の「単体テストのファイル名は `tests/test_<module>.rs`」に従う。Cargo は `tests/*.rs` を自動で integration test として認識するため `Cargo.toml` の `[[test]]` エントリ追加は不要
+4. 上記テストファイルに以下のテストを追加する。テストは `Session` の公開 API (`submit_*` / `send` / `poll_event`) のみを用い、private フィールドへのアクセスや `#[cfg(test)] pub(crate)` の追加は行わない。失敗時メッセージは `expect("理由")` で日本語明示する。テスト関数の doc コメントは日本語で書く。本 issue は特定の呼び出し順序 (`recv()` 呼び出し前に `send()` を呼ぶ) に依存した回帰テストであり、PBT や fuzzing では再現困難なため単体テストでカバーする:
    - `test_send_before_recv_with_data_provider_succeeds`: クライアント側で DATA 付き submit_request を経由する経路を検証する。既存 `src/lib.rs::tests::test_session_send` は SETTINGS のみで `data_source_read_callback` が発火しないため修正前でも `Ok` を返すが、本テストは DATA を載せて `data_source_read_callback` を走らせる点で性質が異なる
      - `Session::client()` → POST 用ヘッダー (`Header::method("POST")`, `Header::scheme("https")`, `Header::authority("example.com")`, `Header::path("/")`) で `submit_request(&headers, Some(b"hello"), true)` → `send()` を呼ぶ
      - `submit_request` の戻り値 stream_id > 0 を assert
@@ -103,8 +103,11 @@ callback は走るが fatal ではない経路 (`submit_settings` 等) の具体
      - 修正後: `send()` が `Ok(output)` を返し、`poll_event()` で得られるイベント列に `matches!(event, Http2Event::FrameSent { frame_type: FrameType::Data, .. })` を満たすものが少なくとも 1 件存在する
      - `Err` の variant 種別までは assert しない (`result.is_err()` のみで足りる。具体的な variant は本 issue のスコープ外)
    - `test_send_with_submit_data_succeeds`: `submit_request(headers, None, false)` + `submit_data` 経由の経路を検証する (上のテストと同じ `data_source_read_callback` を踏むが、別経路でも修正が効くことを追加保証)
-     - `Session::client()` → POST 用ヘッダーで `submit_request(&headers, None, false)` → 戻り値 stream_id を取得 → `submit_data(stream_id, b"hello", true)` → `send()`
-     - 同上の修正前後の挙動を assert
+      - `Session::client()` → POST 用ヘッダーで `submit_request(&headers, None, false)` → 戻り値 stream_id を取得
+      - `send()` を 1 度呼んで data provider を deferred 状態にする (`data_source_read_callback` が空バッファを見て `NGHTTP2_ERR_DEFERRED` を返す)
+      - `submit_data(stream_id, b"hello", true)` → もう 1 度 `send()`
+      - 修正前: いずれかの `send()` 内の `data_source_read_callback` が user_data null で `CALLBACK_FAILURE` を返し、`send()` が `Err(_)` を返す
+      - 修正後: 両方の `send()` が `Ok(output)` を返し、最後の `send()` 後の `poll_event()` で得られるイベント列に `matches!(event, Http2Event::FrameSent { frame_type: FrameType::Data, .. })` を満たすものが少なくとも 1 件存在する
    - `test_send_settings_emits_frame_sent_event`: 既存 `src/lib.rs::tests::test_session_send` は送信バイト列の有無のみ確認するが、本テストは FrameSent イベントの有無を確認する点で目的が異なる。本 issue の (2) の問題 (callback 握り潰しによるイベント欠落) の主力回帰テスト
      - `Session::client()` → `submit_settings(&[])` → `send()` を呼ぶ。`send()` は修正前後どちらも `Ok` を返す
      - 修正前: `poll_event()` で得られるイベント列に `matches!(event, Http2Event::FrameSent { stream_id: 0, frame_type: FrameType::Settings })` を満たすものが見つからない (callback が user_data null で握り潰されイベントが入らない)
@@ -113,19 +116,30 @@ callback は走るが fatal ではない経路 (`submit_settings` 等) の具体
 6. `CHANGES.md` の `## develop` セクション内の既存 `[FIX]` 群の末尾に以下のエントリを追加する。担当者行は親アイテム本文先頭 (`[` カラム) と同じ位置にネストする。CHANGES.md は変更概要のみを記し、詳細な再現条件は本 issue / commit message に残す:
 
    ```markdown
-   - [FIX] `shiguredo_nghttp2::Session::send()` の冒頭で `set_user_data()` を呼ぶように修正し、`recv()` を経由せずに `send()` を呼ぶ経路でも各コールバックが正しい `Session` ポインタを受け取れるようにする (issue 0069)
+   - [FIX] `shiguredo_nghttp2::Session::send()` の冒頭で `set_user_data()` を呼ぶように修正し、`recv()` を経由せずに `send()` を呼ぶ経路でも各コールバックが正しい `Session` ポインタを受け取れるようにする
      - @voluntas
    ```
 
 7. `cargo fmt --all -- --check` で整形違反がないことを確認する
 8. `cargo test --workspace` で全テスト通過を確認する (新規追加した再現テストが通ること、既存の `src/lib.rs::tests::test_session_send` 等が退行しないこと)
-9. `cargo clippy --workspace --all-targets -- -D warnings` で警告がないことを確認する。clippy 警告が出た場合は `#[allow(...)]` で抑制せず、コード自体を修正する
+9. `cargo clippy --workspace --all-targets -- -D warnings` で警告がないことを確認する。clippy 警告が出た場合は `#[allow(...)]` で抑制せず、コード自体を修正する。どうしても必要な場合は `#[expect(...)]` を検討する
+
+## コミットメッセージ
+
+`shiguredo-git` 規約に従い、以下の形式でコミットする:
+
+```
+0069 shiguredo_nghttp2::Session::send() が set_user_data() を呼ばない問題を修正する
+
+- `Session::send()` の冒頭に `self.set_user_data()` を追加し、`recv()` と対称にする
+- `recv()` 経由せず `send()` を呼ぶ経路の回帰テストを `crates/shiguredo_nghttp2/tests/test_session.rs` に追加する
+```
 
 ## 完了条件
 
 - `Session::send()` の冒頭に `self.set_user_data();` 呼び出しが追加されている (`self.output.clear();` の直前)
 - 修正後、`Session::recv()` と `Session::send()` の冒頭で同じ `self.set_user_data()` を呼ぶ対称性が保たれている
-- `recv()` を経由せずに `send()` を直接呼ぶシナリオを 3 件カバーする integration test が `crates/shiguredo_nghttp2/tests/test_session.rs` に追加されている (DATA 付き送信 2 経路 + FrameSent イベント取得)
+- `recv()` を経由せずに `send()` を直接呼ぶシナリオを 3 件カバーする integration test が `crates/shiguredo_nghttp2/tests/test_session.rs` に追加されている (DATA 付き送信 2 経路 + FrameSent イベント取得)。`submit_data` を用いる経路では、data provider が deferred 状態になるよう適切に `send()` を挟む
 - 各テストが修正前のコードでは少なくとも 1 件失敗し、修正後は全件通過することを動作確認している (回帰テストとしての有効性確認)
 - `CHANGES.md` の `## develop` に `[FIX]` エントリと担当者行が追加されている
 - `cargo fmt --all -- --check` が通過する
@@ -134,69 +148,12 @@ callback は走るが fatal ではない経路 (`submit_settings` 等) の具体
 
 ## 解決方法
 
-### `Session::send()` の修正 (`crates/shiguredo_nghttp2/src/session.rs`)
-
-`recv()` と同じパターンで、関数冒頭に `self.set_user_data()` を 1 行追加する (コメント不要、`recv()` と対称):
-
-```rust
-pub fn send(&mut self) -> Result<Vec<u8>> {
-    self.set_user_data();
-    self.output.clear();
-
-    loop {
-        let mut data_ptr: *const u8 = ptr::null();
-        let len = unsafe { nghttp2_sys::nghttp2_session_mem_send(self.session, &mut data_ptr) };
-        // 以降は既存のまま
-    }
-
-    Ok(std::mem::take(&mut self.output))
-}
-```
-
-### テスト雛形 (`crates/shiguredo_nghttp2/tests/test_session.rs`)
-
-新規作成するテストファイルの冒頭と 1 件目の雛形。残り 2 件も同形で書く。
-
-```rust
-use shiguredo_nghttp2::{FrameType, Header, Http2Event, Session};
-
-/// recv() を経由せず DATA 付き submit_request → send() を呼んでも
-/// data_source_read_callback で NGHTTP2_ERR_CALLBACK_FAILURE にならないこと
-#[test]
-fn test_send_before_recv_with_data_provider_succeeds() {
-    let mut session = Session::client().expect("クライアントセッションが生成できること");
-    let headers = vec![
-        Header::method("POST"),
-        Header::scheme("https"),
-        Header::authority("example.com"),
-        Header::path("/"),
-    ];
-    let stream_id = session
-        .submit_request(&headers, Some(b"hello"), true)
-        .expect("submit_request が成功すること");
-    assert!(stream_id > 0, "クライアント開始ストリーム ID は正の値");
-
-    // 修正前は send() 内の data_source_read_callback が user_data null で
-    // CALLBACK_FAILURE を返し send() が Err になる。
-    let output = session.send().expect("send が CALLBACK_FAILURE を返さないこと");
-    assert!(!output.is_empty(), "送信バイト列が空でないこと");
-
-    // FrameSent イベントが正しく流れることを追加で確認する
-    let mut saw_data_frame = false;
-    while let Some(event) = session.poll_event() {
-        if matches!(
-            event,
-            Http2Event::FrameSent {
-                frame_type: FrameType::Data,
-                ..
-            }
-        ) {
-            saw_data_frame = true;
-        }
-    }
-    assert!(saw_data_frame, "DATA フレームの FrameSent イベントが取得できること");
-}
-```
+- `crates/shiguredo_nghttp2/src/session.rs` の `Session::send()` メソッド冒頭に `self.set_user_data();` を 1 行追加し、`recv()` と同じく callback 発火前に現在の `self` アドレスを `nghttp2_session_set_user_data` で再登録するようにした
+- `crates/shiguredo_nghttp2/tests/test_session.rs` を新規作成し、以下の 3 件の回帰テストを追加した:
+  - `test_send_before_recv_with_data_provider_succeeds`: DATA 付き `submit_request` → `send()` の経路
+  - `test_send_with_submit_data_succeeds`: `submit_request(None, false)` → `send()` (deferred) → `submit_data` → `send()` の経路
+  - `test_send_settings_emits_frame_sent_event`: `submit_settings` → `send()` で `FrameSent` イベントが取得できることの確認
+- `CHANGES.md` の `## develop` セクションに `[FIX]` エントリを追加した
 
 ## 参照
 
