@@ -146,6 +146,8 @@
   - @voluntas
 - [FIX] `WtServerRequest::accept()` で TLS 1.3 未達の WebTransport セッションを `RST_STREAM(PROTOCOL_ERROR)` で拒否する (draft-ietf-webtrans-http2-14 §7 / RFC 9113 §8.1.1) (issue 0063)
   - @voluntas
+- [FIX] `shiguredo_nghttp2::Session::send()` の冒頭で `set_user_data()` を呼ぶように修正し、`recv()` を経由せずに `send()` を呼ぶ経路でも各コールバックが正しい `Session` ポインタを受け取れるようにする
+  - @voluntas
 
 ### misc
 

@@ -192,6 +192,7 @@ impl Session {
 
     /// 出力データを生成
     pub fn send(&mut self) -> Result<Vec<u8>> {
+        self.set_user_data();
         self.output.clear();
 
         loop {
