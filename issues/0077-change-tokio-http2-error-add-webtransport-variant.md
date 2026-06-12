@@ -1,6 +1,6 @@
 # tokio-http2 のエラー型を整理して WtError 由来の情報を保持する
 
-- Priority: High
+- Priority: Medium
 - Created: 2026-06-12
 - Polished: {Polished}
 - Model: Opus 4.7
@@ -14,10 +14,11 @@ issue 0068 (`bug-fix-wt-error-design`、`WtError::Display` 情報漏洩修正) �
 
 ## 優先度根拠
 
-- 0068 が `WtError::Display` の情報漏洩を修正したことで、`WtError` 自体は適切に情報を保持できるようになった。しかし `tokio-http2` 側で文字列化される現状の経路では、その情報が利用者に届かない
+- 0068 で `WtError::Display` の情報漏洩を修正すると、`WtError` 自体は適切に情報を保持できるようになる。しかし `tokio-http2` 側で文字列化される現状の経路では、その情報が利用者に届かない
 - `tokio-http2` 利用者は現状 `matches!(err, Error::InvalidArgument(_))` でしか分岐できず、`SessionClosed` / `FlowControlError` / `StreamStateError` 等の `WtError` の種別判定ができない (誤った再接続戦略を選ぶリスク)
 - 修正コストは中程度 (バリアント追加と `wt_err` 呼び出し 13 箇所の置換)
 - `shiguredo_http2` クレートは未リリースのため、Error enum へのバリアント追加 (SemVer 上 breaking change) を許容できる窓のうちに済ませる必要がある
+- ただし本 issue は情報漏洩そのものやメモリ安全性の直接修正ではなく、主な効果は構造化エラー情報の保持と利用者 API の改善であるため Priority は Medium とする
 
 ## 現状の問題
 
@@ -97,7 +98,7 @@ issue 0068 マージ後、`crates/tokio-http2/src/error.rs` と `crates/tokio-ht
 
 ## 参照
 
-- `issues/closed/0068-bug-fix-wt-error-design.md` — 先行 issue (WtError::Display 情報漏洩修正)。本 issue のスコープ外として分離された経緯が書かれている
+- `issues/0068-bug-fix-wt-error-design.md` — 先行 issue (WtError::Display 情報漏洩修正)。本 issue のスコープ外として分離された経緯が書かれている
 - `crates/tokio-http2/src/error.rs` — `Error` enum 定義 (バリアント追加先)
 - `crates/tokio-http2/src/webtransport.rs:1053-1055` — `wt_err` 関数 (削除対象)
 - `crates/tokio-http2/src/webtransport.rs:186,203` — 文字列化経路 (統一対象)

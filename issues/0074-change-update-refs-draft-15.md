@@ -23,6 +23,7 @@
 - `refs/draft-ietf-webtrans-http2-14.txt` が現状のリポジトリ内 draft 本文
 - `skills/shiguredo-http2/SKILL.md:15` 他は `draft-ietf-webtrans-http2-15` を参照
 - ソースコード・テスト・examples・README・`Cargo.toml` 等で `draft-ietf-webtrans-http2-14` への言及が多数 (`grep -rn "draft-ietf-webtrans-http2-14" src/ crates/ tests/ pbt/ examples/` で確認、想定 100 箇所以上)
+- 2026-06-12 時点の IETF Datatracker では `draft-ietf-webtrans-http2` の最新版は `draft-ietf-webtrans-http2-14` であり、`draft-ietf-webtrans-http2-15` は存在しない。そのため、最新版確認時に引き続き draft-14 が最新である場合は refs/ とソースコメントを draft-15 へ更新してはならない
 
 バージョン不一致により:
 
@@ -33,8 +34,9 @@
 ## 設計方針
 
 - `update-refs` スキルを実行し、IETF Datatracker から **最新版** の `draft-ietf-webtrans-http2` を取得する
-- 取得した最新版のバージョン (draft-15 / draft-16 等) を確定したうえで、refs/ の draft-14 ファイルを最新版に差し替える
-- ソースコメント・テスト・examples・README の draft 番号テキスト (`draft-ietf-webtrans-http2-14`) を取得した最新版番号に **機械的に置換** する。意味的な仕様追従は本 issue では行わない
+- 取得した最新版のバージョンを確定する。最新版が draft-15 以降であれば、refs/ の draft-14 ファイルを最新版に差し替える
+- 最新版が draft-14 のままであれば、refs/ とソースコメントは既に最新版と一致しているため差し替えない。この場合の不一致は `skills/shiguredo-http2/SKILL.md` 側の draft-15 記述が誤っている問題として扱い、本 issue の実装作業は停止してユーザーに報告する
+- draft-15 以降へ更新する場合のみ、ソースコメント・テスト・examples・README の draft 番号テキスト (`draft-ietf-webtrans-http2-14`) を取得した最新版番号に **機械的に置換**する。意味的な仕様追従は本 issue では行わない
 - draft-14 と最新版の diff を取得し、本 issue 完了時のレポートとして残す。diff 内容に基づいて後続の `[CHANGE]` issue を起票する判断は本 issue のスコープ外で、ユーザー / 別 polish 工程で行う
 
 ## スコープ外
@@ -106,6 +108,7 @@ grep -rln "draft-ietf-webtrans-http2-14" \
 
 1. 作業ブランチ `feature/change-update-refs-draft-15` を作成する (取得した最新版が draft-15 でなければ、本 issue 着手時に Branch 名・本 issue ファイル名を実バージョン番号でリネームする)
 2. `update-refs` スキルを実行し、IETF Datatracker から `draft-ietf-webtrans-http2` の最新版バージョンを確認する。最新版が draft-15 でなければ実バージョン番号 (例: draft-16) を使用する
+   - 最新版が `draft-ietf-webtrans-http2-14` のままであれば、refs/ とソースコメントは更新しない。`skills/shiguredo-http2/SKILL.md` 側の draft-15 記述が誤りであることを報告し、本 issue をそのまま実装しない
 3. **`update-refs` スキルはダウンロード / ファイル操作の前にユーザー承認を要求する**。承認ゲートで一時停止するため、auto-resolve 経由で本 issue を実行する場合はここでユーザー判断を仰ぐ。承認後に `refs/draft-ietf-webtrans-http2-14.txt` を最新版 (`refs/draft-ietf-webtrans-http2-XX.txt`) に差し替える
 4. `diff -u refs/draft-ietf-webtrans-http2-14.txt refs/draft-ietf-webtrans-http2-XX.txt` (旧ファイルは git 履歴から取得) で diff を取得し、本 issue の PR description に貼る (後続 issue 起票判断のため)
 5. 「変更対象ファイル一覧」セクションの grep で網羅的に対象ファイルを特定する

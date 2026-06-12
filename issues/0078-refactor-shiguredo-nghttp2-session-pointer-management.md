@@ -1,6 +1,6 @@
 # shiguredo_nghttp2::Session の user_data ポインタ管理を見直す
 
-- Priority: Medium
+- Priority: High
 - Created: 2026-06-12
 - Polished: {Polished}
 - Model: Opus 4.7
@@ -16,6 +16,7 @@ issue 0069 (`bug-fix-nghttp2-send-set-user-data`、`Session::send()` での `set
 
 - 現状の設計は「`Session` を move しない / `recv`・`send` の冒頭で必ず再登録する」という暗黙の不変条件に依存しており、将来 `submit_*` 系で callback を発火させる API を追加するときに同じ呼び忘れバグが再発するリスクがある
 - `set_user_data` が `pub` のため外部から誤って呼ばれる可能性があり、意図しないアドレスが登録される潜在的バグの温床
+- `self as *mut Session` を FFI callback 経由で再解釈する設計であり、move 後 dangling pointer のリスクはメモリ安全性に関わる。単なる API 整理ではなく unsafe 境界の不変条件を型で固定する作業なので Priority は High とする
 - `nghttp2_session_set_user_data` の自前管理を完全に排除できれば、`recv`/`send` の冒頭の重複呼び出しも不要になり、API の単純化に繋がる
 - `shiguredo_nghttp2` クレートは未リリースのため、`Session` 構造の breaking change を許容できる窓のうちに対応する
 
@@ -37,7 +38,8 @@ pub fn set_user_data(&mut self) {
 問題点:
 
 - `self as *mut Session as *mut c_void` を nghttp2 に登録するが、`Session` は `Send + Sync` 実装の通常構造体で `Pin`/`Box` で固定されていない。`Session` を move するとアドレスが変わり、登録済みポインタが dangling になる
-- 現状は `recv()`/`send()` の冒頭で毎回 `set_user_data()` を呼び直すことで「move 後に再登録される」設計だが、これは「callback を発火させ得る API すべての先頭で再登録する」前提に依存している
+- 0069 適用後の暫定設計は `recv()`/`send()` の冒頭で毎回 `set_user_data()` を呼び直すことで「move 後に再登録される」形になるが、これは「callback を発火させ得る API すべての先頭で再登録する」前提に依存している
+- 現在の develop では 0069 が未適用のため、`recv()` は `set_user_data()` を呼ぶ一方で `send()` は呼んでいない。0078 は 0069 の最小修正後に残る根本課題を扱うが、現状の危険度は issue 起票時の前提より高い
 - `submit_request` / `submit_data` 等の `submit_*` 系は現状 callback を発火させないため `set_user_data` を呼んでいないが、将来 `nghttp2_session_resume_data` が callback を発火する経路に変わったり、新しい submit API が追加されたりした場合、同じ呼び忘れバグが再発する
 - `set_user_data` が `pub` のため、外部から `session.set_user_data()` を誤って呼べる。これは内部実装の詳細であり、`pub(crate)` 以下に絞るべき
 - 加えて、`submit_request(headers, None, true)` 後の `submit_data` の挙動 (data provider が未登録のため `nghttp2_session_resume_data` が失敗する可能性) が API ドキュメントに明示されていない
