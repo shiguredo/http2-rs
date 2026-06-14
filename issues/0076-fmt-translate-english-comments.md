@@ -2,7 +2,7 @@
 
 - Priority: Low
 - Created: 2026-06-11
-- Polished: 2026-06-12
+- Polished: 2026-06-14
 - Model: deepseek-v4-pro
 - Branch: feature/refactor-translate-english-comments
 
@@ -72,10 +72,10 @@ CLAUDE.md 規約:
 | `// Actor channels` | `// Actor チャネル` |
 | `// Using index 1 (:authority) with value "www.example.com"` | `// インデックス 1 (:authority) を値 "www.example.com" で使用する` |
 | `// Never Indexed with new name` | `// 新しい名前で Never Indexed を符号化する` |
-| `// First byte should be 0x10 (pattern 00010000)` | `// 1 バイト目は 0x10 (パターン 00010000) になる` |
+| `// First byte should be 0x10 (pattern 00010000)` | `// 1 バイト目は 0x10 (pattern 00010000) になる` |
 | `// Never Indexed with name index 23 (authorization in static table)` | `// 名前インデックス 23 (静的テーブルの authorization) で Never Indexed を符号化する` |
-| `// First byte should be 0x17 (pattern 0001 + 0111 = index 23)` | `// 1 バイト目は 0x17 (パターン 0001 + 0111 = インデックス 23) になる` |
-| `// Size update to 1024 = 0x3f (5-bit prefix) + continuation` | `// サイズ更新で 1024 を表現する: 0x3f (5 ビット prefix) + 継続バイト` |
+| `// First byte should be 0x17 (pattern 0001 + 0111 = index 23)` | `// 1 バイト目は 0x17 (pattern 0001 + 0111 = index 23) になる` |
+| `// Size update to 1024 = 0x3f (5-bit prefix) + continuation` | `// サイズ更新で 1024 を表現する: 0x3f (5-bit prefix) + 継続バイト` |
 | `// 0x20 | (31 & 0x1f) = 0x3f, then 1024 - 31 = 993 = 0xe1 0x07` | `// 0x20 | (31 & 0x1f) = 0x3f、続いて 1024 - 31 = 993 = 0xe1 0x07` |
 | `println!("nghttp2 version: {}", version);` | `println!("nghttp2 バージョン: {}", version);` |
 | `println!("Output length: {} bytes", output.len());` | `println!("出力長: {} バイト", output.len());` |
@@ -86,23 +86,26 @@ CLAUDE.md 規約:
 
 ## スコープ外
 
-- `src/hpack/encoder.rs:49,64,70,75,79,84,95,98,209` / `src/hpack/decoder.rs:74,79,86,96,101` 等の `// Indexed Header Field (Section 6.1)` のような RFC 7541 セクション名コメント: RFC 仕様の概念名で英語のまま残すか日本語にするかは判断が分かれる。別 issue で個別判断する
+- `src/hpack/encoder.rs:49,64,70,75,79,84,95,98` / `src/hpack/decoder.rs:74,79,86,96,101` 等の `// Indexed Header Field (Section 6.1)` のような RFC 7541 セクション名コメント: RFC 仕様の概念名で英語のまま残すか日本語にするかは判断が分かれる。別 issue で個別判断する
 - `tests/test_hpack/decoder.rs:79,97,105` の `// Never Indexed with new name "x-token" and value "secret"` / `// Never Indexed should not be added to dynamic table` / `// Never Indexed with name index 7 (:scheme) and value "https"`: HPACK 仕様 (Section 6.2.3) の表現名 `Never Indexed` と動作説明が混在する箇所で、上の RFC セクション名コメントと同じ判断軸に乗せて別 issue で扱う
 - `///` 形式の doc コメント全般: rustdoc の生成内容に影響するため別 issue で慎重に扱う
 - `SAFETY:` / `TODO:` / `FIXME:` / `NOTE:` 等の Rust 慣用プレフィックス付きコメント: プレフィックスは英語維持、説明部のみ日本語化の検討は別 issue
 - `tracing::info!` / `tracing::warn!` / `tracing::error!` 等のランタイムログ: CLAUDE.md 規約「ログメッセージは全て英語にすること」に従い、英語のまま維持 (本 issue の対象外)
-- `examples/` 配下の英語コメント (現状確認: `grep -rn "// [A-Z][a-z]" examples/` で該当なし)
+- `examples/` 配下の英語コメント (現状確認: `grep -rn "// [A-Z][a-z]" examples/` では日本語コメント中の固有名詞もヒットするが、英語のみの `//` コメントは存在しない)
+- `src/webtransport/init.rs:60` の `// Parse a Key` のような、対象箇所と同じルールで翻訳できそうな同関数内の英語コメント (別 issue 0080 で対応)
+- `src/hpack/encoder.rs:264` の `// 0x41 = 01000001 (incremental indexing, index 1)` のような、対象箇所と同じルールで翻訳できそうなテストブロック内の英語コメント (別 issue 0080 で対応)
 - `crates/nghttp2-sys/build.rs` 等の build script 内コメント
 
 ## 他 issue との関係
 
 - 0068-0074: いずれも本 issue の対象箇所には触れない (各 issue のスコープと重ならない)
 - 0075 (`refactor-replace-unwrap-with-expect`): `examples/` 配下のみが対象で、本 issue の対象箇所と重ならない。順序依存なし
+- 0079 (`refactor-replace-unwrap-with-expect-build-script-and-tests`) / 0080 (`refactor-translate-remaining-english-comments`): いずれも `CHANGES.md` の `### misc` サブセクションにエントリを追加する。0075/0076/0079/0080 が並列にマージされる場合、重複した `[UPDATE]` エントリやサブセクションが生成されないようマージ時に調整する
 - 順序関係: 単独でマージ可能
 
 ## CHANGES.md の扱い
 
-本変更は機能に影響しないコメント・テストログの言語整理のため、`shiguredo-changelog` 規約「機能に直接影響しない変更 (ドキュメント追加、リファクタリング等) は `### misc` サブセクションに記載すること」に従い、`CHANGES.md` の `## develop` セクション内の `### misc` サブセクションに `[UPDATE]` エントリ 1 件を追加する。`### misc` サブセクションが存在しない場合は新規作成する。
+本変更は機能に影響しないコメント・テストログの言語整理のため、`shiguredo-changelog` 規約「機能に直接影響しない変更 (ドキュメント追加、リファクタリング等) は `### misc` サブセクションに記載すること」に従い、`CHANGES.md` の `## develop` セクション内の `### misc` サブセクションの末尾に `[UPDATE]` エントリ 1 件を追加する。`### misc` サブセクションが存在しない場合は新規作成する。
 
 ## 変更対象ファイル一覧
 
@@ -124,11 +127,11 @@ CLAUDE.md 規約:
    ```markdown
    ### misc
 
-   - [UPDATE] 英語コメント・テスト用 `println!` ログを日本語に翻訳し、CLAUDE.md 規約 (コメント・テストログは日本語) に準拠させる (issue 0076)
+   - [UPDATE] 英語コメント・テスト用 `println!` ログを日本語に翻訳し、CLAUDE.md 規約 (コメント・テストログは日本語) に準拠させる
      - @voluntas
    ```
 
-4. 対象行に絞って残存英語コメントが無いことを確認する (スコープ外箇所を含むファイル全体への `grep` は別箇所まで拾うため使わない):
+4. 対象行に絞って残存英語コメントが無いことを確認する。ファイル全体への `grep` はスコープ外の英語コメント (RFC セクション名・HPACK 用語等) まで拾うため、本手順では対象行のみを `sed` で個別確認する:
    - `sed -n '65p' src/webtransport/init.rs`
    - `sed -n '205p' crates/tokio-http2/src/webtransport.rs`
    - `sed -n '261p;273p;276p;285p;288p' src/hpack/encoder.rs`
@@ -156,8 +159,8 @@ CLAUDE.md 規約:
 ## 参照
 
 - `CLAUDE.md` — コメント言語・テストログ言語の規約
-- `~/.claude/skills/shiguredo-rust/SKILL.md` — コメント方針
-- `~/.claude/skills/shiguredo-changelog/SKILL.md` — `### misc` サブセクションの扱い
+- `shiguredo-rust` スキル — コメント方針
+- `shiguredo-changelog` スキル — `### misc` サブセクションの扱い
 - `src/webtransport/init.rs:65`
 - `crates/tokio-http2/src/webtransport.rs:205`
 - `src/hpack/encoder.rs:261,273,276,285,288`

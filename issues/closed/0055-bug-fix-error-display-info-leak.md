@@ -54,7 +54,7 @@ impl std::fmt::Debug for Error {
 
 - `Display` では `kind` と `reason` のみを出力し、`location` と `backtrace` は出力しない
 - `Debug` 通常フォーマットでは `kind`、`reason`、`location` を出力する（ファイルパス・行番号は開発時の診断に有用であり、`Debug` はその用途が許容される）
-- `Debug` alternate format (`{:#?}`) でのみ `backtrace` を出力する
+- `Debug` alternate format (`{:#?}`) かつ `backtrace.status() == BacktraceStatus::Captured` のときのみ `backtrace` を出力する
 - `Debug` から `Display` への委譲をやめ、独立した実装にする
 - `WtError`（`src/webtransport/error.rs`）は本 issue のスコープ外
 
@@ -64,7 +64,7 @@ impl std::fmt::Debug for Error {
 2. `src/error.rs` の `Display` 実装から `location` と `backtrace` の出力を削除する
 3. `Debug` 実装を `Display` 委譲から独立した実装に変更する:
    - 通常フォーマット: `kind`、`reason`、`location`
-   - alternate format (`{:#?}`): 上記 + `backtrace`
+   - alternate format (`{:#?}`) かつ `BacktraceStatus::Captured` のとき: 上記 + `backtrace`
 4. `CHANGES.md` の `## develop` に `[FIX]` エントリを追加する
 5. `tests/test_error.rs` に以下の単体テストを追加する:
    - `Display` 出力にファイルパスが含まれないこと
@@ -78,7 +78,7 @@ impl std::fmt::Debug for Error {
 
 - `Display` 実装が `kind` と `reason` のみを出力する
 - `Debug` 通常フォーマットが location を含むが backtrace を含まない
-- `Debug` alternate format が backtrace を含む
+- `Debug` alternate format が `f.alternate() && backtrace.status() == BacktraceStatus::Captured` のときのみ backtrace を含む
 - 情報漏洩を検証する単体テストが追加されている
 - `CHANGES.md` の `## develop` にエントリが追加されている
 - `cargo test --workspace` が通過する
@@ -86,6 +86,6 @@ impl std::fmt::Debug for Error {
 ## 解決方法
 
 1. `Display` 実装から `location` (file/line) と `backtrace` の出力を削除し、`kind` と `reason` のみを出力するように変更した。
-2. `Debug` 実装を `Display` 委譲から独立した実装に変更し、通常フォーマットでは `kind`、`reason`、`location` を、alternate format (`{:#?}`) でのみ `backtrace` を出力するようにした。
+2. `Debug` 実装を `Display` 委譲から独立した実装に変更し、通常フォーマットでは `kind`、`reason`、`location` を、alternate format (`{:#?}`) かつ `BacktraceStatus::Captured` のときのみ `backtrace` を出力するようにした。
 3. `tests/test_error.rs` に Display/Debug の情報漏洩防止を検証する単体テストを 4 件追加した。
 4. `CHANGES.md` の `[FIX]` セクションにエントリを追加した。

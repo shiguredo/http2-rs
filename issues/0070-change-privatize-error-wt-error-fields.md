@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-06-11
-- Polished: 2026-06-11
+- Polished: 2026-06-14
 - Model: deepseek-v4-pro
 - Branch: feature/change-error-field-privatization
 
@@ -99,7 +99,7 @@ private 化により次の不変条件を保証する:
 
 ### 0068 との順序関係
 
-issue 0068 (`bug-fix-wt-error-design`) で `WtError::Display` / `Debug` を独立実装に修正する作業が impl ブロック内のフィールド直接アクセス (`self.kind` / `self.reason` / `self.location` / `self.backtrace`) を利用する。本 issue 0070 は **0068 マージ後にマージされる前提**。同一モジュール内の impl はフィールド可視性に関係なく直接アクセス可能なので技術的競合はないが、コンフリクトを避けるため順序を守る。
+issue 0068 (`bug-fix-wt-error-display-info-leak`) で `WtError::Display` / `Debug` を独立実装に修正する作業が impl ブロック内のフィールド直接アクセス (`self.kind` / `self.reason` / `self.location` / `self.backtrace`) を利用する。本 issue 0070 は **0068 マージ後にマージされる前提**。同一モジュール内の impl はフィールド可視性に関係なく直接アクセス可能なので技術的競合はないが、コンフリクトを避けるため順序を守る。
 
 ### 0072 との順序関係
 
@@ -212,9 +212,9 @@ issue 0072 (`refactor-remove-unused-code`) で削除予定の API:
 5. `CHANGES.md` の `## develop` セクション内の既存 `[CHANGE]` 群の末尾に以下 2 件のエントリを追加する。担当者行は親アイテム本文先頭 (`[` カラム) と同じ位置にネストする:
 
    ```markdown
-   - [CHANGE] `Error` のフィールドを private 化し、getter `kind()` / `reason()` / `location()` / `backtrace()` を追加する (issue 0070)
+   - [CHANGE] `Error` のフィールドを private 化し、getter `kind()` / `reason()` / `location()` / `backtrace()` を追加する
      - @voluntas
-   - [CHANGE] `WtError` のフィールドを private 化し、getter `kind()` / `reason()` / `location()` / `backtrace()` を追加する (issue 0070)
+   - [CHANGE] `WtError` のフィールドを private 化し、getter `kind()` / `reason()` / `location()` / `backtrace()` を追加する
      - @voluntas
    ```
 

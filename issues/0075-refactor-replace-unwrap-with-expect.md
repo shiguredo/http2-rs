@@ -2,7 +2,7 @@
 
 - Priority: Low
 - Created: 2026-06-11
-- Polished: 2026-06-12
+- Polished: 2026-06-14
 - Model: deepseek-v4-pro
 - Branch: feature/refactor-replace-unwrap-with-expect
 
@@ -14,7 +14,7 @@
 
 - `shiguredo-rust` 規約「`.unwrap()` ではなく `.expect("MESSAGE")` を使うこと」に違反している既存箇所の整理。機能には影響しないが、規約準拠のために必要
 - `examples/` は利用者がコピー&ペーストで参考にする可能性が高いため、規約違反のコードを残すと利用者の `.unwrap()` 使用を誘発する
-- 修正コストは極小 (5 箇所のテキスト置換と日本語 expect メッセージの追加)
+- 修正コストは極小 (5 箇所のテキスト置換と英語 expect メッセージの追加)
 - Priority: Low の理由: 機能挙動に影響せず、未リリースのため緊急性も低い
 
 ## 現状の問題
@@ -54,13 +54,13 @@ let listen: String = noargs::opt("listen")
     .unwrap();
 ```
 
-`.then(...)` のクロージャは戻り値型を `Ok::<_, std::convert::Infallible>` で固定しているため `Result<String, Infallible>` を返す。`Infallible` は値を構築できない型のため `Err` 側が型レベルで排除されており panic することはない。規約準拠のために `.expect("infallible: then クロージャは Ok::<_, Infallible> を返す")` のような明示が必要。
+`.then(...)` のクロージャは戻り値型を `Ok::<_, std::convert::Infallible>` で固定しているため `Result<String, Infallible>` を返す。`Infallible` は値を構築できない型のため `Err` 側が型レベルで排除されており panic することはない。規約準拠のために `.expect("infallible: then closure returns Ok::<_, Infallible>")` のような明示が必要。
 
 ## 設計方針
 
-- 各 `.unwrap()` を `.expect("日本語メッセージ")` に置換する
+- 各 `.unwrap()` を `.expect("MESSAGE")` に置換する
 - メッセージは「状況によっては発生する panic」と「仕様上絶対に発生しない panic (Infallible)」を区別できる内容にする
-- 日本語メッセージとする (CLAUDE.md 規約「コメントは全て日本語にすること」)
+- `expect` メッセージは panic 時にログとして出力されるため、AGENTS.md「ログメッセージは全て英語にすること」に従い英語とする
 
 ## スコープ外
 
@@ -73,6 +73,7 @@ let listen: String = noargs::opt("listen")
 
 - 0068-0074: いずれも `examples/` の `.unwrap()` には触れない。順序依存なし
 - 0076 (`fmt-translate-english-comments`): 英語コメント翻訳の別 issue で `examples/` を触る可能性は低いが、`examples/http2_client/src/main.rs` / `examples/http2_server/src/main.rs` / `examples/wt_server/src/main.rs` を編集する場合は本 issue と機械的に衝突する可能性がある。本 issue 先にマージするか、同時 PR で扱う
+- 0079 (`refactor-replace-unwrap-with-expect-build-script-and-tests`) / 0080 (`refactor-translate-remaining-english-comments`): それぞれ `CHANGES.md` の `### misc` サブセクションを新規作成する可能性がある。0075/0076/0079/0080 が並列にマージされる場合、`### misc` セクションが重複して生成されるため、マージ時に 1 つに統合する
 
 ## CHANGES.md の扱い
 
@@ -93,15 +94,15 @@ let listen: String = noargs::opt("listen")
 2. `examples/http2_client/src/main.rs:56,58` の 2 箇所を以下に置換する:
 
    ```rust
-   HeaderField::new(":path", path).expect(":path に HTTP/2 で禁止された文字が含まれている"),
-   HeaderField::new(":authority", format!("{host}:{port}")).expect(":authority に HTTP/2 で禁止された文字が含まれている"),
+   HeaderField::new(":path", path).expect(":path contains a character prohibited by HTTP/2"),
+   HeaderField::new(":authority", format!("{host}:{port}")).expect(":authority contains a character prohibited by HTTP/2"),
    ```
 
 3. `examples/http2_server/src/main.rs:194,196` の 2 箇所を以下に置換する:
 
    ```rust
-   HeaderField::new(":status", status).expect(":status の値が HTTP/2 で許容されない"),
-   HeaderField::new("content-length", body.len().to_string()).expect("content-length の値が HTTP/2 で許容されない"),
+   HeaderField::new(":status", status).expect(":status value is not acceptable for HTTP/2"),
+   HeaderField::new("content-length", body.len().to_string()).expect("content-length value is not acceptable for HTTP/2"),
    ```
 
 4. `examples/wt_server/src/main.rs:272` の `.unwrap()` (上記 noargs チェーンの末尾) を以下のように `.expect("...")` に置換する:
@@ -114,7 +115,7 @@ let listen: String = noargs::opt("listen")
        .default(DEFAULT_LISTEN)
        .take(&mut args)
        .then(|o| Ok::<_, std::convert::Infallible>(o.value().to_string()))
-       .expect("infallible: then クロージャは Ok::<_, Infallible> を返す");
+       .expect("infallible: then closure returns Ok::<_, Infallible>");
    ```
 
 5. `CHANGES.md` の `## develop` セクションに `### misc` サブセクションがあればその末尾に、なければ新規作成して以下のエントリと担当者行を追加する:
@@ -122,7 +123,7 @@ let listen: String = noargs::opt("listen")
    ```markdown
    ### misc
 
-   - [UPDATE] `examples/` 配下の `.unwrap()` を `.expect("理由")` に置換し、`shiguredo-rust` 規約に準拠させる (issue 0075)
+   - [UPDATE] `examples/` 配下の `.unwrap()` を `.expect("理由")` に置換し、`shiguredo-rust` 規約に準拠させる
      - @voluntas
    ```
 
@@ -137,7 +138,7 @@ let listen: String = noargs::opt("listen")
 - `examples/http2_client/src/main.rs:56,58` の 2 箇所が `.expect("...")` に置換されている
 - `examples/http2_server/src/main.rs:194,196` の 2 箇所が `.expect("...")` に置換されている
 - `examples/wt_server/src/main.rs:272` の 1 箇所が `.expect("...")` に置換されている
-- 各 `expect` メッセージが日本語で、「状況により発生する panic」と「仕様上絶対発生しない panic (Infallible)」を区別している
+- 各 `expect` メッセージが英語で、「状況により発生する panic」と「仕様上絶対発生しない panic (Infallible)」を区別している
 - `examples/` 配下に `.unwrap()` が残っていない (`grep -rn "\.unwrap()" examples/` で 0 件)
 - `CHANGES.md` の `## develop` の `### misc` サブセクションに `[UPDATE]` エントリと担当者行が追加されている
 - `cargo fmt --all -- --check` が通過する
@@ -147,8 +148,8 @@ let listen: String = noargs::opt("listen")
 
 ## 参照
 
-- `~/.claude/skills/shiguredo-rust/SKILL.md` — `.unwrap()` ではなく `.expect("MESSAGE")` を使う規約
-- `~/.claude/skills/shiguredo-changelog/SKILL.md` — `### misc` サブセクションの扱い
+- `shiguredo-rust` スキル — `.unwrap()` ではなく `.expect("MESSAGE")` を使う規約
+- `shiguredo-changelog` スキル — `### misc` サブセクションの扱い
 - `examples/http2_client/src/main.rs:56,58` — 編集対象 1-2
 - `examples/http2_server/src/main.rs:194,196` — 編集対象 3-4
 - `examples/wt_server/src/main.rs:272` — 編集対象 5

@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-11
-- Polished: 2026-06-11
+- Polished: 2026-06-14
 - Model: deepseek-v4-pro
 - Branch: feature/refactor-remove-send-error
 
@@ -14,7 +14,7 @@
 
 - `SendError` は **未リリースの develop ブランチ内でのみ存在** する公開 API であり、削除しても外部利用者は影響を受けない。リリース後に削除する場合は SemVer の major bump 相当の破壊的変更になるため、リリース前のこのタイミングを逃すと将来の互換性負債になる
 - 未統合の型を公開 API に残すと、利用者が「使うべき型」と誤認するリスクがある (現状の `Connection::send_*` は `Error` 型を返す)
-- 修正コストは低い (ファイル削除 + lib.rs から 2 行削除 + テストファイル削除 + CHANGES.md の既存 `[ADD]` エントリ編集)
+- 修正コストは低い (ファイル削除 + lib.rs から 2 行削除 + テストファイル削除 + CHANGES.md の既存 `[ADD]` エントリ編集 + SKILL.md の SendError 説明行削除)
 
 ## 現状の問題
 
@@ -39,21 +39,22 @@ pub use send_error::SendError;
 
 `tests/test_send_error.rs` は実在し、`SendError::Display` の出力 5 ケース (`ConnectionClosed` / `GoawaySent` / `StreamNotOpen` / `FlowControlExhausted` / `HeaderListTooLarge`) を検証するテスト 5 件のみを含む。これらは `SendError` 自体の振る舞いを検証するもので、削除しても他型 (`Error` / `FrameError` 等) の振る舞いテストは影響を受けない。
 
-`Connection` の送信系 API (`send_data`, `send_response`, `reset_stream` 等) は全て `Error` 型を返しており、`SendError` はコードベース内のどこからも使われていない。grep 確認結果: `crates/tokio-http2/` / `crates/tokio-nghttp2/` / `crates/shiguredo_nghttp2/` / `pbt/` / `fuzz/` / `examples/` のいずれにも `shiguredo_http2::SendError` の import / 参照は存在しない (`tests/test_send_error.rs` のみが唯一の参照点)。
+`Connection` の送信系 API (`send_settings`, `send_data`, `reset_stream`, `send_ping`, `send_goaway`, `send_window_update` 等) は全て `Error` 型を返しており、`SendError` はコードベース内のどこからも使われていない。grep 確認結果: `crates/tokio-http2/` / `crates/tokio-nghttp2/` / `crates/shiguredo_nghttp2/` / `pbt/` / `fuzz/` / `examples/` のいずれにも `shiguredo_http2::SendError` の import / 参照は存在しない (`tests/test_send_error.rs` のみが唯一の参照点)。
 
 未完成の型を公開 API に置くことは利用者を混乱させ、将来の互換性保証の負債になる。
 
 ## CHANGES.md の扱い
 
-`CHANGES.md:73` の既存 `[ADD]` エントリ:
+`CHANGES.md` の `## develop` セクション内の既存 `[ADD]` エントリ (本 issue 作成時点で line 73):
 
 ```
 - [ADD] 構築時検査用の公開エラー型 (`HeaderFieldError`, `FrameError`, `StreamIdError`, `SettingError`, `LimitsError`, `SendError`, `DecodeError`) と補助型 ... を追加する (issues 0024-0032)
 ```
 
-の括弧内列挙に `SendError` が含まれている。`SendError` は同じ `## develop` サイクル内で追加されているため、`shiguredo-changelog` 規約「変更履歴は派生元ブランチとの最終的な差分のみを記載すること」「開発ブランチ内の中間状態の修正は記載しないこと」に従い、本 issue で削除する場合は:
+の括弧内列挙に `SendError` が含まれている。`SendError` は同じ `## develop` サイクル内で追加されているため、`shiguredo-changelog` 規約「変更履歴は派生元ブランチとの最終的な差分のみを記載すること」「開発ブランチ内の中間状態の修正は記載しないこと」、および `shiguredo-issues` 規約「CHANGES.md には issue 番号を含めないこと」に従い、本 issue で削除する場合は:
 
 - 既存 `[ADD]` エントリの括弧内列挙から `SendError` を **除去** する (`HeaderFieldError`, `FrameError`, `StreamIdError`, `SettingError`, `LimitsError`, `DecodeError` の 6 種に縮める)
+- 同エントリ末尾の issue 番号表記 `(issues 0024-0032)` も **削除する**
 - 新規 `[CHANGE]` エントリは **追加しない** (develop 内で打ち消し合うため、最終的な差分には反映されない)
 
 これにより、CHANGES.md 上で「追加した」と「削除した」が同時に並ぶ自家撞着を回避する。
@@ -66,7 +67,7 @@ pub use send_error::SendError;
 
 本 issue は `src/send_error.rs` / `src/lib.rs:32,54` / `tests/test_send_error.rs` / `CHANGES.md:73` / `skills/shiguredo-http2/SKILL.md:471` のみを変更し、`src/error.rs` / `src/webtransport/error.rs` / `crates/*` には触れない。
 
-- 0068 (`bug-fix-wt-error-design`) — `WtError` の Display/Debug 修正、無関係
+- 0068 (`bug-fix-wt-error-display-info-leak`) — `WtError` の Display/Debug 修正、無関係
 - 0069 (`bug-fix-nghttp2-send-set-user-data`) — `shiguredo_nghttp2::Session::send()` 修正、無関係
 - 0070 (`change-privatize-error-wt-error-fields`) — `Error` / `WtError` のフィールド private 化、無関係
 - 0072 (`refactor-remove-unused-code`) — `WtError` の未使用ヘルパー削除、無関係
@@ -94,7 +95,7 @@ pub use send_error::SendError;
 2. `src/send_error.rs` を削除する
 3. `tests/test_send_error.rs` を削除する
 4. `src/lib.rs` から `pub mod send_error;` と `pub use send_error::SendError;` を削除する。行番号は本 issue 作成時点で前者が line 32、後者が line 54。先に line 32 を削除すると後続の行番号がシフトするため、エディタの行番号ジャンプではなく文字列で完全一致削除する。両方を削除しないと、ファイル不在エラー (`E0583: file not found for module 'send_error'`) でビルドが失敗する
-5. `CHANGES.md:73` の既存 `[ADD]` エントリの括弧内列挙から `SendError` を除去する (`HeaderFieldError`, `FrameError`, `StreamIdError`, `SettingError`, `LimitsError`, `DecodeError` の 6 種に縮める)。新規 `[CHANGE]` エントリは追加しない (develop 内で打ち消し合うため)
+5. `CHANGES.md:73` の既存 `[ADD]` エントリから `SendError` と末尾の issue 番号表記 `(issues 0024-0032)` を除去する (`HeaderFieldError`, `FrameError`, `StreamIdError`, `SettingError`, `LimitsError`, `DecodeError` の 6 種に縮める)。新規 `[CHANGE]` エントリは追加しない (develop 内で打ち消し合うため)
 6. `skills/shiguredo-http2/SKILL.md:471` の `SendError` 説明行を削除する
 7. `cargo fmt --all -- --check` で整形違反がないことを確認する
 8. `cargo build --workspace` でビルドが成功することを確認する
@@ -106,8 +107,8 @@ pub use send_error::SendError;
 
 - `src/send_error.rs` が削除されている
 - `tests/test_send_error.rs` が削除されている
-- `src/lib.rs` から `pub mod send_error;` と `pub use send_error::SendError;` が削除されている
-- `CHANGES.md:73` の既存 `[ADD]` エントリから `SendError` の言及が除去されている (新規 `[CHANGE]` エントリは追加しない)
+- `src/lib.rs` から `pub mod send_error;` と `pub use send_error::SendError;` が削除されている (行番号シフトを避けるため文字列検索で確実に両方を削除する)
+- `CHANGES.md:73` の既存 `[ADD]` エントリから `SendError` と issue 番号表記 `(issues 0024-0032)` が除去されている (新規 `[CHANGE]` エントリは追加しない)
 - `skills/shiguredo-http2/SKILL.md:471` の `SendError` 説明行が削除されている
 - `cargo fmt --all -- --check` が通過する
 - `cargo build --workspace` が成功する
