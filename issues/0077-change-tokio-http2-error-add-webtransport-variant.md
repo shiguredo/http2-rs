@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-12
-- Polished: 2026-06-14
+- Polished: 2026-06-16
 - Model: Opus 4.7
 - Branch: feature/change-tokio-http2-error-add-webtransport-variant
 
@@ -60,6 +60,8 @@ driver 内 13 箇所から `wt_err` が呼び出されており、`WtError` の�
 WebTransport(shiguredo_http2::webtransport::WtError),
 ```
 
+`#[non_exhaustive]` は本 issue では付けない (既存方針との整合)。本 issue 自体が breaking change を受け入れているのに `#[non_exhaustive]` を将来のために付けるという判断は別途独立した API 設計の議論として 0019 系の整理 issue で扱う。これは「同時に変えるべきだった」点として 0070 でフィールド private 化と一緒に検討する選択肢もあるが、本 issue では `WebTransport(WtError)` バリアントを 1 件追加することにスコープを絞る。
+
 ### `Display` / `source()` の更新
 
 - `Display` 実装の match arm に `Error::WebTransport(e) => write!(f, "webtransport error: {}", e)` を追加
@@ -67,16 +69,13 @@ WebTransport(shiguredo_http2::webtransport::WtError),
 
 ### `From<WtError> for Error` 実装の追加
 
-`?` 演算子で透過変換できるように `impl From<shiguredo_http2::webtransport::WtError> for Error` を追加する。これにより `wt_err` 関数自体が不要になる。
+`?` 演算子で透過変換できるように `impl From<shiguredo_http2::webtransport::WtError> for Error` を追加する。これにより `wt_err` 関数自体が不要になる。`#[track_caller]` は既存の `From<io::Error>` / `From<shiguredo_http2::Error>` と同様に付けない (`WtError` 自体が `#[track_caller]` で構築されており `location` は保持されるため、ラップ箇所を追加で記録する必要なし)。
 
 ### 既存呼び出しの置換
 
 - `wt_err` 関数を削除する
-- driver 内 13 箇所の `wt_err` 呼び出しを以下のように置換する:
-  - `handle_cmd` 内の `.map_err(wt_err)` 6 箇所と `Err(wt_err(e))` 2 箇所: 結果を `ack.send(res)` 等で呼び出し元に返す必要があるため、`?` では置換せず `.map_err(Error::from)` / `Err(e.into())` に置換する
-  - `handle_cmd` 外の `.map_err(wt_err)` 5 箇所 (`handle_event` / `maybe_grow_*` 等): 戻り値が `Result<()>` で呼び出し元に直接伝播してよいため、`?` を使って `From` 実装経由で変換する
-- `crates/tokio-http2/src/webtransport.rs:203` の `initiate` 失敗経路も `Error::WebTransport(e)` 経由 (`From` 実装経由) に統一する
-- `crates/tokio-http2/src/webtransport.rs:186` の WebTransport-Init parse error 経路も `Error::WebTransport(e)` 経由に統一する (parse error は `WtError::invalid_input` 由来のため)
+- driver 内 13 箇所の `wt_err` 呼び出しを置換する。具体的な内訳と置換方法は対応手順 5 を参照
+- `crates/tokio-http2/src/webtransport.rs:203` (`initiate` 失敗経路) および `:186` (WebTransport-Init parse error 経路) も `Error::WebTransport(e)` 経由 (`From` 実装経由) に統一する
 
 ### `WtError` の再エクスポート
 
@@ -91,21 +90,32 @@ WebTransport(shiguredo_http2::webtransport::WtError),
 2. `crates/tokio-http2/src/error.rs` の `Error` enum に `/// WebTransport エラー` 付きで `WebTransport(WtError)` バリアントを追加する
 3. `Display` / `source()` の match arm を更新する
 4. `impl From<shiguredo_http2::webtransport::WtError> for Error` を追加する
-5. `crates/tokio-http2/src/webtransport.rs` から `wt_err` 関数を削除し、以下のように呼び出しを置換する:
-   - `handle_cmd` 内の `.map_err(wt_err)` 6 箇所: `.map_err(Error::from)` に置換 (`.map_err(Into::into)` でも可)
-   - `handle_cmd` 内の `Err(wt_err(e))` 2 箇所 (`OpenBidi` / `OpenUni`): `Err(e.into())` に置換
-   - `handle_cmd` 外の `.map_err(wt_err)` 5 箇所 (`handle_event` / `maybe_grow_*` 等) は `?` に置換して `From` 実装経由にする
-   - 0065 (`add-tls-keying-material-exporter`) および 0066 (`add-wt-subprotocol-negotiation`) が先にマージされている場合、それらの変更で追加された `wt_err` 呼び出し、あるいは `WtError` を文字列化して `Error::InvalidArgument` に押し込む類似経路も、`Error::WebTransport(WtError)` 経由に統合する
-6. `crates/tokio-http2/src/webtransport.rs:203` の `initiate()` 失敗経路を `?` に置換する
-7. `crates/tokio-http2/src/webtransport.rs:186` の WebTransport-Init parse error 経路を `?` に置換する (400 レスポンス送信後に `return Err(e.into());`)
+5. `crates/tokio-http2/src/webtransport.rs` から `wt_err` 関数を削除し、以下のように呼び出しを置換する。スタイルは `.map_err(Error::from)` (既存スタイル) に統一する:
+   - `handle_cmd` 内の `.map_err(wt_err)` 6 箇所 (`SendStreamData` / `SendDatagram` / `ResetStream` / `StopSending` / `Close` / `Drain`): `.map_err(Error::from)` に置換
+   - `handle_cmd` 内の `Err(wt_err(e))` 2 箇所 (`OpenBidi` / `OpenUni`): `Err(e.into())` に置換 (これは関数末尾以外なので `?` は使えない)
+   - `handle_cmd` 外の `.map_err(wt_err)` 5 箇所 (`handle_event` 内 1、`maybe_grow_*` 系 4 等) は `?` に置換して `From` 実装経由にする
+   - 0065 (`add-tls-keying-material-exporter`) がマージ済みの場合: `ExportKeyingMaterial` arm 内に追加された `.map_err(wt_err)` 1 箇所も `.map_err(Error::from)` に置換
+   - 0066 (`add-wt-subprotocol-negotiation`) がマージ済みの場合: `WtServerRequest::accept()` 内で追加された `WtError` 文字列化経路を `Error::WebTransport(WtError)` 経由に統合
+6. `crates/tokio-http2/src/webtransport.rs:203` の `initiate()` 失敗経路を `?` に置換する (関数末尾なので `?` で OK)
+7. `crates/tokio-http2/src/webtransport.rs:186` の WebTransport-Init parse error 経路は、現状コードでは「400 レスポンス送信後に `return Err(Error::InvalidArgument(...))`」となっており、関数末尾ではないため `?` は使えない。`return Err(e.into())` に置換する (`?` には置換しない)
 8. `crates/tokio-http2/src/webtransport.rs` に `pub use shiguredo_http2::webtransport::WtError;` を追加する
 9. `crates/tokio-http2/src/lib.rs` の `pub use webtransport::{...}` リストに `WtError` を追加する
 10. `crates/tokio-http2/src/error.rs` 内に `#[cfg(test)] mod tests` を追加し、以下を検証する単体テストを書く:
     - `Error::WebTransport(e).source()` の戻り値が `WtError` であることを確認すること (`source()` は `Option<&(dyn std::error::Error + 'static)>` を返すため、`downcast_ref::<WtError>()` で検証する)
-    - `WtError::with_reason(WtErrorKind::InvalidInput, "test reason")` 由来の `Error::WebTransport` の `Display` が `webtransport error: InvalidInput: test reason` を含むこと
-    - `WtError::new(WtErrorKind::Incomplete)` 由来の `Error::WebTransport` の `Display` が `webtransport error: Incomplete` を含むこと (reason 空のケース)
-11. `crates/tokio-http2/tests/test_webtransport.rs` の負値 WebTransport-Init テスト (約 1187-1193 行目) を、文字列部分一致 (`"WebTransport-Init parse error"`) から `matches!(err, tokio_http2::Error::WebTransport(_))` 等に書き換える
-12. `CHANGES.md` の `## develop` セクションの先頭に以下のエントリと担当者行を追加する (`shiguredo-issues` 規約により issue 番号は含めない):
+    - `WtError::with_reason(WtErrorKind::InvalidInput, "test reason")` 由来の `Error::WebTransport` の `Display` が `"webtransport error: InvalidInput: test reason"` と **完全一致** すること (0068 マージ後の `WtError::Display` は `kind: reason` のみとなるため `assert_eq!` で固定可能)
+    - `WtError::new(WtErrorKind::Incomplete)` 由来の `Error::WebTransport` の `Display` が `"webtransport error: Incomplete"` と完全一致すること (reason 空のケース)
+11. `crates/tokio-http2/tests/test_webtransport.rs` の負値 WebTransport-Init テスト (約 1187-1193 行目) を以下の形式に書き換える (リグレッション検知力を保つため `kind` まで検査する):
+    ```rust
+    use tokio_http2::Error;
+    use shiguredo_http2::webtransport::WtErrorKind;
+    // ...
+    match err {
+        Error::WebTransport(e) => assert_eq!(e.kind(), WtErrorKind::InvalidInput),
+        _ => panic!("expected Error::WebTransport(InvalidInput), got {err:?}"),
+    }
+    ```
+    `_` ワイルドカードだけだと「`WebTransport` 由来である」ことしか保証されず、`Incomplete` 等に変質してもテストが素通りするため、`kind` まで検査する。`e.kind()` は 0070 マージ後の getter 経由でアクセスする (0070 が先行マージ前提)
+12. `CHANGES.md` の `## develop` セクション内の `[CHANGE]` 群の末尾 (= `[FIX]` セクションの直前) に以下のエントリと担当者行を追加する。担当者行はスペース 2 個 + `-` でネスト。`shiguredo-issues` 規約により issue 番号は含めない:
 
     ```markdown
     - [CHANGE] `tokio_http2::Error` に `WebTransport(WtError)` バリアントを追加し、`WtError` の構造化情報を保持できるようにする
@@ -135,15 +145,11 @@ WebTransport(shiguredo_http2::webtransport::WtError),
 - **0070 (`change-privatize-error-wt-error-fields`)**: `WtError` のフィールド private 化。0070 マージ後に本 issue をマージするのが安全
 - **0072 (`refactor-remove-unused-code`)**: 0072 で `WtErrorKind::SessionClosed` が削除されるため、本 issue の単体テストでは削除されない `WtErrorKind::Incomplete` を使用する。0072 マージ後に本 issue をマージしてもコンパイルエラーにならない
 
-## 解決方法
-
-issue 0068 および 0070 マージ後、`crates/tokio-http2/src/error.rs` / `crates/tokio-http2/src/webtransport.rs` / `crates/tokio-http2/src/lib.rs` / `crates/tokio-http2/tests/test_webtransport.rs` を上記対応手順に従って修正する。
-
 ## 参照
 
-- `issues/0068-bug-fix-wt-error-display-info-leak.md` — 先行 issue (WtError::Display 情報漏洩修正)。本 issue のスコープ外として分離された経緯が書かれている
-- `issues/0070-change-privatize-error-wt-error-fields.md` — `WtError` のフィールド private 化。0070 マージ後に本 issue をマージするのが安全
-- `shiguredo-issues` スキル — issue 番号を含めてはいけない場所 (CHANGES.md) の規約
+- `issues/0068-bug-fix-wt-error-display-info-leak.md` — 先行 issue (本 issue のスコープ外として分離された経緯)
+- `issues/0070-change-privatize-error-wt-error-fields.md` — `WtError` フィールド private 化 (本 issue の getter 経由テスト書き換えの前提)
+- `shiguredo-issues` スキル — CHANGES.md に issue 番号を含めない規約
 - `shiguredo-changelog` スキル — `[CHANGE]` エントリの扱い
 - `shiguredo-rust` スキル — Rust コーディング規約
 - `crates/tokio-http2/src/error.rs` — `Error` enum 定義 (バリアント追加先)

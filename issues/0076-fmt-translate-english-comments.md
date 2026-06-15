@@ -1,10 +1,12 @@
-# 英語コメントを日本語に翻訳する (明示列挙箇所のみ)
+# 英語コメントとテスト用 `println!` ログを日本語に翻訳する (明示列挙箇所のみ)
 
 - Priority: Low
 - Created: 2026-06-11
-- Polished: 2026-06-14
+- Polished: 2026-06-16
 - Model: deepseek-v4-pro
-- Branch: feature/refactor-translate-english-comments
+- Branch: feature/fmt-translate-english-comments
+
+注: ファイル名は `0076-fmt-translate-english-comments.md`。本 issue の実体は表記整理 (機能挙動への影響なし) のため `fmt` カテゴリが妥当 (`shiguredo-git` に `feature/fmt-` の正式定義はないが、ファイル名カテゴリとブランチ名を揃える)。旧ブランチ名 `feature/refactor-translate-english-comments` から `feature/fmt-translate-english-comments` に変更した。
 
 ## 目的
 
@@ -46,10 +48,10 @@ CLAUDE.md 規約:
 - `tests/test_hpack/decoder.rs:66`: `// Size update to 1024 = 0x3f (5-bit prefix) + continuation`
 - `tests/test_hpack/decoder.rs:67`: `// 0x20 | (31 & 0x1f) = 0x3f, then 1024 - 31 = 993 = 0xe1 0x07`
 
-### テスト用 `println!` ログ
+### テスト用 `println!` ログ (`crates/shiguredo_nghttp2/src/lib.rs` の `#[cfg(test)] mod tests` 内)
 
-- `crates/shiguredo_nghttp2/src/lib.rs:48`: `println!("nghttp2 version: {}", version);`
-- `crates/shiguredo_nghttp2/src/lib.rs:142`: `println!("Output length: {} bytes", output.len());`
+- `crates/shiguredo_nghttp2/src/lib.rs:48` (`test_nghttp2_version` テスト内): `println!("nghttp2 version: {}", version);`
+- `crates/shiguredo_nghttp2/src/lib.rs:142` (`test_session_send` テスト内): `println!("Output length: {} bytes", output.len());`
 - `crates/shiguredo_nghttp2/src/lib.rs:146`: `println!("First 24 bytes: {:?}", &output[..24.min(output.len())]);`
 - `crates/shiguredo_nghttp2/src/lib.rs:147`: `println!("Expected preface: {:?}", preface);`
 - `crates/shiguredo_nghttp2/src/lib.rs:149`: `println!("nghttp2 includes connection preface automatically");`
@@ -59,10 +61,12 @@ CLAUDE.md 規約:
 
 ### 翻訳ルール
 
-- RFC・仕様の固有名詞・略号 (`DATA`, `END_STREAM`, `HPACK`, `Bare Item`, `Inner List`, `Actor` 等) は英語のまま維持する
+- RFC・仕様の固有名詞・略号 (`DATA`, `END_STREAM`, `HPACK`, `Bare Item`, `Inner List` 等) は英語のまま維持する
+- 実装上広く使われる英語表現 (`Actor`, `channel` のうち固有名詞性が強いもの) も英語維持または部分翻訳する (例: `Actor channels` → `Actor チャネル` のように、実装パターン名は英語維持、附帯する一般名詞は日本語化)
 - 16 進数値・パターン表現 (`0x10`, `pattern 00010000`, `(5-bit prefix)` 等) は英語のまま維持する
 - 上記以外の説明文 (動詞句・名詞句・解説) は日本語に翻訳する
 - テスト用 `println!` の出力先 (人間の開発者) も日本語で読めるようにする
+- CLAUDE.md 規約「全角と半角の間には半角スペースを入れること」に従う。`{} バイト` のように半角識別子と全角文字の境界には半角スペースを入れる
 
 ### 翻訳例
 
@@ -93,7 +97,8 @@ CLAUDE.md 規約:
 - `tracing::info!` / `tracing::warn!` / `tracing::error!` 等のランタイムログ: CLAUDE.md 規約「ログメッセージは全て英語にすること」に従い、英語のまま維持 (本 issue の対象外)
 - `examples/` 配下の英語コメント (現状確認: `grep -rn "// [A-Z][a-z]" examples/` では日本語コメント中の固有名詞もヒットするが、英語のみの `//` コメントは存在しない)
 - `src/webtransport/init.rs:60` の `// Parse a Key` のような、対象箇所と同じルールで翻訳できそうな同関数内の英語コメント (別 issue 0080 で対応)
-- `src/hpack/encoder.rs:264` の `// 0x41 = 01000001 (incremental indexing, index 1)` のような、対象箇所と同じルールで翻訳できそうなテストブロック内の英語コメント (別 issue 0080 で対応)
+- `tests/test_hpack/decoder.rs:79,80,97,105,106` の HPACK 用語コメント (上の RFC セクション名コメントと同じ判断軸に乗せて 0080 で扱う)
+- `src/hpack/encoder.rs:264` の `// 0x41 = 01000001 (incremental indexing, index 1)` のような、本 issue 対象テスト関数の周辺にあるが本 issue では翻訳しないテストブロック内の英語コメント (別 issue 0080 で対応)。**注**: 0076 と 0080 のスコープ分割は実装者に混乱を招くため、本 issue マージ前に「本 issue で同じテスト関数内の全英語コメントを翻訳しきる方針に統合」する選択肢があり、ユーザー判断とする
 - `crates/nghttp2-sys/build.rs` 等の build script 内コメント
 
 ## 他 issue との関係
@@ -105,7 +110,7 @@ CLAUDE.md 規約:
 
 ## CHANGES.md の扱い
 
-本変更は機能に影響しないコメント・テストログの言語整理のため、`shiguredo-changelog` 規約「機能に直接影響しない変更 (ドキュメント追加、リファクタリング等) は `### misc` サブセクションに記載すること」に従い、`CHANGES.md` の `## develop` セクション内の `### misc` サブセクションの末尾に `[UPDATE]` エントリ 1 件を追加する。`### misc` サブセクションが存在しない場合は新規作成する。
+本変更は機能に影響しないコメント・テストログの言語整理のため、`shiguredo-changelog` 規約「機能に直接影響しない変更 (ドキュメント追加、リファクタリング等) は `### misc` サブセクションに記載すること」に従い、`CHANGES.md` の `## develop` セクション内の `### misc` サブセクション内、既存 `[UPDATE]` ブロックの末尾に `[UPDATE]` エントリ 1 件を追加する (`### misc` 内のエントリは種別順 CHANGE→ADD→UPDATE→FIX を保つ)。`### misc` サブセクションは本 issue 着手時点で既に存在しているため新規作成不要。`shiguredo-issues` 規約に従い CHANGES.md エントリには issue 番号を含めない。
 
 ## 変更対象ファイル一覧
 
@@ -120,13 +125,11 @@ CLAUDE.md 規約:
 
 ## 対応手順
 
-1. 作業ブランチ `feature/refactor-translate-english-comments` を作成する
+1. 作業ブランチ `feature/fmt-translate-english-comments` を作成する
 2. 「設計方針」の翻訳例テーブルに従い、「現状の問題」セクションの 15 箇所 (`//` コメント 9 箇所 + `println!` 6 箇所) をすべて日本語に置換する
-3. `CHANGES.md` の `## develop` セクションに `### misc` サブセクションがあればその末尾に、なければ新規作成して以下のエントリと担当者行を追加する:
+3. `CHANGES.md` の `## develop` の `### misc` サブセクション内、既存 `[UPDATE]` ブロック末尾 (種別順 CHANGE→ADD→UPDATE→FIX を保つ位置) に以下のエントリと担当者行を追加する。issue 番号は含めない:
 
    ```markdown
-   ### misc
-
    - [UPDATE] 英語コメント・テスト用 `println!` ログを日本語に翻訳し、CLAUDE.md 規約 (コメント・テストログは日本語) に準拠させる
      - @voluntas
    ```

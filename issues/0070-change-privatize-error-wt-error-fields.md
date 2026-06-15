@@ -2,9 +2,9 @@
 
 - Priority: High
 - Created: 2026-06-11
-- Polished: 2026-06-14
+- Polished: 2026-06-15
 - Model: deepseek-v4-pro
-- Branch: feature/change-error-field-privatization
+- Branch: feature/change-error-and-wt-error-field-privatization
 
 ## 目的
 
@@ -62,7 +62,7 @@ private 化により次の不変条件を保証する:
 `Limits` / `Settings` の getter パターンに揃える:
 
 - `ErrorKind` / `WtErrorKind` は `#[derive(Copy)]` 済みなので値返し
-- `reason()` も `pub const fn reason(&self) -> &str { self.reason.as_str() }` で実装する (`String::as_str` は Rust 1.84.0 で const stable 化済み。本リポジトリの MSRV を上回るため利用可能)
+- `reason()` も `pub const fn reason(&self) -> &str { self.reason.as_str() }` で実装する (`String::as_str` は Rust 1.84.0 で const stable 化済み。本リポジトリの MSRV は `Cargo.toml` の `rust-version = "1.88"` なので利用可能)
 - 全 getter に `#[must_use]` を付与する (`Limits` / `Settings` の getter と整合)
 - `location()` は `&'static Location<'static>` を返す (`Location<'static>` は `Copy` だが慣例的に参照を返す)
 - `backtrace()` は `&Backtrace` を返す (`Backtrace` は非 `Copy`)
@@ -70,7 +70,7 @@ private 化により次の不変条件を保証する:
 
 ### setter は提供しない
 
-`Limits` / `Settings` と同じく setter は設けない。ミューテーション経路は既存のコンストラクタ (`Error::new` / `Error::with_reason` / `Error::connection_error` / `Error::stream_error` / `Error::hpack_error` / `Error::protocol_error` / `Error::frame_size_error` / `From<DecodeError>` および対応する `WtError::*`) のみに限定する。
+`Limits` / `Settings` と同じく setter は設けない。ミューテーション経路は既存のコンストラクタ (`Error::new` / `Error::with_reason` / `Error::connection_error` / `Error::stream_error` / `Error::hpack_error` / `Error::protocol_error` / `Error::frame_size_error` / `From<DecodeError>` および対応する `WtError::*`) のみに限定する。`WtError::*` のうち `incomplete()` / `buffer_too_short()` / `session_closed()` の 3 ヘルパーは 0072 で削除予定だが、本 issue では削除対象外。
 
 ### impl ブロック内のフィールド直接アクセスは維持
 
@@ -82,7 +82,7 @@ private 化により次の不変条件を保証する:
 
 ## 構造体フィールドの doc コメント
 
-現行の構造体定義にある各フィールドの doc コメント (`/// 発生したエラーの種類` 等) は private 化後もそのまま残す。`Settings` 先行事例 (`src/settings.rs`) でもフィールド側 doc コメントが維持されており、getter 側にも別途 doc コメントを書く方針。両側に同じ内容のコメントを書くのではなく、フィールド側は「内部実装の説明」、getter 側は「公開 API の説明」として書き分ける。
+現行の構造体定義にある各フィールドの doc コメント (`/// 発生したエラーの種類` 等) は private 化後もそのまま残す。`Settings` 先行事例 (`src/settings.rs`) でもフィールド側 doc コメントが維持されており、getter 側にも別途 doc コメントを書く方針。両側に同じ内容のコメントを書くのではなく、フィールド側は「内部実装の説明」、getter 側は「公開 API の説明」として書き分ける。具体例: `kind` フィールド側は「発生したエラーの種類 (コンストラクタが指定)」、getter 側 `kind()` は「エラー種別」のように、フィールド側で内部生成元を、getter 側で公開 API 説明を述べる。
 
 ## 1 issue / 1 branch にまとめる根拠
 
@@ -97,22 +97,9 @@ private 化により次の不変条件を保証する:
 
 ## 他 issue との関係
 
-### 0068 との順序関係
-
-issue 0068 (`bug-fix-wt-error-display-info-leak`) で `WtError::Display` / `Debug` を独立実装に修正する作業が impl ブロック内のフィールド直接アクセス (`self.kind` / `self.reason` / `self.location` / `self.backtrace`) を利用する。本 issue 0070 は **0068 マージ後にマージされる前提**。同一モジュール内の impl はフィールド可視性に関係なく直接アクセス可能なので技術的競合はないが、コンフリクトを避けるため順序を守る。
-
-### 0072 との順序関係
-
-issue 0072 (`refactor-remove-unused-code`) で削除予定の API:
-
-- `WtError::incomplete()` / `WtError::buffer_too_short()` / `WtError::session_closed()`
-- `WtErrorKind::SessionClosed`
-
-本 issue 0070 の getter 追加・テスト書き換えでこれらの削除対象 API は使用しない。テストで `WtError` を構築する際は `WtError::invalid_input(...)` / `WtError::new(WtErrorKind::Incomplete)` 等を用いる。0070 → 0072 / 0072 → 0070 のどちらの順序でマージしても衝突しないようにする。
-
-### 0071 との独立性
-
-0071 (`refactor-remove-send-error`) は `shiguredo_http2::SendError` 型を扱う別作業で、`Error` / `WtError` フィールド private 化とは独立。順序依存なし。
+- **issue 0068** (`bug-fix-wt-error-display-info-leak`): 本 issue 0070 は 0068 マージ後にマージされる前提。技術的競合はない (同一モジュール impl はフィールド可視性に関係なくアクセス可) が、同一行への変更でマージ衝突が発生するため順序を守る
+- **issue 0072** (`refactor-remove-unused-code`): 0072 で削除予定の API (`WtError::incomplete()` / `buffer_too_short()` / `session_closed()`、`WtErrorKind::SessionClosed`) は本 issue の getter 追加・テスト書き換えで使用しない。テストでは `WtError::invalid_input(...)` / `WtError::new(WtErrorKind::Incomplete)` 等を用いる。0070 → 0072 / 0072 → 0070 どちらの順序でも衝突なし
+- **issue 0071** (`refactor-remove-send-error`) / **issue 0077** (`change-tokio-http2-error-add-webtransport-variant`): いずれも `Error` / `WtError` フィールド private 化とは独立。順序依存なし
 
 ## 変更対象ファイル一覧
 
@@ -123,22 +110,22 @@ issue 0072 (`refactor-remove-unused-code`) で削除予定の API:
 
 ### 外部からのフィールド直接アクセスを getter 経由に置換
 
-`Error` / `WtError` の `pub` フィールドへの直接アクセスを grep で網羅した結果、以下の 15 箇所を確認した。これらを getter 呼び出しに置き換える:
+`Error` / `WtError` の `pub` フィールドへの直接アクセスを grep で網羅した結果、以下の 17 箇所を確認した。これらを getter 呼び出しに置き換える:
 
 - `tests/test_error.rs:36,37,46` — `err.reason.contains(...)` → `err.reason().contains(...)` (3 箇所)
 - `tests/test_webtransport/root.rs:85,136` — `err.kind` → `err.kind()` (Copy 値比較、2 箇所)
 - `tests/test_webtransport/integration.rs:40,91,108,114,133,382,404` — `err.kind` → `err.kind()` (7 箇所)
 - `tests/test_webtransport/integration.rs:407` — `err.reason.contains(...)` → `err.reason().contains(...)` (1 箇所)
 - `src/webtransport/capsule.rs:333,344` — `e.kind == WtErrorKind::Incomplete` → `e.kind() == WtErrorKind::Incomplete` (別モジュールなので private 化後はアクセス不可、getter 経由が必要、2 箇所)
+- `src/connection/headers.rs:287,615` — `format!("HPACK decode error: {}", e.reason)` → `format!("HPACK decode error: {}", e.reason())` (2 箇所、`e` は `hpack_decoder.decode()` が返す `crate::error::Result<_>` の `Err` 中身 = `crate::error::Error` 型、`src/hpack/decoder.rs:3` で `use crate::error::{Error, Result};` を確認済み)
 
 ### 除外対象 (本 issue と無関係)
 
-- `src/connection/headers.rs:287,615` の `e.reason` は HPACK の `HpackError` のフィールドで本 issue とは別型。スコープ外
 - `crates/tokio-http2/src/webtransport.rs` の `Capsule::WtCloseSession { reason }` は draft-ietf-webtrans-http2-14 capsule の reason フィールドで別物。スコープ外
 - `crates/tokio-http2/src/webtransport.rs:1053-1055` の `wt_err` 関数は `format!("webtransport: {e}")` で `WtError::Display` を呼ぶのみ。Display 経由のため private 化の影響なし
 - `pbt/tests/prop_error.rs` の `error_kind_strategy` 等は `ErrorKind` enum を生成する関数で、`Error` 構造体のフィールドアクセスではない
-- `fuzz/fuzz_targets/` には `Error` / `WtError` のフィールド直接アクセスは存在しない (grep 確認済み)
-- `examples/` 配下にも `Error` / `WtError` のフィールド直接アクセスは存在しない
+- `fuzz/fuzz_targets/` / `examples/` 配下に `Error` / `WtError` のフィールド直接アクセスは存在しない (grep 確認済み)
+- `From<DecodeError> for Error` (`src/error.rs`) は内部で `Error::connection_error` を呼ぶのみで、フィールド直接アクセスはない
 
 ## テスト方針
 
@@ -147,7 +134,7 @@ issue 0072 (`refactor-remove-unused-code`) で削除予定の API:
 
 ## 対応手順
 
-1. 作業ブランチ `feature/change-error-field-privatization` を作成する
+1. 作業ブランチ `feature/change-error-and-wt-error-field-privatization` を作成する
 2. `src/error.rs` の `Error` 構造体定義から全フィールドの `pub` を削除し、以下 4 個の getter を追加する:
 
    ```rust
@@ -208,8 +195,8 @@ issue 0072 (`refactor-remove-unused-code`) で削除予定の API:
    }
    ```
 
-4. 「変更対象ファイル一覧」セクションの「外部からのフィールド直接アクセスを getter 経由に置換」で挙げた 15 箇所を順次 getter 呼び出しに書き換える。テスト本体の assert 意図は変更しない
-5. `CHANGES.md` の `## develop` セクション内の既存 `[CHANGE]` 群の末尾に以下 2 件のエントリを追加する。担当者行は親アイテム本文先頭 (`[` カラム) と同じ位置にネストする:
+4. 「変更対象ファイル一覧」セクションの「外部からのフィールド直接アクセスを getter 経由に置換」で挙げた 17 箇所を順次 getter 呼び出しに書き換える。テスト本体の assert 意図は変更しない
+5. `CHANGES.md` の `## develop` セクション内の `[CHANGE]` 群の末尾 (= `[FIX]` セクションの直前) に以下 2 件のエントリを追加する。担当者行は親アイテム本文先頭 (`[` カラム) と同じ位置 (スペース 2 個 + `-` + スペース + `@<name>`) にネストする:
 
    ```markdown
    - [CHANGE] `Error` のフィールドを private 化し、getter `kind()` / `reason()` / `location()` / `backtrace()` を追加する
@@ -229,7 +216,7 @@ issue 0072 (`refactor-remove-unused-code`) で削除予定の API:
 - 全 getter に `#[must_use]` が付与され、`pub const fn` で実装されている
 - `Error` / `WtError` への setter は提供されていない (ミューテーション経路は既存コンストラクタのみ)
 - `impl std::error::Error for Error` / `impl std::error::Error for WtError` は空 impl のまま (source override 追加なし)
-- 既存のフィールド直接アクセス 15 箇所 (`tests/test_error.rs` / `tests/test_webtransport/*` / `src/webtransport/capsule.rs`) が getter 呼び出しに置き換えられている
+- 既存のフィールド直接アクセス 17 箇所 (`tests/test_error.rs` / `tests/test_webtransport/*` / `src/webtransport/capsule.rs` / `src/connection/headers.rs`) が getter 呼び出しに置き換えられている
 - `CHANGES.md` の `## develop` に 2 件の `[CHANGE]` エントリ (`Error` 用と `WtError` 用) と担当者行が追加されている
 - `cargo fmt --all -- --check` が通過する
 - `cargo test --workspace` が通過する

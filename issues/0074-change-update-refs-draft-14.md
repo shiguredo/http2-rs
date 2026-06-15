@@ -2,9 +2,11 @@
 
 - Priority: Medium
 - Created: 2026-06-11
-- Polished: 2026-06-14
+- Polished: 2026-06-16
 - Model: deepseek-v4-pro
 - Branch: feature/change-update-refs-draft-14
+
+注: 本 issue の実体はテキスト機械置換と refs/ 差し替えであり、意味的な動作変更はない。本来は `feature/update-` プレフィックスが実態に近いが、shiguredo-issues の慣行 (`change-` がリソース更新を含む) に従い `change-` を維持する。`update-refs` スキルは本 issue の前提として使用するが、SKILL.md / ソースコメント / 他 open issue の機械置換は `update-refs` の責務範囲外であり、本 issue がカバーする拡張作業。本 issue は `update-refs` スキル経由でユーザー承認を要求するため auto-resolve 対象外として運用する。
 
 ## 目的
 
@@ -43,11 +45,22 @@
 
 ## 設計方針
 
-- `update-refs` スキルを実行し、IETF Datatracker から **最新版** の `draft-ietf-webtrans-http2` を取得する
-- 取得した最新版のバージョンを確定する。最新版が draft-15 以降であれば、refs/ の draft-14 ファイルを最新版に差し替える
-- 最新版が draft-14 のままであれば、refs/ とソースコメントは既に最新版と一致しているため差し替えない。この場合の不一致は `skills/shiguredo-http2/SKILL.md` 側の draft-15 記述が誤っている問題として扱い、ユーザーに報告して方針を決める
-- draft-15 以降へ更新する場合のみ、ソースコメント・テスト・examples・README の draft 番号テキスト (`draft-ietf-webtrans-http2-14`) を取得した最新版番号に **機械的に置換**する。意味的な仕様追従は本 issue では行わない
-- draft-14 と最新版の diff を取得し、本 issue 完了時のレポートとして残す。diff 内容に基づいて後続の `[CHANGE]` issue を起票する判断は本 issue のスコープ外で、ユーザー / 別 polish 工程で行う
+### 3 つの分岐ケース
+
+`update-refs` スキルを実行し、IETF Datatracker (`https://datatracker.ietf.org/api/v1/doc/document/?name=draft-ietf-webtrans-http2&format=json`) の `rev` フィールドから最新版バージョンを取得する。取得した最新版に応じて 3 ケースに分岐する:
+
+| ケース | 最新版 | refs/ 差し替え | ソースコメント / 他 open issue 置換 | SKILL.md 修正 |
+|--------|--------|---------------|----------------------------------|---------------|
+| A | draft-14 のまま | しない | しない | `draft-ietf-webtrans-http2-15` → `-14` に機械置換 (SKILL.md 側の記述ミスを是正) |
+| B | draft-15 | 差し替え (draft-14 → draft-15) | `-14` → `-15` に機械置換 | 既に `-15` と一致のため不要 |
+| C | draft-16 以降 | 差し替え (draft-14 → 最新版) | `-14` → 最新版番号に機械置換 | `-15` → 最新版番号に機械置換 |
+
+### 共通方針
+
+- 意味的な仕様追従は本 issue では行わない (Capsule Type 値の wire 変更、SETTINGS Identifier 変更、新規 MUST/SHOULD 要件への対応コード追加等)
+- ケース B / C で refs/ を差し替えた場合、draft-14 と最新版の diff を取得して PR description に記載する。GitHub PR description の 65536 文字上限を超える場合は、(a) gist として添付 + URL を PR description に記載、(b) 別 commit として `docs/draft-diff.txt` を追加、のいずれかを採用する
+- 後続起票候補リスト (Capsule Type 値変更、SETTINGS Identifier 変更、エラーコード値変更等) は PR description に記載し、本 issue マージ後に `create-issue` スキルで各起票候補を個別 issue として作成する。PR description の記載だけだと将来 PR 履歴から失われやすいため、`docs/draft-update-followups.md` を追加する選択肢も検討する
+- Postel の法則に従い、機械置換は完了条件で `cargo build` / `cargo test` / `cargo clippy` の全通過を保証してから完了とする
 - ソースコメント内の行番号付き引用 (`draft-ietf-webtrans-http2-14 Section X.Y L###-L###` 等) は、refs/ 差し替え後に行番号が変わる可能性がある。機械置換後に該当箇所の行番号が最新版 refs と一致しているか目視で確認する
 
 ## スコープ外
@@ -125,50 +138,59 @@ grep -rln "draft-ietf-webtrans-http2-14" \
 - `refs/draft-ietf-webtrans-http2-XX.txt` 本文 (ファイル自体を差し替え)
 - `issues/0074-*.md` (本 issue 自体に含まれる draft-14 言及は履歴説明のため保全)
 - `issues/0065-*.md` / `issues/0066-*.md` / `issues/0070-*.md` 等の他 open issue (行番号付き引用 `draft-ietf-webtrans-http2-14 Section X.Y L###-L###` が draft 差し替え後に間違った行範囲を指す可能性があるため、本 issue では機械置換しない。draft-15 での該当節の行番号確認と引用更新は、それぞれの open issue が着手される際に個別対応する)
-- ただし `issues/0073-change-rfc9297-non-minimal-varint.md` は例外とし、`参照` セクションの `refs/draft-ietf-webtrans-http2-14.txt` ファイル名部分を最新版番号に機械置換する。行番号部分 (L211-L217 等) は最新版 refs で再確認して一致させる
-- 推奨 grep コマンド: `grep -rln "draft-ietf-webtrans-http2-14" --exclude-dir=closed --exclude-dir=refs --exclude-dir=target --exclude-dir=.git --exclude="CHANGES.md" --exclude="0074-*" issues/ src/ crates/ tests/ pbt/ examples/` で対象ファイルを特定し、`issues/0065-*.md` / `issues/0066-*.md` / `issues/0070-*.md` 等の他 open issue は手動で除外する (`issues/0073-*.md` は上記例外として置換対象に含める)
+- ただし `issues/0073-change-rfc9297-non-minimal-varint.md` は例外とし、`参照` セクション (本 issue 確認時点で L18 / L93 / L163 該当) の `refs/draft-ietf-webtrans-http2-14.txt` ファイル名部分を最新版番号に機械置換する。`参照` セクション内に存在する本 issue 名・ブランチ名への言及 (例: `change-update-refs-draft-14`) は置換しない (本 issue 自体の識別子のため)。行番号部分 (L211-L217 等) は最新版 refs で再確認して一致させる (この行番号調整は機械置換ではなく半手動の意味的調整)
 
 ## 対応手順
 
 1. 作業ブランチ `feature/change-update-refs-draft-14` を作成する
-2. `update-refs` スキルを実行し、IETF Datatracker から `draft-ietf-webtrans-http2` の最新版バージョンを確認する
-   - 最新版が `draft-ietf-webtrans-http2-14` のままであれば、refs/ とソースコメントは更新せず、`skills/shiguredo-http2/SKILL.md` の `draft-ietf-webtrans-http2-15` 表記を `draft-ietf-webtrans-http2-14` に機械的に置換する
-   - 最新版が draft-15 以降であれば、refs/ の draft-14 ファイルを最新版に差し替え、ソースコメント・テスト・examples・README・SKILL.md の `draft-ietf-webtrans-http2-14` を最新版番号に機械的に置換する
-3. **`update-refs` スキルはダウンロード / ファイル操作の前にユーザー承認を要求する**。承認ゲートで一時停止するため、auto-resolve 経由で本 issue を実行する場合はここでユーザー判断を仰ぐ。承認後に `refs/draft-ietf-webtrans-http2-14.txt` を最新版 (`refs/draft-ietf-webtrans-http2-XX.txt`) に差し替える
-4. 旧ファイルを削除する前に作業ディレクトリに一時コピーを取り、`diff -u <一時コピー> refs/draft-ietf-webtrans-http2-XX.txt` で diff を取得する。取得した diff は本 issue の PR description に貼る (後続 issue 起票判断のため)
-5. 「変更対象ファイル一覧」セクションの grep で網羅的に対象ファイルを特定する
-6. 上記対象ファイルすべての `draft-ietf-webtrans-http2-14` を最新版番号 (`draft-ietf-webtrans-http2-XX`) に **テキストとして** 置換する。`issues/0073-change-rfc9297-non-minimal-varint.md` については `refs/draft-ietf-webtrans-http2-14.txt` ファイル名部分のみを最新版ファイル名に置換し、該当行番号が最新版 refs と一致するか再確認する。意味的な仕様追従は行わない (Capsule Type 値の数値変更、SETTINGS Identifier 変更、新規 MUST 要件への対応コード追加等はすべて本 issue スコープ外)
-7. `skills/shiguredo-http2/SKILL.md` の draft 番号表記の扱い:
-   - 取得した最新版が draft-15 だった場合: SKILL.md は既に最新版と一致しているため修正不要 (本 issue の不一致解消は refs/ とソースコメント側を draft-15 に揃えることで達成される)
-   - 取得した最新版が draft-15 でない場合 (例: draft-16): SKILL.md 内の `draft-ietf-webtrans-http2-15` テキストを最新版番号に機械的に置換する。行番号は SKILL.md の改訳で変わる可能性があるため、テキストパターンで置換し、置換後に `grep` で未置換箇所が残っていないか確認する
-8. `CHANGES.md` の `## develop` セクション内の `[UPDATE]` 群末尾に以下のエントリを追加する。担当者行は親アイテム本文先頭 (`[` カラム) と同じ位置にネストする:
+2. `update-refs` スキルを実行し、IETF Datatracker `rev` フィールドから `draft-ietf-webtrans-http2` の最新版バージョンを確認する。**`update-refs` はダウンロード / ファイル操作の前にユーザー承認を要求する**ため、承認ゲートで一時停止する (auto-resolve 経由では実行しない)
+3. 設計方針セクションの分岐表に従って分岐 (A/B/C):
+   - **ケース A (最新版が draft-14)**: refs/ とソースコメントは更新せず、`skills/shiguredo-http2/SKILL.md` の `draft-ietf-webtrans-http2-15` を `draft-ietf-webtrans-http2-14` に機械置換する (SKILL.md 側の記述ミスを是正)。手順 4-6 はスキップして手順 7 へ
+   - **ケース B (最新版が draft-15)** / **ケース C (draft-16 以降)**: 手順 4 へ進む
+4. 旧 `refs/draft-ietf-webtrans-http2-14.txt` の一時コピーを取得した後、`update-refs` で最新版に差し替える。`diff -u <一時コピー> refs/draft-ietf-webtrans-http2-XX.txt` で diff を取得する
+5. 「変更対象ファイル一覧」セクションの grep で網羅的に対象ファイルを特定する (grep コマンドは「現状の問題」セクションに掲載済み)
+6. 上記対象ファイルすべての `draft-ietf-webtrans-http2-14` を最新版番号 (`draft-ietf-webtrans-http2-XX`) に **テキストとして** 置換する。`issues/0073-change-rfc9297-non-minimal-varint.md` の例外扱い (ファイル名部分のみ置換、行番号再確認) は「置換しないファイル」セクションを参照
+7. ケース C のみ: SKILL.md 内の `draft-ietf-webtrans-http2-15` テキストを最新版番号に機械置換する。置換後に `grep -n "draft-ietf-webtrans-http2-15" skills/shiguredo-http2/SKILL.md` で未置換箇所が残っていないか確認する (ケース B では既に `-15` と一致のため修正不要)
+8. `CHANGES.md` の `## develop` セクション内の `### misc` 配下にある `[UPDATE]` 群末尾に以下のエントリを追加する。担当者行は親アイテム本文先頭 (`[` カラム) と同じ位置にネストする (`[UPDATE]` は機能に直接影響しない参照資料更新であるため `### misc` 配下が適切):
 
    ```markdown
    - [UPDATE] WebTransport over HTTP/2 の参照 draft を draft-14 から最新版 (draft-XX) に更新し、ソースコメントの draft 番号表記を一斉に書き換える
      - @voluntas
    ```
 
-9. PR description に「draft-14 → draft-XX の diff」と「後続起票候補リスト (Capsule Type 値の wire 変更があれば別 issue、SETTINGS Identifier 変更があれば別 issue 等)」を記載する
+9. PR description に以下を記載 (ケース B / C のみ):
+   - 「draft-14 → 最新版の diff」(65536 文字を超える場合は gist 添付 + URL または `docs/draft-diff.txt` として別 commit)
+   - 「後続起票候補リスト」(Capsule Type 値の wire 変更、SETTINGS Identifier 変更、エラーコード値変更、新規 MUST 要件等)。本 issue マージ後に `create-issue` スキルで個別 issue として作成する
 10. `cargo fmt --all -- --check` で整形違反がないことを確認する
-11. `cargo build --workspace` でビルドが成功することを確認する (テキスト置換のみのためビルドエラーが起きない想定)
-12. `cargo test --workspace` で全テスト通過を確認する
-13. `cargo clippy --workspace --all-targets -- -D warnings` で警告がないことを確認する
-14. `cargo check --manifest-path fuzz/Cargo.toml` で fuzz ターゲットがビルドできることを確認する
+11. `cargo test --workspace` で全テスト通過を確認する (test は内部でビルドも兼ねるため `cargo build` は省略可。意味的な変更はないため通常はビルドエラーは起きないが、念のため検証する)
+12. `cargo clippy --workspace --all-targets -- -D warnings` で警告がないことを確認する
+13. `cargo check --manifest-path fuzz/Cargo.toml` で fuzz ターゲットがビルドできることを確認する
 
 ## 完了条件
 
-- `refs/draft-ietf-webtrans-http2-14.txt` が削除され、最新版 `refs/draft-ietf-webtrans-http2-XX.txt` が配置されている
-- スキルファイル `skills/shiguredo-http2/SKILL.md` の draft 番号表記が最新版と一致している
-- ソースコード・テスト・examples・README・SKILL.md 等 (「変更対象ファイル一覧」の grep で特定されたすべて) で `draft-ietf-webtrans-http2-14` が最新版番号に置換されている
-- `CHANGES.md` の過去履歴 / `issues/closed/` の過去 issue / refs/ 内のファイル本文は置換されていない
-- `issues/0073-change-rfc9297-non-minimal-varint.md` の `参照` セクションにある `refs/draft-ietf-webtrans-http2-14.txt` ファイル名部分が最新版番号に置換され、行番号が最新版 refs と一致している
-- `CHANGES.md` の `## develop` に `[UPDATE]` エントリと担当者行が追加されている
-- PR description に draft-14 → 最新版の diff と後続起票候補リストが記載されている
+設計方針セクションの分岐表に従いケース A/B/C で完了条件が異なる。共通条件と分岐別条件を分けて記載する。
+
+### 共通完了条件
+
+- `CHANGES.md` の `## develop` の `### misc` 配下に `[UPDATE]` エントリと担当者行が追加されている
 - `cargo fmt --all -- --check` が通過する
-- `cargo build --workspace` が成功する
 - `cargo test --workspace` が成功する
 - `cargo clippy --workspace --all-targets -- -D warnings` が通過する
 - `cargo check --manifest-path fuzz/Cargo.toml` が通過する
+- `CHANGES.md` の過去履歴 / `issues/closed/` の過去 issue / refs/ 内のファイル本文 / `issues/0074-*.md` (本 issue 自体) は置換されていない
+
+### ケース A 専用 (最新版が draft-14)
+
+- refs/ とソースコメントは差し替え / 置換していない (draft-14 のまま)
+- `skills/shiguredo-http2/SKILL.md` 内の `draft-ietf-webtrans-http2-15` がすべて `draft-ietf-webtrans-http2-14` に置換されている (`grep -n "draft-ietf-webtrans-http2-15" skills/shiguredo-http2/SKILL.md` で残ヒット 0)
+
+### ケース B / C 専用 (最新版が draft-15 以降)
+
+- `refs/draft-ietf-webtrans-http2-14.txt` が削除され、最新版 `refs/draft-ietf-webtrans-http2-XX.txt` が配置されている
+- ソースコード・テスト・examples・README 等 (「変更対象ファイル一覧」の grep で特定されたすべて) で `draft-ietf-webtrans-http2-14` が最新版番号に置換されている
+- `issues/0073-change-rfc9297-non-minimal-varint.md` の `参照` セクションにある `refs/draft-ietf-webtrans-http2-14.txt` ファイル名部分が最新版番号に置換され、行番号が最新版 refs と一致している
+- PR description に draft-14 → 最新版の diff (または gist URL / `docs/draft-diff.txt` への参照) と後続起票候補リストが記載されている
+- ケース C のみ: `skills/shiguredo-http2/SKILL.md` 内の `draft-ietf-webtrans-http2-15` がすべて最新版番号に置換されている (ケース B では SKILL.md は既に `-15` と一致のため修正不要)
 
 ## 参照
 

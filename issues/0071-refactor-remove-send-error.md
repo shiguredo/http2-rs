@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-11
-- Polished: 2026-06-14
+- Polished: 2026-06-15
 - Model: deepseek-v4-pro
 - Branch: feature/refactor-remove-send-error
 
@@ -61,19 +61,11 @@ pub use send_error::SendError;
 
 ## ブランチ命名 / カテゴリの判断
 
-未リリース API の削除は外部観測上「最初から存在しなかった」状態に等しいため、`feature/refactor-` 接頭辞 + `refactor` カテゴリを採用する。0019 (`feature/change-remove-dead-code`、`[CHANGE]` 区分) はリリース済み API の削除だったため `change` を採用しているが、本 issue は未リリース API のため `refactor` で扱う。
+未リリース API の削除は外部観測上「最初から存在しなかった」状態に等しいため、`feature/refactor-` 接頭辞 + `refactor` カテゴリを採用する。0019 (`feature/change-remove-dead-code`、`[CHANGE]` 区分) はリリース済み API の削除だったため `change` を採用しているが、本 issue は未リリース API のため `refactor` で扱う。0072 (`refactor-remove-unused-code`) も同じ判断基準 (未リリース API 削除) で `refactor` を採用している。
 
 ## 他 issue との関係
 
-本 issue は `src/send_error.rs` / `src/lib.rs:32,54` / `tests/test_send_error.rs` / `CHANGES.md:73` / `skills/shiguredo-http2/SKILL.md:471` のみを変更し、`src/error.rs` / `src/webtransport/error.rs` / `crates/*` には触れない。
-
-- 0068 (`bug-fix-wt-error-display-info-leak`) — `WtError` の Display/Debug 修正、無関係
-- 0069 (`bug-fix-nghttp2-send-set-user-data`) — `shiguredo_nghttp2::Session::send()` 修正、無関係
-- 0070 (`change-privatize-error-wt-error-fields`) — `Error` / `WtError` のフィールド private 化、無関係
-- 0072 (`refactor-remove-unused-code`) — `WtError` の未使用ヘルパー削除、無関係
-- 0073-0076 — それぞれ無関係
-
-順序依存なし。0068-0076 のどれと並列マージしてもコンフリクトは発生しない。
+0068-0076 のいずれとも無関係。`SendError` は他 issue で扱う `Error` / `WtError` / `WtErrorKind` とは独立した型で、変更ファイル (`src/send_error.rs` / `src/lib.rs` / `tests/test_send_error.rs` / `CHANGES.md` / `skills/shiguredo-http2/SKILL.md`) も重複しない。順序依存なし。
 
 ## 変更対象ファイル一覧
 
@@ -118,12 +110,6 @@ pub use send_error::SendError;
 
 ## 参照
 
-- `src/send_error.rs` — 削除対象ファイル
-- `src/lib.rs:32` — `pub mod send_error;` 削除対象
-- `src/lib.rs:54` — `pub use send_error::SendError;` 削除対象
-- `tests/test_send_error.rs` — 削除対象テストファイル
-- `CHANGES.md:73` — 既存 `[ADD]` エントリの編集対象
-- `skills/shiguredo-http2/SKILL.md:471` — `SendError` 説明行の削除対象
 - `issues/closed/0027-change-frame-construct-time-validation.md` — `SendError` 型定義の追加と「Connection::send_* への統合は別 issue 化」の判断元
 - `issues/closed/0029-change-split-error-types.md` — エラー型分割の経緯
 - `issues/closed/0019-chore-remove-dead-code.md` — 過去の未使用コード削除事例 (リリース済み API 削除のため `[CHANGE]` 区分)

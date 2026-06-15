@@ -2,7 +2,7 @@
 
 - Priority: Low
 - Created: 2026-06-12
-- Polished: 2026-06-14
+- Polished: 2026-06-16
 - Model: Opus 4.7
 - Branch: feature/refactor-replace-unwrap-with-expect-build-script-and-tests
 
@@ -18,7 +18,7 @@ issue 0075 (`refactor-replace-unwrap-with-expect`、`examples/` の `.unwrap()` 
 - `build.rs` は build 失敗時のメッセージが欠落すると原因特定が困難になるため、`.expect("理由")` 化の価値は高い
 - `tests/` 配下の integration test も同様で、CI 失敗時の原因特定が容易になる
 - 機能挙動には影響しないため Priority: Low
-- 修正コストは中〜大 (build.rs は 6 箇所、tests/ は 355 箇所で機械的置換可能)
+- 修正コストは中〜大 (build.rs は 6 箇所、tests/ は 315 箇所。多数だが定型文の使い回しが可能で実装は比較的容易。`shiguredo-rust` 規約「panic 時の『想定外 / 仕様上絶対起きないか』を区別」の趣旨に従い、定型文を使う場合も「セットアップ失敗 / decode 失敗 / イベント取得失敗」等の文脈ごとに分類して書き分ける)
 
 ## 現状の問題
 
@@ -39,15 +39,15 @@ build script 内に `.unwrap()` が 6 箇所存在 (`grep -n "\.unwrap()" crates
 
 ### `tests/` 配下の `.unwrap()`
 
-`grep -rn "\.unwrap()" tests/ --include='*.rs'` で 355 件の `.unwrap()` が確認できる。integration test 内の `.unwrap()` は失敗時にテスト失敗の文脈で情報が得られるとは言え、`.expect("理由")` 化することで CI ログから原因を即座に特定できる。
+`grep -rn "\.unwrap()" tests/ --include='*.rs'` で 315 件の `.unwrap()` が確認できる (2026-06-16 時点)。integration test 内の `.unwrap()` は失敗時にテスト失敗の文脈で情報が得られるとは言え、`.expect("理由")` 化することで CI ログから原因を即座に特定できる。
 
-主な内訳 (ファイルごと):
+ファイルごとの内訳 (実装着手時には `grep -rc "\.unwrap()" tests/ --include='*.rs' | sort -t: -k2 -nr` で最新値を再確認すること):
 
 - `tests/test_connection.rs`: 98 件
 - `tests/test_webtransport/integration.rs`: 41 件
-- `tests/test_webtransport/capsule.rs`: 41 件
 - `tests/test_hpack/rfc7541.rs`: 26 件
 - `tests/test_webtransport/root.rs`: 24 件
+- `tests/test_webtransport/capsule.rs`: 22 件
 - `tests/test_hpack/dynamic_table.rs`: 18 件
 - `tests/test_hpack/decoder.rs`: 15 件
 - `tests/test_webtransport/varint.rs`: 14 件
@@ -61,11 +61,13 @@ build script 内に `.unwrap()` が 6 箇所存在 (`grep -n "\.unwrap()" crates
 - `tests/test_hpack/encoder.rs`: 4 件
 - `tests/test_validation.rs`: 1 件
 
+合計: 98+41+26+24+22+18+15+14+11+8+7+7+7+6+6+4+1 = **315 件**
+
 ## 設計方針
 
 ### `expect` メッセージの言語
 
-- `crates/nghttp2-sys/build.rs`: panic 時のメッセージは build ログとして出力されるため、AGENTS.md「ログメッセージは全て英語にすること」に従い**英語**とする
+- `crates/nghttp2-sys/build.rs`: `.expect()` は panic message として出力されるが、build script では panic 時に build ログとしてユーザーに表示されるため、AGENTS.md「ログメッセージは全て英語にすること」に従い**英語**とする
 - `tests/` 配下: テストのログメッセージとして扱われるため、AGENTS.md「テストのログメッセージは全て日本語にすること」に従い**日本語**とする
 
 ### `build.rs` の置換
@@ -105,29 +107,16 @@ build script 内に `.unwrap()` が 6 箇所存在 (`grep -n "\.unwrap()" crates
 
 1. 作業ブランチ `feature/refactor-replace-unwrap-with-expect-build-script-and-tests` を作成する
 2. `crates/nghttp2-sys/build.rs` の 6 箇所を上記「`build.rs` の置換」に従って `.expect("...")` に置換する (メッセージは英語)
-3. `tests/` 配下の各ファイルを上記「`tests/` の置換」に従って `.unwrap()` を `.expect("...")` に置換する (メッセージは日本語)。ファイル数が多いため、以下の順で 1 ファイルずつ進めると差分が見やすい:
-   1. `tests/test_connection.rs`
-   2. `tests/test_webtransport/integration.rs`
-   3. `tests/test_webtransport/capsule.rs`
-   4. `tests/test_hpack/rfc7541.rs`
-   5. `tests/test_webtransport/root.rs`
-   6. `tests/test_hpack/dynamic_table.rs`
-   7. `tests/test_hpack/decoder.rs`
-   8. `tests/test_webtransport/varint.rs`
-   9. `tests/test_hpack/table.rs`
-   10. `tests/test_webtransport/stream.rs`
-   11. 残りのファイル
-4. `grep -n "\.unwrap()" crates/nghttp2-sys/build.rs` で 0 件、`grep -rn "\.unwrap()" tests/ --include='*.rs'` で 0 件 (スコープ外のファイルを除く) になることを確認する
-5. `CHANGES.md` の `## develop` セクションに `### misc` サブセクションがあればその末尾に、なければ新規作成して以下のエントリと担当者行を追加する (`shiguredo-issues` 規約により issue 番号は含めない):
+3. `tests/` 配下の各ファイルを上記「`tests/` の置換」に従って `.unwrap()` を `.expect("...")` に置換する (メッセージは日本語)。ファイル数が多いため、`grep -rc "\.unwrap()" tests/ --include='*.rs' | sort -t: -k2 -nr` で件数順に並べ、件数の多いファイルから 1 ファイルずつ進めると差分が見やすい
+4. `grep -n "\.unwrap()" crates/nghttp2-sys/build.rs` で 0 件、`grep -rn "\.unwrap()" tests/ --include='*.rs'` で 0 件になることを確認する (`tests/` 配下のスコープ外ファイル `tests/test_error.rs` / `tests/test_frame.rs` / `tests/test_send_error.rs` / `tests/test_settings.rs` / `tests/test_limits.rs` / `tests/test_validation.rs` を除く `tests/test_*.rs` / `tests/test_*/`*.rs` で 0 件、ただしこれらスコープ外ファイルにはそもそも `.unwrap()` が存在しないため単純な `grep -rn '\.unwrap()' tests/ --include='*.rs'` で 0 件確認できる)
+5. `CHANGES.md` の `## develop` の `### misc` サブセクション内、既存 `[UPDATE]` ブロック末尾 (種別順 CHANGE→ADD→UPDATE→FIX を保つ位置) に以下のエントリと担当者行を追加する (`shiguredo-issues` 規約により issue 番号は含めない)。`### misc` 内に `[UPDATE]` ブロックが複数箇所にある場合は、より後ろ (下) に位置するブロックの末尾に追加する:
 
    ```markdown
-   ### misc
-
    - [UPDATE] `crates/nghttp2-sys/build.rs` と `tests/` 配下の `.unwrap()` を `.expect("MESSAGE")` に置換し、`shiguredo-rust` 規約に準拠させる
      - @voluntas
    ```
 
-6. `cargo fmt --all -- --check` / `cargo build --workspace` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通過することを確認する
+6. `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通過することを確認する (test は build を兼ねる)
 
 ## 完了条件
 
@@ -136,10 +125,6 @@ build script 内に `.unwrap()` が 6 箇所存在 (`grep -n "\.unwrap()" crates
 - `crates/nghttp2-sys/build.rs` / `tests/` 配下の `.rs` ファイルに `.unwrap()` が残っていない
 - `CHANGES.md` の `## develop` の `### misc` サブセクションに `[UPDATE]` エントリが追加されている (issue 番号なし)
 - `cargo fmt --all -- --check` / `cargo build --workspace` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通過する
-
-## 解決方法
-
-issue 0075 マージ後に着手する。`crates/nghttp2-sys/build.rs` とリポジトリルートの `tests/` 配下の `.unwrap()` を、対象ごとの言語方針に従って `.expect("MESSAGE")` に置換する。
 
 ## 参照
 

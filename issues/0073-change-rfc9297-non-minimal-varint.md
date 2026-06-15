@@ -2,9 +2,11 @@
 
 - Created: 2026-06-11
 - Priority: Medium
-- Polished: 2026-06-14
+- Polished: 2026-06-16
 - Model: deepseek-v4-pro
 - Branch: feature/change-rfc9297-allow-non-minimal-varint
+
+注: ファイル名は `0073-change-rfc9297-non-minimal-varint.md` だが、ブランチ名 (`feature/change-rfc9297-allow-non-minimal-varint`) には `allow-` プレフィックスを含めて意図 (拒否解除 = 受け入れる) を明確化している。ファイル名のリネーム要否はユーザー判断とする。
 
 ## 目的
 
@@ -57,9 +59,10 @@ if encoded_len(value) != len {
 ## 設計方針
 
 - 方針: **RFC 9297 Section 1.1 に従い、非最小エンコーディングを受け入れる**
-- DoS 耐性は別レイヤ (フロー制御 / 最大 Capsule サイズ等) で確保する。varint レイヤで非最小拒否を行う必要はない
+- Postel の法則 (Be conservative in what you send, be liberal in what you accept) に従い、送信側は最小バイト数で、受信側は非最小も許容する
+- DoS 耐性は別レイヤ (フロー制御 / Capsule 単位の最大長制御) で確保する。varint レイヤで非最小拒否を行う必要はない。varint 1 個あたり最大 8 バイトに制限されるため拒否解除の追加コストは限定的で、Capsule 全体の最大長は `src/webtransport/capsule.rs` の WT_CLOSE_SESSION reason 1024 バイト上限等で別途制御される
 - encode 側は引き続き常に最小バイト数でエンコードする (送信側として最小を選ぶことに問題はなく、他実装の挙動と同じ)
-- `WtErrorKind::InvalidInput` バリアントは削除しない (他で使用中)
+- `WtErrorKind::InvalidInput` バリアントは削除しない (他で使用中。`varint.rs` 内では `encode` の MAX_VALUE 超過チェックでも使用継続)
 - `WtErrorKind::Incomplete` の使用は維持する (varint 入力不足は引き続きエラー)
 
 ## スコープ外
@@ -71,10 +74,10 @@ if encoded_len(value) != len {
 
 ## 他 issue との関係
 
-- **0068-0071**: いずれも本 issue とは異なるファイル / 異なる関心事を扱う。順序依存なし
-- **0072 (`refactor-remove-unused-code`)**: 0072 で削除予定の `WtError::incomplete` ヘルパーは `varint.rs` で使用されておらず、本 issue で削除する `InvalidInput` 生成箇所とも独立。順序依存なし
-- **0074 (`change-update-refs-draft-14`)**: 0074 は `src/webtransport/varint.rs` の `draft-ietf-webtrans-http2-14` コメントを機械置換するため、**本 issue マージ後にマージする**のが安全。RFC 9297 Section 1.1 は確定済み RFC で内容は不変
-- **0075-0076**: それぞれ無関係
+順序依存があるのは 0074 のみ。0068-0072 / 0075-0076 / 0077-0080 は本 issue と独立。
+
+- **0072 (`refactor-remove-unused-code`)**: 0072 で削除予定の `WtError::incomplete` ヘルパーは `varint.rs` で使用されておらず、本 issue で削除する `InvalidInput` 生成箇所とも独立
+- **0074 (`change-update-refs-draft-14`)**: 0074 は `src/webtransport/varint.rs` の `draft-ietf-webtrans-http2-14` コメントを機械置換する。現状 `varint.rs` に draft 番号への言及は無いが、本 issue が新規 doc コメント (モジュール冒頭 L1-10 書き換え後) で draft-14 を追加するため、0074 の機械置換対象に新たに加わる。**本 issue マージ後に 0074 をマージする**のが安全
 
 ## 変更対象ファイル一覧
 
@@ -82,7 +85,7 @@ if encoded_len(value) != len {
 
 - `src/webtransport/varint.rs:139-140` — `decode` 関数 doc コメントの「非最小エンコーディングの場合」項目を削除
 - `src/webtransport/varint.rs:192-202` — 非最小エンコーディング検査ブロックの削除
-- `src/webtransport/varint.rs:1-11` (モジュール冒頭 doc コメント) — RFC 9297 経由の使用と非最小エンコーディング受容を反映して以下の内容に書き換える:
+- `src/webtransport/varint.rs:1-10` (空行 L11 を除く) (モジュール冒頭 doc コメント) — RFC 9297 経由の使用と非最小エンコーディング受容を反映して以下の内容に書き換える:
   ```rust
   //! QUIC 形式の可変長整数エンコーディング (RFC 9000 Section 16)
   //!
@@ -106,7 +109,7 @@ if encoded_len(value) != len {
 ### 編集不要 (影響なし)
 
 - `src/webtransport/capsule.rs` (`varint::decode` の呼び出し元 18 箇所) — エンコーディング長に依存しない値比較を行っているため変更不要
-- `pbt/tests/prop_webtransport/main.rs` の varint 関連 prop — 最小エンコーディング往復のみを確認しており非最小を扱わないため変更不要 (本 issue の効果範囲外)
+- `pbt/tests/prop_webtransport/main.rs` の varint 関連 prop (`prop_varint_roundtrip` / `prop_varint_encoded_len`) — encode (最小バイト数) → decode の往復を確認するもので、本 issue は encode 側を変更しないため prop は退行しない
 - `fuzz/fuzz_targets/fuzz_varint_decoder.rs` — 任意バイト列を `decode` に渡すだけで、返り値に対する検証を行っていないため変更不要
 
 ## CHANGES.md の扱い
@@ -118,7 +121,7 @@ if encoded_len(value) != len {
 1. 作業ブランチ `feature/change-rfc9297-allow-non-minimal-varint` を作成する
 2. `src/webtransport/varint.rs:192-202` の非最小エンコーディング検査ブロックを削除する
 3. `src/webtransport/varint.rs:139-140` の doc コメント `- 非最小エンコーディングの場合 ...` の項目を削除する
-4. `src/webtransport/varint.rs:1-11` のモジュール冒頭 doc コメントを、RFC 9297 Section 1.1 経由で使用される旨と非最小エンコーディング許容方針を反映した内容に書き換える
+4. `src/webtransport/varint.rs:1-10` (空行 L11 を除く) のモジュール冒頭 doc コメントを、RFC 9297 Section 1.1 経由で使用される旨と非最小エンコーディング許容方針を反映した内容に書き換える
 5. `tests/test_webtransport/varint.rs:103-125` の `test_decode_non_minimal_encoding` を「受入テスト」に書き換える:
    - 関数名を `test_decode_non_minimal_encoding_accepts_rfc9297` に変更
    - コメント (line 105) を「RFC 9297 Section 1.1 に従い非最小エンコーディングを受け入れる」に書き換え
@@ -159,7 +162,7 @@ if encoded_len(value) != len {
 - `refs/rfc9000.txt:3987-3998` — RFC 9000 Section 12.4: QUIC Frame Type のみ最小エンコーディング MUST (Capsule Type には適用されない)
 - `refs/draft-ietf-webtrans-http2-14.txt` Section 2 (L211-L217) — WebTransport over HTTP/2 が Capsule Protocol (RFC 9297) を使用することを規定
 - `src/webtransport/varint.rs:139-202` — 修正対象の doc コメントと検査ブロック
-- `src/webtransport/varint.rs:1-11` — モジュール冒頭 doc コメント (修正対象)
+- `src/webtransport/varint.rs:1-10` (空行 L11 を除く) — モジュール冒頭 doc コメント (修正対象)
 - `src/webtransport/capsule.rs` — `varint::decode` の呼び出し元 (Capsule Type / Length / 各種 WT_* フィールド、変更不要)
 - `tests/test_webtransport/varint.rs:103-125` — 既存テスト (書き換え対象)
 - `pbt/tests/prop_webtransport/main.rs` — varint 関連 prop (影響なし)

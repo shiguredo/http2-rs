@@ -2,7 +2,7 @@
 
 - Priority: Low
 - Created: 2026-06-11
-- Polished: 2026-06-14
+- Polished: 2026-06-16
 - Model: deepseek-v4-pro
 - Branch: feature/refactor-replace-unwrap-with-expect
 
@@ -77,7 +77,7 @@ let listen: String = noargs::opt("listen")
 
 ## CHANGES.md の扱い
 
-本変更は `examples/` のスタイル変更で機能に影響しないため、`shiguredo-changelog` 規約「機能に直接影響しない変更 (ドキュメント追加、リファクタリング等) は `### misc` サブセクションに記載すること」に従い、`CHANGES.md` の `## develop` セクション内の `### misc` サブセクションに `[UPDATE]` エントリ 1 件を追加する。`### misc` サブセクションが存在しない場合は新規作成する。
+本変更は `examples/` のスタイル変更で機能に影響しないため、`shiguredo-changelog` 規約「機能に直接影響しない変更 (ドキュメント追加、リファクタリング等) は `### misc` サブセクションに記載すること」に従い、`CHANGES.md` の `## develop` セクション内の `### misc` サブセクションに `[UPDATE]` エントリ 1 件を追加する。`### misc` サブセクションは本 issue 着手時点で既に存在している (CHANGES.md L152 付近) ため新規作成は不要 (`### misc` 内のエントリは種別順 CHANGE→ADD→UPDATE→FIX を保つため、既存 `[UPDATE]` ブロックの末尾に追加する)。`shiguredo-issues` 規約に従い、CHANGES.md エントリには issue 番号を含めない。
 
 ## 変更対象ファイル一覧
 
@@ -105,7 +105,7 @@ let listen: String = noargs::opt("listen")
    HeaderField::new("content-length", body.len().to_string()).expect("content-length value is not acceptable for HTTP/2"),
    ```
 
-4. `examples/wt_server/src/main.rs:272` の `.unwrap()` (上記 noargs チェーンの末尾) を以下のように `.expect("...")` に置換する:
+4. `examples/wt_server/src/main.rs:272` の `.unwrap()` (上記 noargs チェーンの末尾) を以下のように `.expect("...")` に置換する。`unreachable:` プレフィックスは Rust エコシステムで「型レベルで到達不能」を示す慣用表現:
 
    ```rust
    let listen: String = noargs::opt("listen")
@@ -115,19 +115,19 @@ let listen: String = noargs::opt("listen")
        .default(DEFAULT_LISTEN)
        .take(&mut args)
        .then(|o| Ok::<_, std::convert::Infallible>(o.value().to_string()))
-       .expect("infallible: then closure returns Ok::<_, Infallible>");
+       .expect("unreachable: closure returns Result<_, Infallible>");
    ```
 
-5. `CHANGES.md` の `## develop` セクションに `### misc` サブセクションがあればその末尾に、なければ新規作成して以下のエントリと担当者行を追加する:
+   背景: `noargs` の `.then()` は任意の Error 型を受け入れるため、エラー型を明示しないと型推論できない。`Ok::<_, std::convert::Infallible>(...)` で `Result<String, Infallible>` に固定することで、Err 側を型レベルで排除している。
+
+5. `CHANGES.md` の `## develop` セクションの `### misc` サブセクション内、既存 `[UPDATE]` ブロック末尾 (種別順 CHANGE→ADD→UPDATE→FIX を保つ位置) に以下のエントリと担当者行を追加する。issue 番号は含めない:
 
    ```markdown
-   ### misc
-
    - [UPDATE] `examples/` 配下の `.unwrap()` を `.expect("理由")` に置換し、`shiguredo-rust` 規約に準拠させる
      - @voluntas
    ```
 
-6. 念のため `grep -rn "\.unwrap()" examples/` を実行し、対象の 5 箇所以外に `.unwrap()` が残っていないことを確認する
+6. `grep -rn "\.unwrap()" examples/` を実行し、結果が **0 件** であることを確認する (5 箇所すべてを `.expect()` に置換した状態)
 7. `cargo fmt --all -- --check` で整形違反がないことを確認する
 8. `cargo build --workspace` でビルドが成功することを確認する (`examples/` も含めてビルドされる)
 9. `cargo test --workspace` で全テスト通過を確認する
