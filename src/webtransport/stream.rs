@@ -122,13 +122,13 @@ pub enum SendState {
 impl SendState {
     /// 送信可能かどうかを返す
     #[must_use]
-    pub const fn can_send(&self) -> bool {
+    pub const fn can_send(self) -> bool {
         matches!(self, Self::Ready | Self::Send)
     }
 
     /// 終端状態かどうかを返す
     #[must_use]
-    pub const fn is_terminal(&self) -> bool {
+    pub const fn is_terminal(self) -> bool {
         matches!(self, Self::DataRecvd | Self::ResetRecvd)
     }
 }
@@ -188,13 +188,13 @@ pub enum RecvState {
 impl RecvState {
     /// 受信可能かどうかを返す
     #[must_use]
-    pub const fn can_recv(&self) -> bool {
+    pub const fn can_recv(self) -> bool {
         matches!(self, Self::Recv | Self::SizeKnown)
     }
 
     /// 終端状態かどうかを返す
     #[must_use]
-    pub const fn is_terminal(&self) -> bool {
+    pub const fn is_terminal(self) -> bool {
         matches!(self, Self::DataRead | Self::ResetRead)
     }
 }

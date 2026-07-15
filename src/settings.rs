@@ -643,7 +643,7 @@ mod tests {
             fn window_size_validated_matches_new(
                 size in 0u32..=WindowSize::MAX,
             ) {
-                let via_new = WindowSize::new(size).unwrap();
+                let via_new = WindowSize::new(size).expect("valid SETTINGS value");
                 let via_validated = WindowSize::from_validated_parts(size);
                 prop_assert_eq!(via_new, via_validated);
             }
@@ -652,7 +652,7 @@ mod tests {
             fn max_frame_size_validated_matches_new(
                 size in MaxFrameSize::MIN..=MaxFrameSize::MAX,
             ) {
-                let via_new = MaxFrameSize::new(size).unwrap();
+                let via_new = MaxFrameSize::new(size).expect("valid SETTINGS value");
                 let via_validated = MaxFrameSize::from_validated_parts(size);
                 prop_assert_eq!(via_new, via_validated);
             }

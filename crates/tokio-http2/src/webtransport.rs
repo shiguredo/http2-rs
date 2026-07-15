@@ -98,7 +98,7 @@ impl WtServerRequest {
     ///
     /// 既知の制限: 同名ヘッダーが複数あった場合は最初の 1 個のみを返し、
     /// RFC 8941 §4.2 (L1042-L1046) が MUST 要求する comma-concat 結合は未対応。
-    /// 通常のクライアント実装が複数行を送ることは稀だが、必要に応じて将来別 issue で対応する。
+    /// 通常のクライアント実装が複数行を送ることは稀だが、必要に応じて将来対応する。
     #[must_use]
     pub fn webtransport_init(&self) -> Option<&[u8]> {
         self.header(b"webtransport-init")
@@ -1057,7 +1057,7 @@ fn wt_err(e: shiguredo_http2::webtransport::WtError) -> Error {
 /// TLS バージョンをエラー文字列に埋め込むための説明文字列に変換する
 ///
 /// `rustls::ProtocolVersion` の `Debug` 実装に依存すると将来の表現変更で
-/// 文言がブレるため、固定の英語ラベルにマップする (issue 0055 の方針との整合)。
+/// 文言がブレるため、固定の英語ラベルにマップする。
 fn describe_tls_version(version: Option<rustls::ProtocolVersion>) -> &'static str {
     match version {
         Some(rustls::ProtocolVersion::TLSv1_3) => "TLS 1.3",

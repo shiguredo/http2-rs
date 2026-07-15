@@ -6,10 +6,10 @@ fn test_encode_decode_simple() {
     let encoded_length = encoded_len(input);
     let mut buf = vec![0u8; encoded_length];
 
-    let len = encode(&mut buf, input).unwrap();
+    let len = encode(&mut buf, input).expect("should succeed");
     assert_eq!(len, encoded_length);
 
-    let decoded = decode(&buf).unwrap();
+    let decoded = decode(&buf).expect("should succeed");
     assert_eq!(decoded, input);
 }
 
@@ -18,8 +18,8 @@ fn test_encode_decode_method() {
     let input = b"GET";
     let mut buf = vec![0u8; encoded_len(input)];
 
-    encode(&mut buf, input).unwrap();
-    let decoded = decode(&buf).unwrap();
+    encode(&mut buf, input).expect("should succeed");
+    let decoded = decode(&buf).expect("should succeed");
     assert_eq!(decoded, input);
 }
 
@@ -28,8 +28,8 @@ fn test_encode_decode_path() {
     let input = b"/index.html";
     let mut buf = vec![0u8; encoded_len(input)];
 
-    encode(&mut buf, input).unwrap();
-    let decoded = decode(&buf).unwrap();
+    encode(&mut buf, input).expect("should succeed");
+    let decoded = decode(&buf).expect("should succeed");
     assert_eq!(decoded, input);
 }
 

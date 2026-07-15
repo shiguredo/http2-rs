@@ -9,15 +9,15 @@ fn static_table_count() {
 // RFC 7541 Appendix A: 静的テーブルはインデックス 1 (:authority) から 61 (www-authenticate) で定義される。
 #[test]
 fn get_static_entry_basic() {
-    let entry = get_static_entry(1).unwrap();
+    let entry = get_static_entry(1).expect("should succeed");
     assert_eq!(entry.name, b":authority");
     assert_eq!(entry.value, b"");
 
-    let entry = get_static_entry(2).unwrap();
+    let entry = get_static_entry(2).expect("should succeed");
     assert_eq!(entry.name, b":method");
     assert_eq!(entry.value, b"GET");
 
-    let entry = get_static_entry(61).unwrap();
+    let entry = get_static_entry(61).expect("should succeed");
     assert_eq!(entry.name, b"www-authenticate");
     assert_eq!(entry.value, b"");
 
@@ -39,14 +39,14 @@ fn find_static_index_basic() {
 
 #[test]
 fn header_field_size() {
-    let field = HeaderField::new("content-type", "application/json").unwrap();
+    let field = HeaderField::new("content-type", "application/json").expect("valid header field");
     // RFC 7541 Section 4.1: エントリサイズ = 名前長 + 値長 + 32 → 12 + 16 + 32 = 60
     assert_eq!(field.size(), 60);
 }
 
 #[test]
 fn header_field_new_accepts_valid() {
-    let h = HeaderField::new(":method", "GET").unwrap();
+    let h = HeaderField::new(":method", "GET").expect("valid header field");
     assert_eq!(h.name(), b":method");
     assert_eq!(h.value(), b"GET");
     assert!(!h.sensitive());
@@ -54,7 +54,8 @@ fn header_field_new_accepts_valid() {
 
 #[test]
 fn header_field_new_with_sensitive() {
-    let h = HeaderField::new_with_sensitive("authorization", "Bearer secret", true).unwrap();
+    let h = HeaderField::new_with_sensitive("authorization", "Bearer secret", true)
+        .expect("valid header field");
     assert!(h.sensitive());
     assert_eq!(h.name(), b"authorization");
     assert_eq!(h.value(), b"Bearer secret");
@@ -143,7 +144,7 @@ fn header_field_new_rejects_invalid_status() {
 
 #[test]
 fn header_field_new_accepts_status_200() {
-    let h = HeaderField::new(":status", "200").unwrap();
+    let h = HeaderField::new(":status", "200").expect("valid header field");
     assert_eq!(h.value(), b"200");
 }
 
@@ -158,7 +159,7 @@ fn header_field_new_rejects_invalid_method() {
 
 #[test]
 fn header_field_new_accepts_scheme_https() {
-    let h = HeaderField::new(":scheme", "https").unwrap();
+    let h = HeaderField::new(":scheme", "https").expect("valid header field");
     assert_eq!(h.value(), b"https");
 }
 
@@ -173,20 +174,20 @@ fn header_field_new_rejects_invalid_scheme() {
 
 #[test]
 fn header_field_new_accepts_path_absolute() {
-    let h = HeaderField::new(":path", "/index.html").unwrap();
+    let h = HeaderField::new(":path", "/index.html").expect("valid header field");
     assert_eq!(h.value(), b"/index.html");
 }
 
 #[test]
 fn header_field_new_accepts_path_asterisk() {
-    let h = HeaderField::new(":path", "*").unwrap();
+    let h = HeaderField::new(":path", "*").expect("valid header field");
     assert_eq!(h.value(), b"*");
 }
 
 #[test]
 fn header_field_new_accepts_path_empty() {
     // 空 :path は scheme 依存のため構築時には弾かない (validation.rs 側で判定)
-    let h = HeaderField::new(":path", "").unwrap();
+    let h = HeaderField::new(":path", "").expect("valid header field");
     assert_eq!(h.value(), b"");
 }
 

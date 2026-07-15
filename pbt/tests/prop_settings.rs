@@ -12,10 +12,12 @@ fn valid_setting() -> impl Strategy<Value = Setting> {
         any::<u32>().prop_map(Setting::HeaderTableSize),
         prop::bool::ANY.prop_map(Setting::EnablePush),
         any::<u32>().prop_map(Setting::MaxConcurrentStreams),
-        (0..=MAX_INITIAL_WINDOW_SIZE)
-            .prop_map(|v| Setting::InitialWindowSize(WindowSize::new(v).unwrap())),
-        (MIN_MAX_FRAME_SIZE..=MAX_MAX_FRAME_SIZE)
-            .prop_map(|v| Setting::MaxFrameSize(MaxFrameSize::new(v).unwrap())),
+        (0..=MAX_INITIAL_WINDOW_SIZE).prop_map(|v| Setting::InitialWindowSize(
+            WindowSize::new(v).expect("valid SETTINGS value")
+        )),
+        (MIN_MAX_FRAME_SIZE..=MAX_MAX_FRAME_SIZE).prop_map(|v| Setting::MaxFrameSize(
+            MaxFrameSize::new(v).expect("valid SETTINGS value")
+        )),
         any::<u32>().prop_map(Setting::MaxHeaderListSize),
         prop::bool::ANY.prop_map(Setting::EnableConnectProtocol),
         prop::bool::ANY.prop_map(Setting::NoRfc7540Priorities),
@@ -150,7 +152,7 @@ proptest! {
             result.is_ok(),
             "Unknown setting wire ({id}, {value}) should produce Ok(Unknown)",
         );
-        let setting = result.unwrap();
+        let setting = result.expect("should succeed");
         prop_assert!(
             matches!(setting, Setting::Unknown { .. }),
             "Unknown ID should produce Setting::Unknown, got {:?}",
@@ -204,7 +206,7 @@ proptest! {
         if value <= 1 {
             prop_assert!(result.is_ok());
             let mut settings = Settings::default();
-            settings.apply(result.unwrap());
+            settings.apply(result.expect("should succeed"));
             prop_assert_eq!(settings.enable_push(), value == 1);
         } else {
             prop_assert!(result.is_err());
@@ -223,7 +225,7 @@ proptest! {
         if (MIN_MAX_FRAME_SIZE..=MAX_MAX_FRAME_SIZE).contains(&value) {
             prop_assert!(result.is_ok());
             let mut settings = Settings::default();
-            settings.apply(result.unwrap());
+            settings.apply(result.expect("should succeed"));
             prop_assert_eq!(settings.max_frame_size().get(), value);
         } else {
             prop_assert!(result.is_err());
@@ -242,7 +244,7 @@ proptest! {
         if value <= MAX_INITIAL_WINDOW_SIZE {
             prop_assert!(result.is_ok());
             let mut settings = Settings::default();
-            settings.apply(result.unwrap());
+            settings.apply(result.expect("should succeed"));
             prop_assert_eq!(settings.initial_window_size().get(), value);
         } else {
             prop_assert!(result.is_err());
@@ -259,11 +261,11 @@ proptest! {
         let mut settings = Settings::default();
 
         for value in &values {
-            let setting = Setting::from_wire(0x04, *value).unwrap();
+            let setting = Setting::from_wire(0x04, *value).expect("construction should succeed");
             settings.apply(setting);
         }
 
-        prop_assert_eq!(settings.initial_window_size().get(), *values.last().unwrap());
+        prop_assert_eq!(settings.initial_window_size().get(), *values.last().expect("collection should be non-empty"));
     }
 
     /// to_settings_list と apply の整合性
@@ -287,8 +289,8 @@ proptest! {
         if let Some(v) = max_concurrent_streams {
             original.apply(Setting::MaxConcurrentStreams(v));
         }
-        original.apply(Setting::InitialWindowSize(WindowSize::new(initial_window_size).unwrap()));
-        original.apply(Setting::MaxFrameSize(MaxFrameSize::new(max_frame_size).unwrap()));
+        original.apply(Setting::InitialWindowSize(WindowSize::new(initial_window_size).expect("valid SETTINGS value")));
+        original.apply(Setting::MaxFrameSize(MaxFrameSize::new(max_frame_size).expect("valid SETTINGS value")));
         if let Some(v) = max_header_list_size {
             original.apply(Setting::MaxHeaderListSize(v));
         }
@@ -333,7 +335,7 @@ proptest! {
         setting in valid_setting(),
     ) {
         let (id, value) = setting.as_wire();
-        let restored = Setting::from_wire(id, value).unwrap();
+        let restored = Setting::from_wire(id, value).expect("construction should succeed");
         prop_assert_eq!(setting, restored);
     }
 
@@ -344,7 +346,7 @@ proptest! {
     fn prop_window_size_static_matches_new(
         size in 0u32..=MAX_INITIAL_WINDOW_SIZE,
     ) {
-        let via_new = WindowSize::new(size).unwrap();
+        let via_new = WindowSize::new(size).expect("valid SETTINGS value");
         let via_static = WindowSize::from_static(size);
         prop_assert_eq!(via_new, via_static);
     }
@@ -354,7 +356,7 @@ proptest! {
     fn prop_max_frame_size_static_matches_new(
         size in MIN_MAX_FRAME_SIZE..=MAX_MAX_FRAME_SIZE,
     ) {
-        let via_new = MaxFrameSize::new(size).unwrap();
+        let via_new = MaxFrameSize::new(size).expect("valid SETTINGS value");
         let via_static = MaxFrameSize::from_static(size);
         prop_assert_eq!(via_new, via_static);
     }

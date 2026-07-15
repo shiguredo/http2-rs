@@ -6,7 +6,7 @@ fn test_decode_indexed() {
 
     // :method: GET (index 2) = 0x82
     let data = [0x82];
-    let headers = decoder.decode(&data).unwrap();
+    let headers = decoder.decode(&data).expect("decode should succeed");
 
     assert_eq!(headers.len(), 1);
     assert_eq!(headers[0].name(), b":method");
@@ -24,7 +24,7 @@ fn test_decode_literal_indexed() {
     let mut data = vec![0x41, 0x0b];
     data.extend_from_slice(b"example.com");
 
-    let headers = decoder.decode(&data).unwrap();
+    let headers = decoder.decode(&data).expect("decode should succeed");
 
     assert_eq!(headers.len(), 1);
     assert_eq!(headers[0].name(), b":authority");
@@ -40,17 +40,17 @@ fn test_roundtrip() {
     let mut decoder = Decoder::new(4096);
 
     let headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":path", "/index.html").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "www.example.com").unwrap(),
-        HeaderField::new("custom-header", "custom-value").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":path", "/index.html").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "www.example.com").expect("valid header field"),
+        HeaderField::new("custom-header", "custom-value").expect("valid header field"),
     ];
 
     let mut encoded = Vec::new();
     encoder.encode(&mut encoded, &headers);
 
-    let decoded = decoder.decode(&encoded).unwrap();
+    let decoded = decoder.decode(&encoded).expect("encode should succeed");
 
     assert_eq!(decoded.len(), headers.len());
     for (original, decoded) in headers.iter().zip(decoded.iter()) {
@@ -66,7 +66,7 @@ fn test_decode_size_update() {
     // Size update to 1024 = 0x3f (5-bit prefix) + continuation
     // 0x20 | (31 & 0x1f) = 0x3f, then 1024 - 31 = 993 = 0xe1 0x07
     let data = [0x3f, 0xe1, 0x07];
-    let headers = decoder.decode(&data).unwrap();
+    let headers = decoder.decode(&data).expect("decode should succeed");
 
     assert!(headers.is_empty());
     assert_eq!(decoder.dynamic_table().max_size(), 1024);
@@ -87,7 +87,7 @@ fn test_decode_never_indexed() {
     data.push(0x06);
     data.extend_from_slice(b"secret");
 
-    let headers = decoder.decode(&data).unwrap();
+    let headers = decoder.decode(&data).expect("decode should succeed");
 
     assert_eq!(headers.len(), 1);
     assert_eq!(headers[0].name(), b"x-token");
@@ -109,7 +109,7 @@ fn test_decode_never_indexed_with_name_index() {
     let mut data = vec![0x17, 0x05];
     data.extend_from_slice(b"https");
 
-    let headers = decoder.decode(&data).unwrap();
+    let headers = decoder.decode(&data).expect("decode should succeed");
 
     assert_eq!(headers.len(), 1);
     assert_eq!(headers[0].name(), b":scheme");
@@ -123,15 +123,16 @@ fn test_roundtrip_with_sensitive() {
     let mut decoder = Decoder::new(4096);
 
     let headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new_with_sensitive("authorization", "Bearer token", true).unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new_with_sensitive("authorization", "Bearer token", true)
+            .expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
     ];
 
     let mut encoded = Vec::new();
     encoder.encode(&mut encoded, &headers);
 
-    let decoded = decoder.decode(&encoded).unwrap();
+    let decoded = decoder.decode(&encoded).expect("encode should succeed");
 
     assert_eq!(decoded.len(), 3);
     assert_eq!(decoded[0].name(), b":method");

@@ -53,9 +53,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 固定リテラルは from_static でコンパイル時検査、動的値は new でランタイム検査する。
     let headers = vec![
         HeaderField::from_static(b":method", b"GET"),
-        HeaderField::new(":path", path).unwrap(),
+        HeaderField::new(":path", path).expect("valid header field"),
         HeaderField::from_static(b":scheme", b"https"),
-        HeaderField::new(":authority", format!("{host}:{port}")).unwrap(),
+        HeaderField::new(":authority", format!("{host}:{port}")).expect("valid header field"),
         HeaderField::from_static(b"user-agent", b"shiguredo-http2"),
         HeaderField::from_static(b"accept", b"*/*"),
     ];

@@ -138,7 +138,7 @@ proptest! {
             .header_table_size(header_table)
             .connection_window_size(connection_window)
             .build()
-            .unwrap();
+            .expect("should succeed");
 
         prop_assert_eq!(limits.max_concurrent_streams(), max_concurrent);
         prop_assert_eq!(limits.initial_window_size(), initial_window);

@@ -3,9 +3,10 @@ use std::process::Command;
 
 /// Cargo.toml から外部依存関係のメタデータを読み込む
 fn load_external_dependency(name: &str) -> (String, String) {
-    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    let cargo_toml = std::fs::read_to_string(manifest_dir.join("Cargo.toml")).unwrap();
-    let toml = shiguredo_toml::from_str(&cargo_toml).unwrap();
+    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("should succeed"));
+    let cargo_toml =
+        std::fs::read_to_string(manifest_dir.join("Cargo.toml")).expect("should succeed");
+    let toml = shiguredo_toml::from_str(&cargo_toml).expect("should succeed");
 
     let deps = toml["package"]["metadata"]["external-dependencies"]
         .as_table()
@@ -22,7 +23,7 @@ fn load_external_dependency(name: &str) -> (String, String) {
 }
 
 fn main() {
-    let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("should succeed"));
 
     // Cargo.toml からメタデータを読み込む
     let (git_url, version) = load_external_dependency("nghttp2");
@@ -76,14 +77,19 @@ fn main() {
 
 #[cfg(feature = "overwrite")]
 fn overwrite_bindgen(out_dir: &PathBuf) {
-    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("should succeed"));
     // ビルド後の include ディレクトリ (nghttp2ver.h が生成される場所)
     let nghttp2_installed_include = out_dir.join("include");
     // ソースの include ディレクトリ (nghttp2.h がある場所)
     let nghttp2_source_include = out_dir.join("nghttp2/lib/includes");
 
     bindgen::Builder::default()
-        .header(manifest_dir.join("src/wrapper.h").to_str().unwrap())
+        .header(
+            manifest_dir
+                .join("src/wrapper.h")
+                .to_str()
+                .expect("should succeed"),
+        )
         .clang_arg(format!("-I{}", nghttp2_installed_include.display()))
         .clang_arg(format!("-I{}", nghttp2_source_include.display()))
         .allowlist_function("nghttp2_.*")

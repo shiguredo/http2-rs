@@ -1,4 +1,4 @@
-//! フレーム構築時検査エラー (issue 0027 / 0029)
+//! フレーム構築時検査エラー
 //!
 //! 各 HTTP/2 フレーム型の構築 API で発生する検査エラーを表現する。
 //! 文字列ベースの [`crate::error::Error`] とは分離し、違反値を構造化フィールドで保持する。
@@ -311,194 +311,38 @@ impl LastStreamId {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod validated_parts {
+    use proptest::prelude::*;
 
-    #[test]
-    fn window_increment_new_ok() {
-        let w = WindowIncrement::new(1).unwrap();
-        assert_eq!(w.as_u32(), 1);
-        let w = WindowIncrement::new(WindowIncrement::MAX).unwrap();
-        assert_eq!(w.as_u32(), WindowIncrement::MAX);
-    }
+    use super::{LastStreamId, Weight, WindowIncrement};
 
-    #[test]
-    fn window_increment_new_zero() {
-        assert_eq!(
-            WindowIncrement::new(0),
-            Err(FrameError::ZeroWindowIncrement)
-        );
-    }
+    proptest! {
+        #[test]
+        fn window_increment_validated_matches_new(
+            v in 1u32..=WindowIncrement::MAX,
+        ) {
+            let via_new = WindowIncrement::new(v).expect("valid window increment");
+            let nz = core::num::NonZeroU32::new(v).expect("non-zero increment");
+            let via_validated = WindowIncrement::from_validated_parts(nz);
+            prop_assert_eq!(via_new, via_validated);
+        }
 
-    #[test]
-    fn window_increment_new_overflow() {
-        assert_eq!(
-            WindowIncrement::new(WindowIncrement::MAX + 1),
-            Err(FrameError::WindowIncrementOutOfRange {
-                value: WindowIncrement::MAX + 1
-            })
-        );
-    }
+        #[test]
+        fn weight_validated_matches_new(
+            w in 0u16..=255,
+        ) {
+            let via_new = Weight::new(w).expect("valid weight");
+            let via_validated = Weight::from_validated_parts(w as u8);
+            prop_assert_eq!(via_new, via_validated);
+        }
 
-    #[test]
-    fn window_increment_from_static_ok() {
-        const W: WindowIncrement = WindowIncrement::from_static(1024);
-        assert_eq!(W.as_u32(), 1024);
-    }
-
-    #[test]
-    #[should_panic(expected = "increment must not be 0")]
-    fn window_increment_from_static_zero_panics() {
-        let _ = WindowIncrement::from_static(0);
-    }
-
-    #[test]
-    #[should_panic(expected = "must be <= 2^31-1")]
-    fn window_increment_from_static_overflow_panics() {
-        let _ = WindowIncrement::from_static(WindowIncrement::MAX + 1);
-    }
-
-    #[test]
-    fn weight_new_ok() {
-        let w = Weight::new(0).unwrap();
-        assert_eq!(w.as_wire(), 0);
-        assert_eq!(w.weight_value(), 1);
-
-        let w = Weight::new(255).unwrap();
-        assert_eq!(w.as_wire(), 255);
-        assert_eq!(w.weight_value(), 256);
-    }
-
-    #[test]
-    fn weight_new_out_of_range() {
-        assert_eq!(
-            Weight::new(256),
-            Err(FrameError::InvalidWeight { value: 256 })
-        );
-    }
-
-    #[test]
-    fn weight_from_static_ok() {
-        const W: Weight = Weight::from_static(15);
-        assert_eq!(W.as_wire(), 15);
-        assert_eq!(W.weight_value(), 16);
-    }
-
-    #[test]
-    fn last_stream_id_new_ok() {
-        let id = LastStreamId::new(0).unwrap();
-        assert_eq!(id.get(), 0);
-        let id = LastStreamId::new(LastStreamId::MAX).unwrap();
-        assert_eq!(id.get(), LastStreamId::MAX);
-    }
-
-    #[test]
-    fn last_stream_id_new_out_of_range() {
-        assert_eq!(
-            LastStreamId::new(LastStreamId::MAX + 1),
-            Err(FrameError::LastStreamIdOutOfRange {
-                value: LastStreamId::MAX + 1
-            })
-        );
-    }
-
-    #[test]
-    fn last_stream_id_from_static_ok() {
-        const ID: LastStreamId = LastStreamId::from_static(42);
-        assert_eq!(ID.get(), 42);
-    }
-
-    #[test]
-    fn frame_error_display_zero_stream_id() {
-        let err = FrameError::ZeroStreamIdNotAllowed {
-            frame_type: FrameType::Data,
-        };
-        assert_eq!(err.to_string(), "DATA frame must not use stream ID 0");
-    }
-
-    #[test]
-    fn frame_error_display_non_zero_stream_id() {
-        let err = FrameError::NonZeroStreamIdNotAllowed {
-            frame_type: FrameType::Settings,
-            stream_id: 5,
-        };
-        assert_eq!(
-            err.to_string(),
-            "SETTINGS frame requires stream ID 0 but got 5"
-        );
-    }
-
-    #[test]
-    fn frame_error_display_zero_window_increment() {
-        assert_eq!(
-            FrameError::ZeroWindowIncrement.to_string(),
-            "WINDOW_UPDATE increment must not be 0"
-        );
-    }
-
-    #[test]
-    fn frame_error_display_window_overflow() {
-        let err = FrameError::WindowIncrementOutOfRange { value: u32::MAX };
-        assert!(err.to_string().contains("exceeds maximum"));
-    }
-
-    #[test]
-    fn frame_error_display_invalid_weight() {
-        let err = FrameError::InvalidWeight { value: 1024 };
-        assert_eq!(err.to_string(), "PRIORITY weight 1024 out of range 0..=255");
-    }
-
-    #[test]
-    fn frame_error_display_padding_exceeds_payload() {
-        let err = FrameError::PaddingExceedsPayload {
-            padding: 100,
-            payload_len: 50,
-        };
-        assert_eq!(
-            err.to_string(),
-            "padding length 100 exceeds payload length 50"
-        );
-    }
-
-    #[test]
-    fn frame_error_display_last_stream_id_out_of_range() {
-        let err = FrameError::LastStreamIdOutOfRange { value: u32::MAX };
-        assert!(err.to_string().contains("exceeds maximum"));
-    }
-
-    mod validated_parts {
-        use proptest::prelude::*;
-
-        use super::{LastStreamId, Weight, WindowIncrement};
-
-        proptest! {
-            #[test]
-            fn window_increment_validated_matches_new(
-                v in 1u32..=WindowIncrement::MAX,
-            ) {
-                let via_new = WindowIncrement::new(v).unwrap();
-                let nz = core::num::NonZeroU32::new(v).unwrap();
-                let via_validated = WindowIncrement::from_validated_parts(nz);
-                prop_assert_eq!(via_new, via_validated);
-            }
-
-            #[test]
-            fn weight_validated_matches_new(
-                w in 0u16..=255,
-            ) {
-                let via_new = Weight::new(w).unwrap();
-                let via_validated = Weight::from_validated_parts(w as u8);
-                prop_assert_eq!(via_new, via_validated);
-            }
-
-            #[test]
-            fn last_stream_id_validated_matches_new(
-                id in 0u32..=LastStreamId::MAX,
-            ) {
-                let via_new = LastStreamId::new(id).unwrap();
-                let via_validated = LastStreamId::from_validated_parts(id);
-                prop_assert_eq!(via_new, via_validated);
-            }
+        #[test]
+        fn last_stream_id_validated_matches_new(
+            id in 0u32..=LastStreamId::MAX,
+        ) {
+            let via_new = LastStreamId::new(id).expect("valid last stream id");
+            let via_validated = LastStreamId::from_validated_parts(id);
+            prop_assert_eq!(via_new, via_validated);
         }
     }
 }

@@ -11,7 +11,10 @@ fn test_encode_decode_datagram() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }
 
@@ -28,7 +31,10 @@ fn test_encode_decode_wt_stream() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }
 
@@ -45,7 +51,10 @@ fn test_encode_decode_wt_stream_fin() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }
 
@@ -62,7 +71,10 @@ fn test_encode_decode_wt_reset_stream() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }
 
@@ -78,7 +90,10 @@ fn test_encode_decode_wt_stop_sending() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }
 
@@ -91,7 +106,10 @@ fn test_encode_decode_wt_max_data() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }
 
@@ -107,7 +125,10 @@ fn test_encode_decode_wt_max_stream_data() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }
 
@@ -124,7 +145,10 @@ fn test_encode_decode_wt_max_streams() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 
     // Unidirectional
@@ -138,7 +162,10 @@ fn test_encode_decode_wt_max_streams() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }
 
@@ -154,7 +181,10 @@ fn test_encode_decode_wt_close_session() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }
 
@@ -167,7 +197,10 @@ fn test_encode_decode_wt_drain_session() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }
 
@@ -180,7 +213,10 @@ fn test_encode_decode_padding() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }
 
@@ -190,13 +226,13 @@ fn test_decode_incomplete() {
 
     // 不完全なデータ
     decoder.feed(&[0x00]); // DATAGRAM type only
-    assert!(decoder.decode().unwrap().is_none());
+    assert!(decoder.decode().expect("feed should succeed").is_none());
 
     decoder.clear();
 
     // Type + Length のみ
     decoder.feed(&[0x00, 0x05]); // DATAGRAM, length=5
-    assert!(decoder.decode().unwrap().is_none());
+    assert!(decoder.decode().expect("feed should succeed").is_none());
 }
 
 #[test]
@@ -216,13 +252,19 @@ fn test_decode_multiple_capsules() {
 
     decoder.feed(encoder.buffer());
 
-    let decoded1 = decoder.decode().unwrap().unwrap();
+    let decoded1 = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule1, decoded1);
 
-    let decoded2 = decoder.decode().unwrap().unwrap();
+    let decoded2 = decoder
+        .decode()
+        .expect("decode should succeed")
+        .expect("decode should succeed");
     assert_eq!(capsule2, decoded2);
 
-    assert!(decoder.decode().unwrap().is_none());
+    assert!(decoder.decode().expect("decode should succeed").is_none());
 }
 
 #[test]
@@ -238,7 +280,10 @@ fn test_decode_unknown_capsule_type() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }
 
@@ -251,7 +296,10 @@ fn test_decode_wt_data_blocked() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }
 
@@ -267,7 +315,10 @@ fn test_decode_wt_stream_data_blocked() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }
 
@@ -284,7 +335,10 @@ fn test_decode_wt_streams_blocked() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 
     // Unidirectional
@@ -298,6 +352,9 @@ fn test_decode_wt_streams_blocked() {
     encoder.encode(&capsule);
 
     decoder.feed(encoder.buffer());
-    let decoded = decoder.decode().unwrap().unwrap();
+    let decoded = decoder
+        .decode()
+        .expect("feed should succeed")
+        .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }

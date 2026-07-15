@@ -25,7 +25,7 @@ fn valid_header_name() -> impl Strategy<Value = Vec<u8>> {
         prop::sample::select(
             (b'a'..=b'z')
                 .chain(b'0'..=b'9')
-                .chain([b'-', b'_'])
+                .chain(*b"-_")
                 .collect::<Vec<_>>(),
         ),
         1..=16,
@@ -74,7 +74,7 @@ fn http_path() -> impl Strategy<Value = String> {
         prop::sample::select(
             (b'a'..=b'z')
                 .chain(b'0'..=b'9')
-                .chain([b'/', b'-', b'_', b'.'])
+                .chain(*b"/-_.")
                 .collect::<Vec<_>>(),
         ),
         1..=32,
@@ -120,10 +120,10 @@ proptest! {
         ),
     ) {
         let mut headers = vec![
-            HeaderField::new(":method", method).unwrap(),
-            HeaderField::new(":scheme", scheme).unwrap(),
-            HeaderField::new(":path", &path).unwrap(),
-            HeaderField::new(":authority", &authority).unwrap(),
+            HeaderField::new(":method", method).expect("valid header field"),
+            HeaderField::new(":scheme", scheme).expect("valid header field"),
+            HeaderField::new(":path", &path).expect("valid header field"),
+            HeaderField::new(":authority", &authority).expect("valid header field"),
         ];
 
         for (name, value) in regular_headers {
@@ -132,7 +132,7 @@ proptest! {
             if !FORBIDDEN_FOR_VALIDATION
                 .contains(&name_str.as_ref())
             {
-                headers.push(HeaderField::new(name, value).unwrap());
+                headers.push(HeaderField::new(name, value).expect("valid header field"));
             }
         }
 
@@ -148,7 +148,7 @@ proptest! {
             0..=4
         ),
     ) {
-        let mut headers = vec![HeaderField::new(":status", &status).unwrap()];
+        let mut headers = vec![HeaderField::new(":status", &status).expect("valid header field")];
 
         for (name, value) in regular_headers {
             // 禁止ヘッダーを避ける
@@ -156,7 +156,7 @@ proptest! {
             if !FORBIDDEN_FOR_VALIDATION
                 .contains(&name_str.as_ref())
             {
-                headers.push(HeaderField::new(name, value).unwrap());
+                headers.push(HeaderField::new(name, value).expect("valid header field"));
             }
         }
 
@@ -174,8 +174,8 @@ proptest! {
         ),
     ) {
         let mut headers = vec![
-            HeaderField::new(":method", "CONNECT").unwrap(),
-            HeaderField::new(":authority", &authority).unwrap(),
+            HeaderField::new(":method", "CONNECT").expect("valid header field"),
+            HeaderField::new(":authority", &authority).expect("valid header field"),
         ];
 
         for (name, value) in regular_headers {
@@ -184,7 +184,7 @@ proptest! {
             if !FORBIDDEN_FOR_VALIDATION
                 .contains(&name_str.as_ref())
             {
-                headers.push(HeaderField::new(name, value).unwrap());
+                headers.push(HeaderField::new(name, value).expect("valid header field"));
             }
         }
 
@@ -204,10 +204,10 @@ proptest! {
         value in valid_header_value(),
     ) {
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
-            HeaderField::new(forbidden.as_bytes(), value).unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
+            HeaderField::new(forbidden.as_bytes(), value).expect("valid header field"),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -223,9 +223,9 @@ proptest! {
         // HeaderField::new は構築時に弾くため、validation 経路の検査を確認するには
         // wire 上の不正データを模擬する from_validated_parts で構築する。
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
             pbt::wire_header_field(&name.into_bytes(), b"value"),
         ];
 
@@ -250,7 +250,7 @@ proptest! {
                 {
                     None
                 } else {
-                    Some(HeaderField::new(name, value).unwrap())
+                    Some(HeaderField::new(name, value).expect("valid header field"))
                 }
             })
             .collect();
@@ -270,11 +270,11 @@ proptest! {
         ],
     ) {
         let headers = vec![
-            HeaderField::new(":method", "CONNECT").unwrap(),
-            HeaderField::new(":scheme", scheme).unwrap(),
-            HeaderField::new(":path", &path).unwrap(),
-            HeaderField::new(":authority", &authority).unwrap(),
-            HeaderField::new(":protocol", protocol).unwrap(),
+            HeaderField::new(":method", "CONNECT").expect("valid header field"),
+            HeaderField::new(":scheme", scheme).expect("valid header field"),
+            HeaderField::new(":path", &path).expect("valid header field"),
+            HeaderField::new(":authority", &authority).expect("valid header field"),
+            HeaderField::new(":protocol", protocol).expect("valid header field"),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
@@ -291,11 +291,11 @@ proptest! {
         let host = format!("{authority}.{host_suffix}");
         prop_assume!(authority != host);
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", scheme).unwrap(),
-            HeaderField::new(":path", &path).unwrap(),
-            HeaderField::new(":authority", &authority).unwrap(),
-            HeaderField::new("host", &host).unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", scheme).expect("valid header field"),
+            HeaderField::new(":path", &path).expect("valid header field"),
+            HeaderField::new(":authority", &authority).expect("valid header field"),
+            HeaderField::new("host", &host).expect("valid header field"),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -309,11 +309,11 @@ proptest! {
         path in http_path(),
     ) {
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", scheme).unwrap(),
-            HeaderField::new(":path", &path).unwrap(),
-            HeaderField::new(":authority", &authority).unwrap(),
-            HeaderField::new("host", &authority).unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", scheme).expect("valid header field"),
+            HeaderField::new(":path", &path).expect("valid header field"),
+            HeaderField::new(":authority", &authority).expect("valid header field"),
+            HeaderField::new("host", &authority).expect("valid header field"),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
@@ -327,9 +327,9 @@ proptest! {
         path in http_path(),
     ) {
         let headers = vec![
-            HeaderField::new(":method", method).unwrap(),
-            HeaderField::new(":scheme", scheme).unwrap(),
-            HeaderField::new(":path", &path).unwrap(),
+            HeaderField::new(":method", method).expect("valid header field"),
+            HeaderField::new(":scheme", scheme).expect("valid header field"),
+            HeaderField::new(":path", &path).expect("valid header field"),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -344,10 +344,10 @@ proptest! {
         host in "[a-z][a-z0-9]{0,10}\\.[a-z]{2,3}",
     ) {
         let headers = vec![
-            HeaderField::new(":method", method).unwrap(),
-            HeaderField::new(":scheme", scheme).unwrap(),
-            HeaderField::new(":path", &path).unwrap(),
-            HeaderField::new("host", &host).unwrap(),
+            HeaderField::new(":method", method).expect("valid header field"),
+            HeaderField::new(":scheme", scheme).expect("valid header field"),
+            HeaderField::new(":path", &path).expect("valid header field"),
+            HeaderField::new("host", &host).expect("valid header field"),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
@@ -369,10 +369,10 @@ proptest! {
         name.extend_from_slice(suffix.as_bytes());
 
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
-            HeaderField::new(":authority", "example.com").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
+            HeaderField::new(":authority", "example.com").expect("valid header field"),
             // HeaderField::new は構築時に弾くため、wire 由来データを模擬するために
             // from_validated_parts を使って validation 経路の検査を確認する。
             pbt::wire_header_field(&name, b"value"),
@@ -392,10 +392,10 @@ proptest! {
         value.extend_from_slice(suffix.as_bytes());
 
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
-            HeaderField::new(":authority", "example.com").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
+            HeaderField::new(":authority", "example.com").expect("valid header field"),
             pbt::wire_header_field(b"x-test", &value),
         ];
 
@@ -414,10 +414,10 @@ proptest! {
         value.extend_from_slice(suffix.as_bytes());
 
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
-            HeaderField::new(":authority", "example.com").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
+            HeaderField::new(":authority", "example.com").expect("valid header field"),
             pbt::wire_header_field(b"x-test", &value),
         ];
 
@@ -434,10 +434,10 @@ proptest! {
         value.extend_from_slice(body.as_bytes());
 
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
-            HeaderField::new(":authority", "example.com").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
+            HeaderField::new(":authority", "example.com").expect("valid header field"),
             pbt::wire_header_field(b"x-test", &value),
         ];
 
@@ -454,10 +454,10 @@ proptest! {
         value.push(ws);
 
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
-            HeaderField::new(":authority", "example.com").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
+            HeaderField::new(":authority", "example.com").expect("valid header field"),
             pbt::wire_header_field(b"x-test", &value),
         ];
 
@@ -473,10 +473,10 @@ proptest! {
         let value = format!("{prefix} {suffix}").into_bytes();
 
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
-            HeaderField::new(":authority", "example.com").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
+            HeaderField::new(":authority", "example.com").expect("valid header field"),
             pbt::wire_header_field(b"x-test", &value),
         ];
 
@@ -491,8 +491,8 @@ proptest! {
     ) {
         let authority = format!("{host}:{port}");
         let headers = vec![
-            HeaderField::new(":method", "CONNECT").unwrap(),
-            HeaderField::new(":authority", &authority).unwrap(),
+            HeaderField::new(":method", "CONNECT").expect("valid header field"),
+            HeaderField::new(":authority", &authority).expect("valid header field"),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
@@ -507,10 +507,10 @@ proptest! {
     ) {
         let authority = format!("{user}@{host}");
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", scheme).unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
-            HeaderField::new(":authority", &authority).unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", scheme).expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
+            HeaderField::new(":authority", &authority).expect("valid header field"),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_err());
@@ -524,10 +524,10 @@ proptest! {
     ) {
         let authority = format!("{user}@{host}");
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "ftp").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
-            HeaderField::new(":authority", &authority).unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "ftp").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
+            HeaderField::new(":authority", &authority).expect("valid header field"),
         ];
 
         prop_assert!(validation::validate_request_headers(&headers).is_ok());
@@ -551,9 +551,9 @@ proptest! {
         ],
     ) {
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", &scheme).unwrap(),
-            HeaderField::new(":path", "").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", &scheme).expect("valid header field"),
+            HeaderField::new(":path", "").expect("valid header field"),
         ];
         let result = validation::validate_request_headers(&headers);
         let is_http_or_https = scheme.eq_ignore_ascii_case("http")

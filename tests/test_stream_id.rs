@@ -5,11 +5,34 @@ use shiguredo_http2::stream_id::{
     ClientStreamId, NonZeroStreamId, Parity, ServerStreamId, StreamIdError,
 };
 
+/// RFC 9113 §5.1.1: ストリーム ID の上限 (31 ビット)
+const STREAM_ID_MAX: u32 = (1u32 << 31) - 1;
+
+#[test]
+fn client_stream_id_new_out_of_range() {
+    assert_eq!(
+        ClientStreamId::new(STREAM_ID_MAX + 1),
+        Err(StreamIdError::OutOfRange {
+            value: STREAM_ID_MAX + 1,
+        })
+    );
+}
+
+#[test]
+fn non_zero_stream_id_new_out_of_range() {
+    assert_eq!(
+        NonZeroStreamId::new(STREAM_ID_MAX + 1),
+        Err(StreamIdError::OutOfRange {
+            value: STREAM_ID_MAX + 1,
+        })
+    );
+}
+
 #[test]
 fn client_stream_id_new_ok() {
-    let id = ClientStreamId::new(1).unwrap();
+    let id = ClientStreamId::new(1).expect("construction should succeed");
     assert_eq!(id.as_u32(), 1);
-    let id = ClientStreamId::new(2147483647).unwrap();
+    let id = ClientStreamId::new(2147483647).expect("construction should succeed");
     assert_eq!(id.as_u32(), 2147483647);
 }
 
@@ -37,7 +60,7 @@ fn client_stream_id_from_static() {
 
 #[test]
 fn server_stream_id_new_ok() {
-    let id = ServerStreamId::new(2).unwrap();
+    let id = ServerStreamId::new(2).expect("construction should succeed");
     assert_eq!(id.as_u32(), 2);
 }
 
@@ -60,11 +83,11 @@ fn server_stream_id_from_static() {
 
 #[test]
 fn non_zero_stream_id_new_classifies_parity() {
-    let id = NonZeroStreamId::new(1).unwrap();
+    let id = NonZeroStreamId::new(1).expect("construction should succeed");
     assert!(matches!(id, NonZeroStreamId::Client(_)));
     assert_eq!(id.as_u32(), 1);
 
-    let id = NonZeroStreamId::new(4).unwrap();
+    let id = NonZeroStreamId::new(4).expect("construction should succeed");
     assert!(matches!(id, NonZeroStreamId::Server(_)));
     assert_eq!(id.as_u32(), 4);
 }
@@ -91,12 +114,12 @@ fn non_zero_stream_id_from_static_server() {
 #[test]
 fn non_zero_stream_id_client_and_server() {
     let id = NonZeroStreamId::Client(ClientStreamId::from_static(5));
-    assert_eq!(id.client().unwrap().as_u32(), 5);
+    assert_eq!(id.client().expect("should succeed").as_u32(), 5);
     assert!(id.server().is_none());
 
     let id = NonZeroStreamId::Server(ServerStreamId::from_static(6));
     assert!(id.client().is_none());
-    assert_eq!(id.server().unwrap().as_u32(), 6);
+    assert_eq!(id.server().expect("should succeed").as_u32(), 6);
 }
 
 #[test]

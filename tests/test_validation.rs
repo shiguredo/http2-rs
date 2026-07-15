@@ -2,9 +2,26 @@ use shiguredo_http2::hpack::HeaderField;
 use shiguredo_http2::validation::{
     validate_request_headers, validate_response_headers, validate_trailers,
 };
+use shiguredo_http2::{HpackDecoder, HpackEncoder};
 
 fn h(name: &str, value: &str) -> HeaderField {
-    HeaderField::new(name, value).unwrap()
+    HeaderField::new(name, value).expect("テスト用ヘッダーは有効である")
+}
+
+/// HPACK decoder 経路で構築された HeaderField を返す (wire 上のバイト列を模擬)
+fn wire_header_field(name: &[u8], value: &[u8]) -> HeaderField {
+    let mut encoder = HpackEncoder::new(4096);
+    encoder.set_huffman(false);
+    let mut wire = Vec::new();
+    encoder.encode_header(&mut wire, name, value, false);
+    let mut decoder = HpackDecoder::new(4096);
+    let headers = decoder
+        .decode(&wire)
+        .expect("wire 符号化は有効な HPACK である");
+    headers
+        .into_iter()
+        .next()
+        .expect("wire 符号化は 1 件のヘッダーを生成する")
 }
 
 #[test]
@@ -360,5 +377,46 @@ fn test_asterisk_path_on_options_accepted() {
         h(":path", "*"),
         h(":authority", "example.com"),
     ];
+    assert!(validate_request_headers(&headers).is_ok());
+}
+
+#[test]
+fn test_uppercase_header_name_via_decoder_path() {
+    // HPACK decoder 経路で構築された大文字 name は
+    // check_field の再検査により InvalidHeaderField として弾かれる
+    let headers = vec![
+        h(":method", "GET"),
+        h(":scheme", "https"),
+        h(":path", "/"),
+        wire_header_field(b"Content-Type", b"text/html"),
+    ];
+    assert!(validate_request_headers(&headers).is_err());
+}
+
+#[test]
+fn test_empty_path_http_scheme_rejected() {
+    // RFC 9113 §8.3.1: http スキームでは :path 空は malformed
+    let headers = vec![h(":method", "GET"), h(":scheme", "http"), h(":path", "")];
+    assert!(validate_request_headers(&headers).is_err());
+}
+
+#[test]
+fn test_empty_path_https_scheme_rejected() {
+    // RFC 9113 §8.3.1: https スキームでは :path 空は malformed
+    let headers = vec![h(":method", "GET"), h(":scheme", "https"), h(":path", "")];
+    assert!(validate_request_headers(&headers).is_err());
+}
+
+#[test]
+fn test_empty_path_http_uppercase_rejected() {
+    // eq_ignore_ascii_case で大文字 HTTP も拒否される
+    let headers = vec![h(":method", "GET"), h(":scheme", "HTTP"), h(":path", "")];
+    assert!(validate_request_headers(&headers).is_err());
+}
+
+#[test]
+fn test_empty_path_non_http_scheme_accepted() {
+    // http/https 以外のスキームでは :path 空は許容
+    let headers = vec![h(":method", "GET"), h(":scheme", "ftp"), h(":path", "")];
     assert!(validate_request_headers(&headers).is_ok());
 }

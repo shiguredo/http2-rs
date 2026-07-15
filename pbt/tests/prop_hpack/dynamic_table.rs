@@ -20,7 +20,7 @@ fn valid_name() -> impl Strategy<Value = Vec<u8>> {
         prop::sample::select(
             (b'a'..=b'z')
                 .chain(b'0'..=b'9')
-                .chain([b'-', b'_'])
+                .chain(*b"-_")
                 .collect::<Vec<_>>(),
         ),
         1..100,
@@ -36,7 +36,10 @@ fn valid_value() -> impl Strategy<Value = Vec<u8>> {
         v.iter()
             .position(|&b| b != 0x20 && b != 0x09)
             .map(|start| {
-                let end = v.iter().rposition(|&b| b != 0x20 && b != 0x09).unwrap();
+                let end = v
+                    .iter()
+                    .rposition(|&b| b != 0x20 && b != 0x09)
+                    .expect("should succeed");
                 v[start..=end].to_vec()
             })
             .unwrap_or_default()
@@ -71,7 +74,7 @@ proptest! {
         for op in ops {
             match op {
                 TableOp::Insert { name, value } => {
-                    table.insert(name, value).unwrap();
+                    table.insert(name, value).expect("should succeed");
                 }
                 TableOp::SetMaxSize(new_max) => {
                     table.set_max_size(new_max);
@@ -102,7 +105,7 @@ proptest! {
         let mut table = DynamicTable::new(max_size);
 
         for (name, value) in entries {
-            table.insert(name, value).unwrap();
+            table.insert(name, value).expect("should succeed");
         }
 
         // 全エントリのサイズの合計を計算
@@ -131,10 +134,10 @@ proptest! {
         let mut table = DynamicTable::new(max_size);
 
         for (name, value) in &entries {
-            table.insert(name.clone(), value.clone()).unwrap();
+            table.insert(name.clone(), value.clone()).expect("should succeed");
 
             // 最新のエントリは常に index 0
-            let newest = table.get(0).unwrap();
+            let newest = table.get(0).expect("value should be present");
             prop_assert_eq!(newest.name(), name);
             prop_assert_eq!(newest.value(), value);
         }
@@ -153,7 +156,7 @@ proptest! {
         // 初期エントリを追加
         for (name, value) in initial_entries {
             if entry_size(&name, &value) <= max_size {
-                table.insert(name, value).unwrap();
+                table.insert(name, value).expect("should succeed");
             }
         }
 
@@ -164,7 +167,7 @@ proptest! {
         let large_value = vec![b'y'; 1];
         prop_assert!(entry_size(&large_name, &large_value) > max_size);
 
-        table.insert(large_name, large_value).unwrap();
+        table.insert(large_name, large_value).expect("should succeed");
 
         // テーブルはクリアされる
         prop_assert!(table.is_empty(), "Table should be empty after oversized insert");
@@ -189,7 +192,7 @@ proptest! {
 
         // エントリを追加
         for (name, value) in entries {
-            table.insert(name, value).unwrap();
+            table.insert(name, value).expect("should succeed");
         }
 
         // max_size を減少
@@ -219,7 +222,7 @@ proptest! {
         prop_assume!(size <= max_size);
 
         let mut table = DynamicTable::new(max_size);
-        table.insert(name.clone(), value.clone()).unwrap();
+        table.insert(name.clone(), value.clone()).expect("construction should succeed");
 
         // 完全一致で見つかる
         let result = table.find(&name, &value);
@@ -240,7 +243,7 @@ proptest! {
         prop_assume!(entry_size(&name, &value1) <= max_size);
 
         let mut table = DynamicTable::new(max_size);
-        table.insert(name.clone(), value1).unwrap();
+        table.insert(name.clone(), value1).expect("construction should succeed");
 
         // 名前のみ一致
         let result = table.find(&name, &value2);
@@ -261,7 +264,7 @@ proptest! {
         prop_assume!(entry_size(&name1, &value1) <= max_size);
 
         let mut table = DynamicTable::new(max_size);
-        table.insert(name1, value1).unwrap();
+        table.insert(name1, value1).expect("construction should succeed");
 
         // 異なる名前は見つからない
         let result = table.find(&name2, b"any");
@@ -280,9 +283,9 @@ proptest! {
         let expected = name.len() + value.len() + 32;
 
         let mut table = DynamicTable::new(expected + 100);
-        table.insert(name.clone(), value.clone()).unwrap();
+        table.insert(name.clone(), value.clone()).expect("construction should succeed");
 
-        let entry = table.get(0).unwrap();
+        let entry = table.get(0).expect("value should be present");
         prop_assert_eq!(
             entry.size(),
             expected,
@@ -302,7 +305,7 @@ proptest! {
 
         // エントリを追加
         for (name, value) in entries {
-            table.insert(name, value).unwrap();
+            table.insert(name, value).expect("should succeed");
         }
 
         // クリア
@@ -329,21 +332,21 @@ proptest! {
         let num_entries = max_size / small_entry_size;
 
         for i in 0..num_entries {
-            table.insert(format!("n{i:02}").into_bytes(), vec![b'v']).unwrap();
+            table.insert(format!("n{i:02}").into_bytes(), vec![b'v']).expect("should succeed");
         }
 
         prop_assert_eq!(table.len(), num_entries);
 
         // 追加のエントリを挿入 -> 最も古いエントリが削除される
-        table.insert(b"new", vec![b'v']).unwrap();
+        table.insert(b"new", vec![b'v']).expect("should succeed");
 
         // 最新のエントリが index 0 にある
-        prop_assert_eq!(table.get(0).unwrap().name(), b"new");
+        prop_assert_eq!(table.get(0).expect("value should be present").name(), b"new");
 
         // 最も古いエントリ (n00) は削除されている
         let mut found_n00 = false;
         for i in 0..table.len() {
-            if table.get(i).unwrap().name() == b"n00" {
+            if table.get(i).expect("value should be present").name() == b"n00" {
                 found_n00 = true;
                 break;
             }
@@ -363,7 +366,7 @@ proptest! {
 
         for (name, value) in entries {
             if entry_size(&name, &value) <= initial_max {
-                table.insert(name, value).unwrap();
+                table.insert(name, value).expect("should succeed");
             }
         }
 
@@ -387,7 +390,7 @@ proptest! {
 
         for (name, value) in entries {
             if entry_size(&name, &value) <= max_size {
-                table.insert(name.clone(), value.clone()).unwrap();
+                table.insert(name.clone(), value.clone()).expect("should succeed");
                 inserted.push((name, value));
             }
         }
@@ -422,7 +425,7 @@ proptest! {
             let size_before = table.size();
             let entry_sz = entry_size(&name, &value);
 
-            table.insert(name, value).unwrap();
+            table.insert(name, value).expect("should succeed");
 
             // エントリが追加された場合、サイズは増加する
             // eviction が発生した場合、サイズは減少する可能性がある

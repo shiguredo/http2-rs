@@ -28,12 +28,17 @@ const DEFAULT_LISTEN: &str = "127.0.0.1:4443";
 
 #[tokio::main]
 async fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
 
     let args = parse_args();
 
     if let Err(e) = run_server(&args.listen, args.reject_connect).await {
-        log::error!("server error: {e}");
+        tracing::error!("server error: {e}");
     }
 }
 
@@ -61,7 +66,7 @@ async fn run_server(listen: &str, reject_connect: bool) -> Result<(), Error> {
     let server = Server::bind(addr, tls_config, limits).await?;
     let local_addr = server.local_addr();
 
-    log::info!("WebTransport (HTTP/2) server listening on https://{local_addr}");
+    tracing::info!("WebTransport (HTTP/2) server listening on https://{local_addr}");
 
     loop {
         tokio::select! {
@@ -69,21 +74,21 @@ async fn run_server(listen: &str, reject_connect: bool) -> Result<(), Error> {
                 match result {
                     Ok(conn) => {
                         let remote = conn.remote_addr();
-                        log::info!("[{remote}] connection accepted");
+                        tracing::info!("[{remote}] connection accepted");
                         let reject = reject_connect;
                         tokio::spawn(async move {
                             if let Err(e) = handle_connection(conn, reject).await {
-                                log::error!("[{remote}] connection error: {e}");
+                                tracing::error!("[{remote}] connection error: {e}");
                             }
                         });
                     }
                     Err(e) => {
-                        log::error!("accept error: {e}");
+                        tracing::error!("accept error: {e}");
                     }
                 }
             }
             _ = tokio::signal::ctrl_c() => {
-                log::info!("shutting down");
+                tracing::info!("shutting down");
                 break;
             }
         }
@@ -106,7 +111,7 @@ async fn handle_connection(mut conn: ServerConnection, reject_connect: bool) -> 
         } = ev
         {
             if protocol.as_deref() != Some(tokio_http2::WEBTRANSPORT_PROTOCOL) {
-                log::warn!(
+                tracing::warn!(
                     "[{remote}] non-WebTransport request received (protocol={:?}); closing",
                     protocol
                         .as_deref()
@@ -115,7 +120,7 @@ async fn handle_connection(mut conn: ServerConnection, reject_connect: bool) -> 
                 return Ok(());
             }
             if end_stream {
-                log::warn!("[{remote}] CONNECT with END_STREAM (invalid); closing");
+                tracing::warn!("[{remote}] CONNECT with END_STREAM (invalid); closing");
                 return Ok(());
             }
             break (stream_id, headers);
@@ -131,16 +136,16 @@ async fn handle_connection(mut conn: ServerConnection, reject_connect: bool) -> 
         .authority()
         .map(|a| String::from_utf8_lossy(a).into_owned())
         .unwrap_or_default();
-    log::info!("[{remote}] WT CONNECT authority={authority} path={path}");
+    tracing::info!("[{remote}] WT CONNECT authority={authority} path={path}");
 
     if reject_connect {
-        log::warn!("[{remote}] rejecting with 404 (--reject-connect)");
+        tracing::warn!("[{remote}] rejecting with 404 (--reject-connect)");
         req.reject(404).await?;
         return Ok(());
     }
 
     let session = req.accept(WtConfig::default(), None).await?;
-    log::info!(
+    tracing::info!(
         "[{remote}] session accepted (session_id={})",
         session.session_id()
     );
@@ -168,7 +173,7 @@ async fn run_echo(parts: WtSessionParts, remote: SocketAddr) -> Result<(), Error
                         let r = remote;
                         tokio::spawn(async move {
                             if let Err(e) = handle_bidi(bidi, r).await {
-                                log::error!("[{r}] bidi error: {e}");
+                                tracing::error!("[{r}] bidi error: {e}");
                             }
                         });
                     }
@@ -182,7 +187,7 @@ async fn run_echo(parts: WtSessionParts, remote: SocketAddr) -> Result<(), Error
                         let h = handle.clone();
                         tokio::spawn(async move {
                             if let Err(e) = handle_uni(uni, h, r).await {
-                                log::error!("[{r}] uni error: {e}");
+                                tracing::error!("[{r}] uni error: {e}");
                             }
                         });
                     }
@@ -192,9 +197,9 @@ async fn run_echo(parts: WtSessionParts, remote: SocketAddr) -> Result<(), Error
             datagram = datagram_rx.recv() => {
                 match datagram {
                     Some(data) => {
-                        log::debug!("[{remote}] datagram received: {} bytes", data.len());
+                        tracing::debug!("[{remote}] datagram received: {} bytes", data.len());
                         if let Err(e) = handle.send_datagram(data).await {
-                            log::error!("[{remote}] datagram echo failed: {e}");
+                            tracing::error!("[{remote}] datagram echo failed: {e}");
                             break;
                         }
                     }
@@ -205,18 +210,18 @@ async fn run_echo(parts: WtSessionParts, remote: SocketAddr) -> Result<(), Error
     }
 
     let _ = driver.await;
-    log::info!("[{remote}] session finished");
+    tracing::info!("[{remote}] session finished");
     Ok(())
 }
 
 async fn handle_bidi(mut bidi: WtBidiStream, remote: SocketAddr) -> Result<(), Error> {
     let sid = bidi.stream_id();
-    log::info!("[{remote}] bidi stream accepted (id={sid})");
+    tracing::info!("[{remote}] bidi stream accepted (id={sid})");
     while let Some(data) = bidi.recv().await? {
-        log::debug!("[{remote}] bidi {sid}: received {} bytes", data.len());
+        tracing::debug!("[{remote}] bidi {sid}: received {} bytes", data.len());
         bidi.send(data, false).await?;
     }
-    log::info!("[{remote}] bidi stream closed (id={sid})");
+    tracing::info!("[{remote}] bidi stream closed (id={sid})");
     Ok(())
 }
 
@@ -226,15 +231,15 @@ async fn handle_uni(
     remote: SocketAddr,
 ) -> Result<(), Error> {
     let recv_id = uni.stream_id();
-    log::info!("[{remote}] uni recv stream accepted (id={recv_id})");
+    tracing::info!("[{remote}] uni recv stream accepted (id={recv_id})");
 
     // エコー先の送信ストリームを開く
     let send_stream = handle.open_uni().await?;
     let send_id = send_stream.stream_id();
-    log::info!("[{remote}] uni send stream opened (id={send_id}) for echo of {recv_id}");
+    tracing::info!("[{remote}] uni send stream opened (id={send_id}) for echo of {recv_id}");
 
     while let Some(data) = uni.recv().await? {
-        log::debug!(
+        tracing::debug!(
             "[{remote}] uni {recv_id}: received {} bytes; echoing on {send_id}",
             data.len()
         );
@@ -242,7 +247,7 @@ async fn handle_uni(
     }
     // FIN を送って送信側を閉じる
     send_stream.send(Vec::new(), true).await?;
-    log::info!("[{remote}] uni streams finished (recv={recv_id}, send={send_id})");
+    tracing::info!("[{remote}] uni streams finished (recv={recv_id}, send={send_id})");
     Ok(())
 }
 
@@ -269,7 +274,7 @@ fn parse_args() -> Args {
         .default(DEFAULT_LISTEN)
         .take(&mut args)
         .then(|o| Ok::<_, std::convert::Infallible>(o.value().to_string()))
-        .unwrap();
+        .expect("conversion should succeed");
 
     let reject_connect: bool = noargs::flag("reject-connect")
         .doc("Reject every WebTransport CONNECT with 404 (WtServerRequest::reject demo)")

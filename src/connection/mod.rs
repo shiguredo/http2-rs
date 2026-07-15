@@ -1467,8 +1467,8 @@ mod tests {
     #[test]
     fn concatenate_cookies_returns_input_when_cookie_count_is_zero() {
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header"),
+            HeaderField::new(":path", "/").expect("valid header"),
         ];
         let input = headers.clone();
         let output = concatenate_cookies(headers);
@@ -1482,9 +1482,9 @@ mod tests {
     #[test]
     fn concatenate_cookies_returns_input_when_cookie_count_is_one() {
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new("cookie", "a=1").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header"),
+            HeaderField::new("cookie", "a=1").expect("valid header"),
+            HeaderField::new(":path", "/").expect("valid header"),
         ];
         let input = headers.clone();
         let output = concatenate_cookies(headers);
@@ -1499,10 +1499,10 @@ mod tests {
     fn concatenate_cookies_all_empty_cookies_excluded() {
         // 全 cookie が空の場合、出力に cookie ヘッダーが含まれない
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new("cookie", "").unwrap(),
-            HeaderField::new("cookie", "").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header"),
+            HeaderField::new("cookie", "").expect("valid header"),
+            HeaderField::new("cookie", "").expect("valid header"),
+            HeaderField::new(":path", "/").expect("valid header"),
         ];
         let output = concatenate_cookies(headers);
         assert!(
@@ -1519,12 +1519,12 @@ mod tests {
     fn concatenate_cookies_no_double_separator() {
         // 空 cookie 混在時に連結結果に "; ;" が含まれないことを確認
         let headers = vec![
-            HeaderField::new("cookie", "a=1").unwrap(),
-            HeaderField::new("cookie", "").unwrap(),
-            HeaderField::new("cookie", "b=2").unwrap(),
+            HeaderField::new("cookie", "a=1").expect("valid header"),
+            HeaderField::new("cookie", "").expect("valid header"),
+            HeaderField::new("cookie", "b=2").expect("valid header"),
         ];
         let output = concatenate_cookies(headers);
-        let cookie = output.last().unwrap();
+        let cookie = output.last().expect("連結 cookie は末尾に 1 件存在する");
         assert_eq!(cookie.name(), b"cookie");
         assert!(
             !cookie.value().windows(3).any(|w| w == b"; ;"),
@@ -1537,19 +1537,29 @@ mod tests {
     fn concatenate_cookies_sensitive_propagation() {
         // sensitive フラグは cookie 全体の OR
         let headers = vec![
-            HeaderField::new_with_sensitive("cookie", "a=1", true).unwrap(),
-            HeaderField::new_with_sensitive("cookie", "b=2", false).unwrap(),
+            HeaderField::new_with_sensitive("cookie", "a=1", true).expect("valid header"),
+            HeaderField::new_with_sensitive("cookie", "b=2", false).expect("valid header"),
         ];
         let output = concatenate_cookies(headers);
-        assert!(output.last().unwrap().sensitive());
+        assert!(
+            output
+                .last()
+                .expect("連結 cookie は末尾に 1 件存在する")
+                .sensitive()
+        );
 
         // 全て false なら結果も false
         let headers = vec![
-            HeaderField::new_with_sensitive("cookie", "x=1", false).unwrap(),
-            HeaderField::new_with_sensitive("cookie", "y=2", false).unwrap(),
+            HeaderField::new_with_sensitive("cookie", "x=1", false).expect("valid header"),
+            HeaderField::new_with_sensitive("cookie", "y=2", false).expect("valid header"),
         ];
         let output = concatenate_cookies(headers);
-        assert!(!output.last().unwrap().sensitive());
+        assert!(
+            !output
+                .last()
+                .expect("連結 cookie は末尾に 1 件存在する")
+                .sensitive()
+        );
     }
 
     /// cookie 値の Strategy: 空 (1/4 の確率) または 印字可能 ASCII 1..=32 文字
@@ -1581,7 +1591,7 @@ mod tests {
             for (i, value) in non_cookie_values.iter().take(non_cookie_count).enumerate() {
                 let name = format!("x-header-{i}");
                 let v = String::from_utf8_lossy(value).to_string();
-                input.push(HeaderField::new(&name, &v).unwrap());
+                input.push(HeaderField::new(&name, &v).expect("valid header"));
             }
             let cookie_input: Vec<_> = cookie_values[..cookie_count]
                 .iter()
@@ -1590,7 +1600,8 @@ mod tests {
             for (value, sensitive) in cookie_input {
                 let v = String::from_utf8_lossy(value).to_string();
                 input.push(
-                    HeaderField::new_with_sensitive("cookie", &v, *sensitive).unwrap(),
+                    HeaderField::new_with_sensitive("cookie", &v, *sensitive)
+                        .expect("valid header"),
                 );
             }
 
@@ -1620,7 +1631,7 @@ mod tests {
                 } else {
                     // ケース C: 1 件以上非空 cookie → 末尾に連結 cookie
                     prop_assert_eq!(
-                        output.last().unwrap().name(),
+                        output.last().expect("連結 cookie は末尾に存在する").name(),
                         b"cookie",
                         "連結 cookie は末尾に配置される"
                     );
@@ -1636,7 +1647,10 @@ mod tests {
                         prop_assert_eq!(a.value(), b.value());
                     }
                     // 二重区切り不在
-                    let cookie_value = output.last().unwrap().value();
+                    let cookie_value = output
+                        .last()
+                        .expect("連結 cookie は末尾に存在する")
+                        .value();
                     prop_assert!(
                         !cookie_value.windows(3).any(|w| w == b"; ;"),
                         "連結結果に二重区切り '; ;' が含まれてはならない"
@@ -1644,7 +1658,13 @@ mod tests {
                     // sensitive フラグは全 cookie の OR (空 cookie も含む)
                     let expected_sensitive =
                         cookie_sensitives[..cookie_count].iter().any(|s| *s);
-                    prop_assert_eq!(output.last().unwrap().sensitive(), expected_sensitive);
+                    prop_assert_eq!(
+                        output
+                            .last()
+                            .expect("連結 cookie は末尾に存在する")
+                            .sensitive(),
+                        expected_sensitive
+                    );
                 }
             }
         }

@@ -6,8 +6,8 @@ fn test_encode_header_list() {
     let mut buf = Vec::new();
 
     let headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
     ];
 
     encoder.encode(&mut buf, &headers);
@@ -24,8 +24,9 @@ fn test_encode_sensitive_header() {
     let mut buf = Vec::new();
 
     let headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new_with_sensitive("authorization", "Bearer token", true).unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new_with_sensitive("authorization", "Bearer token", true)
+            .expect("valid header field"),
     ];
 
     encoder.encode(&mut buf, &headers);

@@ -16,7 +16,7 @@ fn generate_test_cert() -> TlsServerConfig {
 
     TlsServerConfig::from_der(
         vec![CertificateDer::from(cert.der().to_vec())],
-        PrivateKeyDer::try_from(signing_key.serialize_der()).unwrap(),
+        PrivateKeyDer::try_from(signing_key.serialize_der()).expect("should succeed"),
     )
     .expect("failed to create TLS server config")
 }
@@ -28,9 +28,13 @@ async fn test_basic_request_response() {
     let limits = Limits::default();
 
     // サーバー起動
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     // サーバータスク
@@ -71,7 +75,8 @@ async fn test_basic_request_response() {
                     assert_eq!(path.value(), b"/");
 
                     // レスポンス送信
-                    let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                    let response_headers =
+                        vec![HeaderField::new(":status", "200").expect("valid header field")];
                     conn.send_response(stream_id, response_headers, true)
                         .await
                         .expect("failed to send response");
@@ -90,10 +95,10 @@ async fn test_basic_request_response() {
 
     // リクエスト送信
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -138,9 +143,13 @@ async fn test_ping_pong() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -199,9 +208,13 @@ async fn test_settings_exchange() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -271,9 +284,13 @@ async fn test_multiple_streams() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -290,7 +307,8 @@ async fn test_multiple_streams() {
                 }) => {
                     if end_stream {
                         // レスポンス送信
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -325,10 +343,10 @@ async fn test_multiple_streams() {
     let mut stream_ids = Vec::new();
     for i in 0..3 {
         let request_headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", format!("/path{}", i)).unwrap(),
-            HeaderField::new(":authority", "localhost").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", format!("/path{}", i)).expect("valid header field"),
+            HeaderField::new(":authority", "localhost").expect("valid header field"),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -374,9 +392,13 @@ async fn test_goaway() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -424,9 +446,13 @@ async fn test_rst_stream() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -469,10 +495,10 @@ async fn test_rst_stream() {
 
     // リクエスト送信
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -507,9 +533,13 @@ async fn test_many_concurrent_streams() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let stream_count = 50;
@@ -526,7 +556,8 @@ async fn test_many_concurrent_streams() {
                     ..
                 }) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -559,10 +590,10 @@ async fn test_many_concurrent_streams() {
     let mut stream_ids = Vec::new();
     for i in 0..stream_count {
         let request_headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":authority", "localhost").unwrap(),
-            HeaderField::new(":path", format!("/path/{}", i)).unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":authority", "localhost").expect("valid header field"),
+            HeaderField::new(":path", format!("/path/{}", i)).expect("valid header field"),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -599,9 +630,13 @@ async fn test_rapid_rst_stream() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let rst_count = 10;
@@ -650,10 +685,10 @@ async fn test_rapid_rst_stream() {
     let mut stream_ids = Vec::new();
     for _ in 0..rst_count {
         let request_headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":authority", "localhost").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":authority", "localhost").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -687,9 +722,13 @@ async fn test_rapid_ping() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let ping_count: u8 = 20;
@@ -751,9 +790,13 @@ async fn test_many_small_data_frames() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let chunk_count: usize = 100;
@@ -770,7 +813,8 @@ async fn test_many_small_data_frames() {
                     ..
                 } => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
@@ -803,10 +847,10 @@ async fn test_many_small_data_frames() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
     ];
     client
         .send_request(request_headers, true)
@@ -842,9 +886,13 @@ async fn test_many_headers() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let header_count = 50;
@@ -868,7 +916,8 @@ async fn test_many_headers() {
                             .count();
                         assert_eq!(custom_count, header_count);
 
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -894,14 +943,16 @@ async fn test_many_headers() {
     }
 
     let mut request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
     ];
     for i in 0..header_count {
-        request_headers
-            .push(HeaderField::new(format!("x-test-{}", i), format!("value-{}", i)).unwrap());
+        request_headers.push(
+            HeaderField::new(format!("x-test-{}", i), format!("value-{}", i))
+                .expect("valid header field"),
+        );
     }
 
     let stream_id = client
@@ -933,9 +984,13 @@ async fn test_goaway_then_drain() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -963,7 +1018,8 @@ async fn test_goaway_then_drain() {
         conn.shutdown().await.expect("failed to send goaway");
 
         // 既存ストリームにはレスポンスを返す
-        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+        let response_headers =
+            vec![HeaderField::new(":status", "200").expect("valid header field")];
         conn.send_response(stream_id, response_headers, true)
             .await
             .expect("failed to send response");
@@ -982,10 +1038,10 @@ async fn test_goaway_then_drain() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -1026,9 +1082,13 @@ async fn test_bidirectional_streaming() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1042,7 +1102,8 @@ async fn test_bidirectional_streaming() {
             match event {
                 Event::HeadersReceived { stream_id: sid, .. } => {
                     stream_id = Some(sid);
-                    let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                    let response_headers =
+                        vec![HeaderField::new(":status", "200").expect("valid header field")];
                     conn.send_response(sid, response_headers, false)
                         .await
                         .expect("failed to send response");
@@ -1077,10 +1138,10 @@ async fn test_bidirectional_streaming() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "POST").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":path", "/echo").unwrap(),
+        HeaderField::new(":method", "POST").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":path", "/echo").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -1129,9 +1190,13 @@ async fn test_interleaved_streams() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1146,7 +1211,8 @@ async fn test_interleaved_streams() {
                     ..
                 }) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
@@ -1185,10 +1251,10 @@ async fn test_interleaved_streams() {
 
     for _ in 0..5 {
         let request_headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":authority", "localhost").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":authority", "localhost").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
         ];
         client
             .send_request(request_headers, true)
@@ -1224,9 +1290,13 @@ async fn test_response_with_data() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1241,7 +1311,8 @@ async fn test_response_with_data() {
                     ..
                 } => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
@@ -1273,10 +1344,10 @@ async fn test_response_with_data() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
     ];
     client
         .send_request(request_headers, true)
@@ -1316,9 +1387,13 @@ async fn test_post_request_with_body() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1353,9 +1428,9 @@ async fn test_post_request_with_body() {
                         let sid = stream_id.expect("data received before headers");
                         // エコーレスポンス
                         let response_headers = vec![
-                            HeaderField::new(":status", "200").unwrap(),
+                            HeaderField::new(":status", "200").expect("valid header field"),
                             HeaderField::new("content-length", request_body.len().to_string())
-                                .unwrap(),
+                                .expect("conversion should succeed"),
                         ];
                         conn.send_response(sid, response_headers, false)
                             .await
@@ -1384,11 +1459,11 @@ async fn test_post_request_with_body() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "POST").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/api/data").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new("content-type", "application/json").unwrap(),
+        HeaderField::new(":method", "POST").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/api/data").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new("content-type", "application/json").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -1436,9 +1511,13 @@ async fn test_large_body() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     // 64KB のデータ (デフォルトウィンドウサイズ 65535 に近い)
@@ -1464,7 +1543,8 @@ async fn test_large_body() {
             }
         };
 
-        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+        let response_headers =
+            vec![HeaderField::new(":status", "200").expect("valid header field")];
         conn.send_response(stream_id, response_headers, false)
             .await
             .expect("failed to send response");
@@ -1493,10 +1573,10 @@ async fn test_large_body() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/large").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/large").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     client
         .send_request(request_headers, true)
@@ -1535,9 +1615,13 @@ async fn test_status_codes() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1567,7 +1651,8 @@ async fn test_status_codes() {
                             _ => "200",
                         };
 
-                        let response_headers = vec![HeaderField::new(":status", status).unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", status).expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -1601,10 +1686,10 @@ async fn test_status_codes() {
     let mut stream_ids = Vec::new();
     for path in &paths {
         let request_headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", path).unwrap(),
-            HeaderField::new(":authority", "localhost").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", path).expect("valid header field"),
+            HeaderField::new(":authority", "localhost").expect("valid header field"),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -1658,9 +1743,13 @@ async fn test_stream_closed_event() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1675,7 +1764,8 @@ async fn test_stream_closed_event() {
                     ..
                 } => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -1707,10 +1797,10 @@ async fn test_stream_closed_event() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -1762,9 +1852,13 @@ async fn test_goaway_with_error_and_debug_data() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1815,9 +1909,13 @@ async fn test_multiple_clients() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let client_count = 3;
@@ -1835,8 +1933,9 @@ async fn test_multiple_clients() {
                             ..
                         }) => {
                             if end_stream {
-                                let response_headers =
-                                    vec![HeaderField::new(":status", "200").unwrap()];
+                                let response_headers = vec![
+                                    HeaderField::new(":status", "200").expect("valid header field"),
+                                ];
                                 conn.send_response(stream_id, response_headers, true)
                                     .await
                                     .expect("failed to send response");
@@ -1868,10 +1967,11 @@ async fn test_multiple_clients() {
             }
 
             let request_headers = vec![
-                HeaderField::new(":method", "GET").unwrap(),
-                HeaderField::new(":scheme", "https").unwrap(),
-                HeaderField::new(":path", format!("/client/{}", client_idx)).unwrap(),
-                HeaderField::new(":authority", "localhost").unwrap(),
+                HeaderField::new(":method", "GET").expect("valid header field"),
+                HeaderField::new(":scheme", "https").expect("valid header field"),
+                HeaderField::new(":path", format!("/client/{}", client_idx))
+                    .expect("valid header field"),
+                HeaderField::new(":authority", "localhost").expect("valid header field"),
             ];
             let stream_id = client
                 .send_request(request_headers, true)
@@ -1919,9 +2019,13 @@ async fn test_limits_max_concurrent_streams() {
         .build()
         .expect("valid limits");
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1936,7 +2040,8 @@ async fn test_limits_max_concurrent_streams() {
                     ..
                 }) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -1967,10 +2072,10 @@ async fn test_limits_max_concurrent_streams() {
     // max_concurrent_streams=1 でも逐次リクエストは正常動作すべき
     for i in 0..3 {
         let request_headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", format!("/seq/{}", i)).unwrap(),
-            HeaderField::new(":authority", "localhost").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", format!("/seq/{}", i)).expect("valid header field"),
+            HeaderField::new(":authority", "localhost").expect("valid header field"),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -2006,9 +2111,13 @@ async fn test_window_update_received() {
         .build()
         .expect("valid limits");
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -2022,7 +2131,8 @@ async fn test_window_update_received() {
                     ..
                 }) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -2054,10 +2164,10 @@ async fn test_window_update_received() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     client
         .send_request(request_headers, true)
@@ -2093,9 +2203,13 @@ async fn test_large_request_body() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let body_size: usize = 50000;
@@ -2121,9 +2235,9 @@ async fn test_large_request_body() {
                         let sid = stream_id.expect("data received before headers");
                         // 受信サイズをレスポンスで返す
                         let response_headers = vec![
-                            HeaderField::new(":status", "200").unwrap(),
+                            HeaderField::new(":status", "200").expect("valid header field"),
                             HeaderField::new("x-received-size", received_body.len().to_string())
-                                .unwrap(),
+                                .expect("conversion should succeed"),
                         ];
                         conn.send_response(sid, response_headers, true)
                             .await
@@ -2151,10 +2265,10 @@ async fn test_large_request_body() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "POST").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/upload").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "POST").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/upload").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -2188,9 +2302,9 @@ async fn test_large_request_body() {
                 .find(|h| h.name() == b"x-received-size")
                 .expect("missing x-received-size");
             let size: usize = std::str::from_utf8(received_size.value())
-                .unwrap()
+                .expect("should succeed")
                 .parse()
-                .unwrap();
+                .expect("parse should succeed");
             assert_eq!(size, body_size);
             break;
         }
@@ -2208,9 +2322,13 @@ async fn test_poll_event() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -2224,7 +2342,8 @@ async fn test_poll_event() {
                     ..
                 }) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -2262,10 +2381,10 @@ async fn test_poll_event() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     client
         .send_request(request_headers, true)
@@ -2291,9 +2410,13 @@ async fn test_content_length_response() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let body = b"Hello, HTTP/2 World!";
@@ -2310,9 +2433,11 @@ async fn test_content_length_response() {
                 }) => {
                     if end_stream {
                         let response_headers = vec![
-                            HeaderField::new(":status", "200").unwrap(),
-                            HeaderField::new("content-length", body.len().to_string()).unwrap(),
-                            HeaderField::new("content-type", "text/plain").unwrap(),
+                            HeaderField::new(":status", "200").expect("valid header field"),
+                            HeaderField::new("content-length", body.len().to_string())
+                                .expect("valid header field"),
+                            HeaderField::new("content-type", "text/plain")
+                                .expect("valid header field"),
                         ];
                         conn.send_response(stream_id, response_headers, false)
                             .await
@@ -2342,10 +2467,10 @@ async fn test_content_length_response() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     client
         .send_request(request_headers, true)
@@ -2389,9 +2514,13 @@ async fn test_multiple_streams_with_bodies() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let stream_count = 5;
@@ -2415,7 +2544,8 @@ async fn test_multiple_streams_with_bodies() {
                             .map(|h| String::from_utf8_lossy(h.value()).to_string())
                             .unwrap_or_default();
 
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
@@ -2450,10 +2580,10 @@ async fn test_multiple_streams_with_bodies() {
     let mut stream_ids = Vec::new();
     for i in 0..stream_count {
         let request_headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", format!("/item/{}", i)).unwrap(),
-            HeaderField::new(":authority", "localhost").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", format!("/item/{}", i)).expect("valid header field"),
+            HeaderField::new(":authority", "localhost").expect("valid header field"),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -2505,9 +2635,13 @@ async fn test_rst_stream_then_continue() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -2530,8 +2664,9 @@ async fn test_rst_stream_then_continue() {
                                 .expect("failed to send rst_stream");
                         } else {
                             // 2 番目のリクエストは正常レスポンス
-                            let response_headers =
-                                vec![HeaderField::new(":status", "200").unwrap()];
+                            let response_headers = vec![
+                                HeaderField::new(":status", "200").expect("valid header field"),
+                            ];
                             conn.send_response(stream_id, response_headers, true)
                                 .await
                                 .expect("failed to send response");
@@ -2559,10 +2694,10 @@ async fn test_rst_stream_then_continue() {
 
     // 最初のリクエスト (拒否される)
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/rejected").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/rejected").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream1 = client
         .send_request(request_headers, true)
@@ -2585,10 +2720,10 @@ async fn test_rst_stream_then_continue() {
 
     // 2 番目のリクエスト (正常)
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/ok").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/ok").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream2 = client
         .send_request(request_headers, true)
@@ -2625,9 +2760,13 @@ async fn test_head_request() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -2650,8 +2789,8 @@ async fn test_head_request() {
 
                         // HEAD レスポンスは content-length 付きでもボディなし
                         let response_headers = vec![
-                            HeaderField::new(":status", "200").unwrap(),
-                            HeaderField::new("content-length", "1000").unwrap(),
+                            HeaderField::new(":status", "200").expect("valid header field"),
+                            HeaderField::new("content-length", "1000").expect("valid header field"),
                         ];
                         conn.send_response(stream_id, response_headers, true)
                             .await
@@ -2678,10 +2817,10 @@ async fn test_head_request() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "HEAD").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "HEAD").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -2721,9 +2860,13 @@ async fn test_delete_request() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -2744,7 +2887,8 @@ async fn test_delete_request() {
                             .map(|h| h.value());
                         assert_eq!(method, Some(b"DELETE" as &[u8]));
 
-                        let response_headers = vec![HeaderField::new(":status", "204").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "204").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -2770,10 +2914,10 @@ async fn test_delete_request() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "DELETE").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/resource/123").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "DELETE").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/resource/123").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -2810,9 +2954,13 @@ async fn test_put_request_with_body() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -2843,7 +2991,8 @@ async fn test_put_request_with_body() {
                     request_body.extend_from_slice(&data);
                     if end_stream {
                         let sid = stream_id.expect("data received before headers");
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(sid, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -2870,10 +3019,10 @@ async fn test_put_request_with_body() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "PUT").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/resource/456").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "PUT").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/resource/456").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -2912,9 +3061,13 @@ async fn test_drive() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -2928,7 +3081,8 @@ async fn test_drive() {
                     ..
                 }) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
@@ -2966,10 +3120,10 @@ async fn test_drive() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     client
         .send_request(request_headers, true)
@@ -3002,9 +3156,13 @@ async fn test_send_data_after_reset() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -3046,10 +3204,10 @@ async fn test_send_data_after_reset() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "POST").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "POST").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -3095,9 +3253,13 @@ async fn test_custom_initial_window_size() {
         .build()
         .expect("valid limits");
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let body_size: usize = 100_000;
@@ -3113,7 +3275,8 @@ async fn test_custom_initial_window_size() {
                     ..
                 }) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
@@ -3151,10 +3314,10 @@ async fn test_custom_initial_window_size() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     client
         .send_request(request_headers, true)
@@ -3187,7 +3350,7 @@ async fn test_custom_initial_window_size() {
 
 /// デフォルトウィンドウ (65535) で 65535 bytes を超えるレスポンスボディを送受信する
 ///
-/// issue 0041: クライアント側で `send_window_update` を返さない / Connection 側で接続レベル
+/// クライアント側で `send_window_update` を返さない / Connection 側で接続レベル
 /// `send_window` が誤って `connection_window_size` で初期化されている / `connection_window_size`
 /// が拡張されたときに WINDOW_UPDATE が広告されない、のいずれかが残っていると、サーバーの送信
 /// ウィンドウが 65535 で枯渇しテスト全体タイムアウトに到達する。
@@ -3198,9 +3361,13 @@ async fn test_response_body_exceeds_default_connection_window() {
     let tls_config = generate_test_cert();
     let limits = Limits::default();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits.clone())
-        .await
-        .expect("サーバーの bind に失敗");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits.clone(),
+    )
+    .await
+    .expect("サーバーの bind に失敗");
     let server_addr = server.local_addr();
 
     // デフォルト接続ウィンドウ (65535) を確実に超え、フロー制御が発動する
@@ -3231,7 +3398,8 @@ async fn test_response_body_exceeds_default_connection_window() {
             }
         };
 
-        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+        let response_headers =
+            vec![HeaderField::new(":status", "200").expect("valid header field")];
         conn.send_response(stream_id, response_headers, false)
             .await
             .expect("レスポンスヘッダー送信に失敗");
@@ -3274,10 +3442,10 @@ async fn test_response_body_exceeds_default_connection_window() {
     }
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/large").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/large").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     client
         .send_request(request_headers, true)

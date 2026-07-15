@@ -209,9 +209,9 @@ proptest! {
         prop_assert_eq!(sm.state(), StreamState::Idle);
 
         if send {
-            sm.send_headers(false).unwrap();
+            sm.send_headers(false).expect("operation should succeed");
         } else {
-            sm.recv_headers(false).unwrap();
+            sm.recv_headers(false).expect("operation should succeed");
         }
 
         prop_assert_eq!(sm.state(), StreamState::Open);
@@ -230,13 +230,13 @@ proptest! {
         let mut sm = StateMachine::new();
 
         if send {
-            sm.send_headers(true).unwrap();
+            sm.send_headers(true).expect("operation should succeed");
             prop_assert_eq!(sm.state(), StreamState::HalfClosedLocal);
             // この状態では送信不可、受信可能
             prop_assert!(!sm.state().can_send());
             prop_assert!(sm.state().can_recv());
         } else {
-            sm.recv_headers(true).unwrap();
+            sm.recv_headers(true).expect("operation should succeed");
             prop_assert_eq!(sm.state(), StreamState::HalfClosedRemote);
             // この状態では送信可能、受信不可
             prop_assert!(sm.state().can_send());
@@ -298,21 +298,21 @@ proptest! {
         let mut sm = StateMachine::new();
 
         // まず Open 状態にする
-        sm.send_headers(false).unwrap();
+        sm.send_headers(false).expect("operation should succeed");
         prop_assert_eq!(sm.state(), StreamState::Open);
 
         if send {
-            sm.send_data(end_stream).unwrap();
+            sm.send_data(end_stream).expect("operation should succeed");
             // send_data は validate のみで状態遷移しない
             prop_assert_eq!(sm.state(), StreamState::Open);
-            sm.complete_send_data(end_stream).unwrap();
+            sm.complete_send_data(end_stream).expect("should succeed");
             if end_stream {
                 prop_assert_eq!(sm.state(), StreamState::HalfClosedLocal);
             } else {
                 prop_assert_eq!(sm.state(), StreamState::Open);
             }
         } else {
-            sm.recv_data(end_stream).unwrap();
+            sm.recv_data(end_stream).expect("operation should succeed");
             if end_stream {
                 prop_assert_eq!(sm.state(), StreamState::HalfClosedRemote);
             } else {
@@ -334,25 +334,25 @@ proptest! {
         let mut sm = StateMachine::new();
 
         // Open 状態にする
-        sm.send_headers(false).unwrap();
+        sm.send_headers(false).expect("operation should succeed");
 
         if local_first {
             // ローカルが先に END_STREAM を送信 (validate + complete)
-            sm.send_data(true).unwrap();
-            sm.complete_send_data(true).unwrap();
+            sm.send_data(true).expect("operation should succeed");
+            sm.complete_send_data(true).expect("operation should succeed");
             prop_assert_eq!(sm.state(), StreamState::HalfClosedLocal);
 
             // リモートから END_STREAM を受信
-            sm.recv_data(true).unwrap();
+            sm.recv_data(true).expect("operation should succeed");
             prop_assert_eq!(sm.state(), StreamState::Closed);
         } else {
             // リモートが先に END_STREAM を送信
-            sm.recv_data(true).unwrap();
+            sm.recv_data(true).expect("operation should succeed");
             prop_assert_eq!(sm.state(), StreamState::HalfClosedRemote);
 
             // ローカルが END_STREAM を送信 (validate + complete)
-            sm.send_data(true).unwrap();
-            sm.complete_send_data(true).unwrap();
+            sm.send_data(true).expect("operation should succeed");
+            sm.complete_send_data(true).expect("operation should succeed");
             prop_assert_eq!(sm.state(), StreamState::Closed);
         }
     }
