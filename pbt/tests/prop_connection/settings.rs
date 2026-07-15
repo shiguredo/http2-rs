@@ -20,20 +20,20 @@ proptest! {
         initial_value in prop::bool::ANY,
     ) {
         let mut client = Connection::client(Limits::default());
-        client.initiate().unwrap();
+        client.initiate().expect("initiate should succeed");
 
         // サーバーから NO_RFC7540_PRIORITIES の SETTINGS を受信
         let mut settings1 = SettingsFrame::new();
         settings1.add(Setting::NoRfc7540Priorities(initial_value));
         let settings1_bytes = encode_frame(&Frame::Settings(settings1));
-        client.feed(&settings1_bytes).unwrap();
-        client.process().unwrap();
+        client.feed(&settings1_bytes).expect("feed should succeed");
+        client.process().expect("process should succeed");
 
         // サーバーから異なる値の NO_RFC7540_PRIORITIES を受信
         let mut settings2 = SettingsFrame::new();
         settings2.add(Setting::NoRfc7540Priorities(!initial_value));
         let settings2_bytes = encode_frame(&Frame::Settings(settings2));
-        client.feed(&settings2_bytes).unwrap();
+        client.feed(&settings2_bytes).expect("feed should succeed");
 
         let result = client.process();
         prop_assert!(result.is_err());

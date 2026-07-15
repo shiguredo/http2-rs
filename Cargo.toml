@@ -30,5 +30,5 @@ rust-version = "1.88"
 [dependencies]
 
 [dev-dependencies]
-# PBT: const fn / runtime 検査の同値性検証
+# PBT: from_validated_parts 同値性検証 (connection / settings / stream_id / frame)
 proptest = "1.11"

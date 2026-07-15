@@ -11,7 +11,7 @@ fn test_new_flow_control() {
 fn test_consume_send() {
     let mut fc = WtFlowControl::new(65536, 100, 50);
 
-    fc.consume_send(1000).unwrap();
+    fc.consume_send(1000).expect("construction should succeed");
     assert_eq!(fc.send_available(), 64536);
     assert_eq!(fc.send_offset(), 1000);
 }
@@ -20,7 +20,7 @@ fn test_consume_send() {
 fn test_consume_send_exhausted() {
     let mut fc = WtFlowControl::new(100, 100, 50);
 
-    fc.consume_send(100).unwrap();
+    fc.consume_send(100).expect("construction should succeed");
     assert!(fc.consume_send(1).is_err());
 }
 
@@ -28,7 +28,7 @@ fn test_consume_send_exhausted() {
 fn test_consume_recv() {
     let mut fc = WtFlowControl::new(65536, 100, 50);
 
-    fc.consume_recv(1000).unwrap();
+    fc.consume_recv(1000).expect("construction should succeed");
     assert_eq!(fc.recv_available(), 64536);
     assert_eq!(fc.recv_offset(), 1000);
 }
@@ -37,7 +37,7 @@ fn test_consume_recv() {
 fn test_consume_recv_exceeded() {
     let mut fc = WtFlowControl::new(100, 100, 50);
 
-    fc.consume_recv(100).unwrap();
+    fc.consume_recv(100).expect("construction should succeed");
     assert!(fc.consume_recv(1).is_err());
 }
 
@@ -45,10 +45,10 @@ fn test_consume_recv_exceeded() {
 fn test_update_send_max() {
     let mut fc = WtFlowControl::new(65536, 100, 50);
 
-    fc.consume_send(65536).unwrap();
+    fc.consume_send(65536).expect("construction should succeed");
     assert!(fc.is_send_blocked());
 
-    fc.update_send_max(131072).unwrap();
+    fc.update_send_max(131072).expect("should succeed");
     assert!(!fc.is_send_blocked());
     assert_eq!(fc.send_available(), 65536);
 }
@@ -86,7 +86,7 @@ fn test_update_max_streams() {
     fc.opened_stream(true);
     assert!(!fc.can_open_bidi_stream());
 
-    fc.update_max_streams(4, true).unwrap();
+    fc.update_max_streams(4, true).expect("should succeed");
     assert!(fc.can_open_bidi_stream());
 }
 
@@ -105,6 +105,6 @@ fn test_should_send_max_data() {
 
     assert!(!fc.should_send_max_data(65536));
 
-    fc.consume_recv(40000).unwrap();
+    fc.consume_recv(40000).expect("should succeed");
     assert!(fc.should_send_max_data(65536));
 }

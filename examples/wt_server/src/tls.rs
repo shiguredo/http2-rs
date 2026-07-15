@@ -15,7 +15,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 
-use base64::Engine;
+use base64ct::{Base64, Encoding};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
 use tokio_http2::TlsServerConfig;
@@ -72,18 +72,14 @@ fn load_cached_cert() -> Option<(CertificateDer<'static>, Vec<u8>)> {
     let remaining_secs = expires_at - now;
 
     if remaining_secs < MIN_REMAINING_HOURS * 3600 {
-        log::info!("cached certificate expires soon, regenerating");
+        tracing::info!("cached certificate expires soon, regenerating");
         return None;
     }
 
-    let cert_bytes = base64::engine::general_purpose::STANDARD
-        .decode(&cert_b64)
-        .ok()?;
-    let key_bytes = base64::engine::general_purpose::STANDARD
-        .decode(&key_b64)
-        .ok()?;
+    let cert_bytes = Base64::decode_vec(&cert_b64).ok()?;
+    let key_bytes = Base64::decode_vec(&key_b64).ok()?;
 
-    log::info!(
+    tracing::info!(
         "using cached certificate {:?} (expires in {:.1} hours)",
         path,
         remaining_secs as f64 / 3600.0
@@ -116,8 +112,8 @@ fn generate_and_cache_cert() -> Result<(CertificateDer<'static>, Vec<u8>), Error
     let cert_der_ref = cert.der();
     let key_bytes = signing_key.serialize_der();
 
-    let cert_b64 = base64::engine::general_purpose::STANDARD.encode(cert_der_ref.as_ref());
-    let key_b64 = base64::engine::general_purpose::STANDARD.encode(&key_bytes);
+    let cert_b64 = Base64::encode_string(cert_der_ref.as_ref());
+    let key_b64 = Base64::encode_string(&key_bytes);
     let created_at = now.unix_timestamp();
 
     let jsonc = format!(
@@ -137,7 +133,7 @@ fn generate_and_cache_cert() -> Result<(CertificateDer<'static>, Vec<u8>), Error
     std::fs::write(&path, &jsonc)
         .map_err(|e| Error::Tls(format!("failed to write cert cache: {e}")))?;
 
-    log::info!("generated new certificate (cached to {:?})", path);
+    tracing::info!("generated new certificate (cached to {:?})", path);
 
     let cert_owned = CertificateDer::from(cert_der_ref.as_ref().to_vec());
     Ok((cert_owned, key_bytes))
@@ -146,7 +142,7 @@ fn generate_and_cache_cert() -> Result<(CertificateDer<'static>, Vec<u8>), Error
 /// 自己署名証明書を取得して TLS 設定を構築する
 ///
 /// キャッシュ済み証明書が有効であればそれを使い、なければ新規生成する。
-/// 起動時に SHA-256 ハッシュを base64 で `log::info!` に出力する
+/// 起動時に SHA-256 ハッシュを base64 で `tracing::info!` に出力する
 /// (Chrome の `serverCertificateHashes` 設定用)。
 pub fn generate_tls_server() -> Result<TlsServerConfig, Error> {
     let (cert_der, key_bytes) = match load_cached_cert() {
@@ -155,8 +151,8 @@ pub fn generate_tls_server() -> Result<TlsServerConfig, Error> {
     };
 
     let hash = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, cert_der.as_ref());
-    let hash_b64 = base64::engine::general_purpose::STANDARD.encode(hash.as_ref());
-    log::info!("Certificate SHA-256 (base64): {hash_b64}");
+    let hash_b64 = Base64::encode_string(hash.as_ref());
+    tracing::info!("Certificate SHA-256 (base64): {hash_b64}");
 
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_bytes));
 

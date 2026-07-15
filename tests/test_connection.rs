@@ -15,7 +15,7 @@ use shiguredo_http2::{
 /// フレームをバイト列にエンコードする
 fn encode_frame(frame: &Frame) -> Vec<u8> {
     let mut encoder = FrameEncoder::new();
-    encoder.encode(frame).unwrap();
+    encoder.encode(frame).expect("encode should succeed");
     encoder.buffer().to_vec()
 }
 
@@ -33,10 +33,10 @@ fn create_continuation(
 fn encode_valid_request_headers() -> Vec<u8> {
     let mut encoder = HpackEncoder::new(4096);
     let headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "example.com").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "example.com").expect("valid header field"),
     ];
     let mut buf = Vec::new();
     encoder.encode(&mut buf, &headers);
@@ -99,18 +99,20 @@ fn test_send_settings_does_not_emit_window_update_when_default() {
 fn test_continuation_without_headers_is_error() {
     let mut server = Connection::server(Limits::default());
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     // SETTINGS を受信
     let settings_frame = Frame::Settings(SettingsFrame::new());
     let settings_bytes = encode_frame(&settings_frame);
-    server.feed(&settings_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&settings_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     // HEADERS なしで CONTINUATION を送信
     let continuation = create_continuation(NonZeroStreamId::from_static(1), vec![0x82], true);
     let continuation_bytes = encode_frame(&Frame::Continuation(continuation));
-    server.feed(&continuation_bytes).unwrap();
+    server
+        .feed(&continuation_bytes)
+        .expect("feed should succeed");
 
     let result = server.process();
     assert!(result.is_err());
@@ -128,13 +130,13 @@ fn test_continuation_without_headers_is_error() {
 fn test_rst_stream_on_idle_is_error() {
     let mut server = Connection::server(Limits::default());
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     // SETTINGS を受信
     let settings_frame = Frame::Settings(SettingsFrame::new());
     let settings_bytes = encode_frame(&settings_frame);
-    server.feed(&settings_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&settings_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     // idle ストリームに RST_STREAM を送信
     let rst_frame = Frame::RstStream(RstStreamFrame::new(
@@ -142,7 +144,7 @@ fn test_rst_stream_on_idle_is_error() {
         ErrorCode::Cancel.as_u32(),
     ));
     let rst_bytes = encode_frame(&rst_frame);
-    server.feed(&rst_bytes).unwrap();
+    server.feed(&rst_bytes).expect("feed should succeed");
 
     let result = server.process();
     assert!(result.is_err());
@@ -162,27 +164,29 @@ fn test_continuation_accumulation_exceeds_max_header_list_size() {
     let limits = Limits::builder()
         .max_header_list_size(Some(100))
         .build()
-        .unwrap();
+        .expect("should succeed");
     let mut server = Connection::server(limits);
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
-    server.feed(&settings_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&settings_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     let stream_id = NonZeroStreamId::from_static(1);
 
     // END_HEADERS なしの HEADERS (60 バイト): 上限 100 以内
     let headers = HeadersFrame::new(stream_id, vec![0u8; 60]).with_end_headers(false);
     let headers_bytes = encode_frame(&Frame::Headers(headers));
-    server.feed(&headers_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&headers_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     // CONTINUATION (60 バイト): 累積 120 バイトで上限 100 を超過
     let continuation = create_continuation(stream_id, vec![0u8; 60], false);
     let continuation_bytes = encode_frame(&Frame::Continuation(continuation));
-    server.feed(&continuation_bytes).unwrap();
+    server
+        .feed(&continuation_bytes)
+        .expect("feed should succeed");
 
     let result = server.process();
     assert!(result.is_err());
@@ -201,30 +205,32 @@ fn test_continuation_accumulation_at_limit_is_ok() {
     let limits = Limits::builder()
         .max_header_list_size(Some(100))
         .build()
-        .unwrap();
+        .expect("should succeed");
     let mut server = Connection::server(limits);
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
-    server.feed(&settings_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&settings_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     let stream_id = NonZeroStreamId::from_static(1);
 
     // END_HEADERS なしの HEADERS (50 バイト)
     let headers = HeadersFrame::new(stream_id, vec![0u8; 50]).with_end_headers(false);
     let headers_bytes = encode_frame(&Frame::Headers(headers));
-    server.feed(&headers_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&headers_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     // CONTINUATION (50 バイト): 累積 100 バイトで上限 100 ちょうど (エラーにならない)
     let continuation = create_continuation(stream_id, vec![0u8; 50], false);
     let continuation_bytes = encode_frame(&Frame::Continuation(continuation));
-    server.feed(&continuation_bytes).unwrap();
+    server
+        .feed(&continuation_bytes)
+        .expect("feed should succeed");
 
     // ヘッダーブロックは未完 (END_HEADERS なし) なのでデコードはまだ走らず、エラーにならない
-    server.process().unwrap();
+    server.process().expect("process should succeed");
 }
 
 /// 単一 HEADERS 内のインデックス参照爆弾が COMPRESSION_ERROR 接続エラーになる
@@ -237,21 +243,21 @@ fn test_headers_indexed_reference_bomb_is_compression_error() {
     let limits = Limits::builder()
         .max_header_list_size(Some(100))
         .build()
-        .unwrap();
+        .expect("should succeed");
     let mut server = Connection::server(limits);
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
-    server.feed(&settings_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&settings_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     // 静的テーブル index 2 (":method: GET", size 42) への 1 バイト参照を 3 個。
     // 累積デコード後サイズ 126 が上限 100 を超える。
     let stream_id = NonZeroStreamId::from_static(1);
     let headers = HeadersFrame::new(stream_id, vec![0x82, 0x82, 0x82]);
     let headers_bytes = encode_frame(&Frame::Headers(headers));
-    server.feed(&headers_bytes).unwrap();
+    server.feed(&headers_bytes).expect("feed should succeed");
 
     let result = server.process();
     assert!(result.is_err());
@@ -268,13 +274,13 @@ fn test_headers_indexed_reference_bomb_is_compression_error() {
 #[test]
 fn test_client_rejects_enable_push_from_server() {
     let mut client = Connection::client(Limits::default());
-    client.initiate().unwrap();
+    client.initiate().expect("initiate should succeed");
 
     // サーバーから ENABLE_PUSH=1 の SETTINGS を受信
     let mut settings = SettingsFrame::new();
     settings.add(Setting::EnablePush(true));
     let settings_bytes = encode_frame(&Frame::Settings(settings));
-    client.feed(&settings_bytes).unwrap();
+    client.feed(&settings_bytes).expect("feed should succeed");
 
     let result = client.process();
     assert!(result.is_err());
@@ -293,27 +299,29 @@ fn test_continuation_accumulation_with_none_max_header_list_size() {
     let limits = Limits::builder()
         .max_header_list_size(None)
         .build()
-        .unwrap();
+        .expect("should succeed");
     let mut server = Connection::server(limits);
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
-    server.feed(&settings_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&settings_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     let stream_id = NonZeroStreamId::from_static(1);
 
     let headers = HeadersFrame::new(stream_id, vec![0u8; 100]).with_end_headers(false);
     let headers_bytes = encode_frame(&Frame::Headers(headers));
-    server.feed(&headers_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&headers_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     let continuation = create_continuation(stream_id, vec![0u8; 100], false);
     let continuation_bytes = encode_frame(&Frame::Continuation(continuation));
-    server.feed(&continuation_bytes).unwrap();
+    server
+        .feed(&continuation_bytes)
+        .expect("feed should succeed");
 
-    server.process().unwrap();
+    server.process().expect("process should succeed");
 }
 
 /// RFC 9113 Section 5.1: idle ストリームへの DATA は PROTOCOL_ERROR の接続エラーになる。
@@ -321,19 +329,19 @@ fn test_continuation_accumulation_with_none_max_header_list_size() {
 fn test_data_on_idle_stream_is_error() {
     let mut server = Connection::server(Limits::default());
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     // SETTINGS を受信して接続をアクティブにする
     let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
-    server.feed(&settings_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&settings_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     // idle ストリーム (stream_id=1) に DATA を送信
     let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
         NonZeroStreamId::from_static(1),
         vec![1, 2, 3],
     )));
-    server.feed(&data_bytes).unwrap();
+    server.feed(&data_bytes).expect("feed should succeed");
 
     let result = server.process();
     assert!(result.is_err());
@@ -350,14 +358,14 @@ fn test_data_on_idle_stream_is_error() {
 fn test_initial_headers_without_pseudo_is_error() {
     let mut server = Connection::server(Limits::default());
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
-    server.feed(&settings_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&settings_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     // 擬似ヘッダーなしのヘッダーブロックを HPACK エンコード
-    let headers = vec![HeaderField::new("content-type", "text/html").unwrap()];
+    let headers = vec![HeaderField::new("content-type", "text/html").expect("valid header field")];
     let mut encoder = HpackEncoder::new(4096);
     let mut encoded = Vec::new();
     encoder.encode(&mut encoded, &headers);
@@ -366,7 +374,7 @@ fn test_initial_headers_without_pseudo_is_error() {
         .with_end_stream(true)
         .with_end_headers(true);
     let headers_bytes = encode_frame(&Frame::Headers(headers_frame));
-    server.feed(&headers_bytes).unwrap();
+    server.feed(&headers_bytes).expect("feed should succeed");
 
     let result = server.process();
     assert!(result.is_err());
@@ -380,11 +388,11 @@ fn test_initial_headers_without_pseudo_is_error() {
 fn test_invalid_hpack_causes_compression_error() {
     let mut server = Connection::server(Limits::default());
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
-    server.feed(&settings_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&settings_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     // 0xFF はインデックス 127 以上を示すが、後続データが不足しているため不正
     let invalid_hpack = vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
@@ -392,7 +400,7 @@ fn test_invalid_hpack_causes_compression_error() {
         .with_end_stream(true)
         .with_end_headers(true);
     let headers_bytes = encode_frame(&Frame::Headers(headers_frame));
-    server.feed(&headers_bytes).unwrap();
+    server.feed(&headers_bytes).expect("feed should succeed");
 
     let result = server.process();
     assert!(result.is_err());
@@ -408,11 +416,11 @@ fn test_invalid_hpack_causes_compression_error() {
 fn test_server_rejects_even_stream_id() {
     let mut server = Connection::server(Limits::default());
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
-    server.feed(&settings_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&settings_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     // 偶数ストリーム ID で HEADERS を送信
     let headers = HeadersFrame::new(
@@ -422,7 +430,7 @@ fn test_server_rejects_even_stream_id() {
     .with_end_stream(true)
     .with_end_headers(true);
     let headers_bytes = encode_frame(&Frame::Headers(headers));
-    server.feed(&headers_bytes).unwrap();
+    server.feed(&headers_bytes).expect("feed should succeed");
 
     let result = server.process();
     assert!(result.is_err());
@@ -438,11 +446,11 @@ fn test_server_rejects_even_stream_id() {
 fn test_non_monotonic_stream_id_is_error() {
     let mut server = Connection::server(Limits::default());
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
-    server.feed(&settings_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&settings_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     // 最初のストリーム (奇数 ID = 5)
     let first_id = NonZeroStreamId::from_static(5);
@@ -450,8 +458,8 @@ fn test_non_monotonic_stream_id_is_error() {
         .with_end_stream(true)
         .with_end_headers(true);
     let headers1_bytes = encode_frame(&Frame::Headers(headers1));
-    server.feed(&headers1_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&headers1_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     // 小さいストリーム ID (3) で新しいストリームを開始 → 単調増加違反
     let second_id = NonZeroStreamId::from_static(3);
@@ -459,7 +467,7 @@ fn test_non_monotonic_stream_id_is_error() {
         .with_end_stream(true)
         .with_end_headers(true);
     let headers2_bytes = encode_frame(&Frame::Headers(headers2));
-    server.feed(&headers2_bytes).unwrap();
+    server.feed(&headers2_bytes).expect("feed should succeed");
 
     let result = server.process();
     assert!(result.is_err());
@@ -474,18 +482,18 @@ fn test_non_monotonic_stream_id_is_error() {
 fn test_window_update_on_idle_stream_is_error() {
     let mut server = Connection::server(Limits::default());
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
-    server.feed(&settings_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&settings_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::for_stream(
         NonZeroStreamId::from_static(1),
         WindowIncrement::from_static(1000),
     ));
     let wu_bytes = encode_frame(&wu_frame);
-    server.feed(&wu_bytes).unwrap();
+    server.feed(&wu_bytes).expect("feed should succeed");
 
     let result = server.process();
     assert!(result.is_err());
@@ -499,12 +507,12 @@ fn test_window_update_on_idle_stream_is_error() {
 #[test]
 fn test_start_stream_after_goaway_is_error() {
     let mut client = Connection::client(Limits::default());
-    client.initiate().unwrap();
+    client.initiate().expect("initiate should succeed");
 
     // サーバーから SETTINGS を受信
     let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
-    client.feed(&settings_bytes).unwrap();
-    client.process().unwrap();
+    client.feed(&settings_bytes).expect("feed should succeed");
+    client.process().expect("process should succeed");
 
     // サーバーから GOAWAY を受信
     let goaway = Frame::Goaway(GoawayFrame::new(
@@ -512,15 +520,15 @@ fn test_start_stream_after_goaway_is_error() {
         ErrorCode::NoError.as_u32(),
     ));
     let goaway_bytes = encode_frame(&goaway);
-    client.feed(&goaway_bytes).unwrap();
-    client.process().unwrap();
+    client.feed(&goaway_bytes).expect("feed should succeed");
+    client.process().expect("process should succeed");
 
     // GOAWAY 後に新規ストリームを開始しようとする
     let headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "example.com").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "example.com").expect("valid header field"),
     ];
     let result = client.start_stream(headers, true);
     assert!(result.is_err());
@@ -536,7 +544,7 @@ fn test_start_stream_after_goaway_is_error() {
 fn test_server_rejects_frame_without_preface() {
     let mut server = Connection::server(Limits::default());
     // mark_preface_received() を呼ばずに initiate
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     // SETTINGS フレームを送信しても preface と一致しないためエラー
     let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
@@ -553,10 +561,10 @@ fn test_server_rejects_frame_without_preface() {
 fn test_server_accepts_frame_after_preface() {
     let mut server = Connection::server(Limits::default());
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
-    server.feed(&settings_bytes).unwrap();
+    server.feed(&settings_bytes).expect("feed should succeed");
 
     assert!(server.process().is_ok());
 }
@@ -566,17 +574,17 @@ fn test_server_accepts_frame_after_preface() {
 fn test_server_cannot_start_stream() {
     let mut server = Connection::server(Limits::default());
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
-    server.feed(&settings_bytes).unwrap();
-    server.process().unwrap();
+    server.feed(&settings_bytes).expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     let headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "example.com").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "example.com").expect("valid header field"),
     ];
     assert!(server.start_stream(headers, true).is_err());
 }
@@ -588,12 +596,12 @@ fn test_server_cannot_start_stream() {
 #[test]
 fn test_goaway_graceful_shutdown() {
     let mut client = Connection::client(Limits::default());
-    client.initiate().unwrap();
+    client.initiate().expect("initiate should succeed");
 
     // サーバーからの SETTINGS を擬似的に feed して Active 状態に遷移させる
     let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
-    client.feed(&settings_bytes).unwrap();
-    client.process().unwrap();
+    client.feed(&settings_bytes).expect("feed should succeed");
+    client.process().expect("process should succeed");
     // 後段の GoawayReceived 検出のため、SETTINGS 受信時の SettingsReceived を先に消費する
     while client.poll_event().is_some() {}
 
@@ -603,8 +611,8 @@ fn test_goaway_graceful_shutdown() {
         ErrorCode::NoError.as_u32(),
     ));
     let goaway_bytes = encode_frame(&goaway);
-    client.feed(&goaway_bytes).unwrap();
-    client.process().unwrap();
+    client.feed(&goaway_bytes).expect("feed should succeed");
+    client.process().expect("process should succeed");
 
     // GoawayReceived イベントの発火を確認
     let mut found_goaway = false;
@@ -629,11 +637,11 @@ fn test_goaway_graceful_shutdown() {
 fn test_first_frame_must_be_settings() {
     let mut server = Connection::server(Limits::default());
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
 
     // SETTINGS ではなく PING を最初に送信
     let ping_bytes = encode_frame(&Frame::Ping(PingFrame::new([0u8; 8])));
-    server.feed(&ping_bytes).unwrap();
+    server.feed(&ping_bytes).expect("feed should succeed");
 
     let result = server.process();
     assert!(result.is_err());
@@ -649,7 +657,7 @@ fn test_first_frame_must_be_settings() {
 fn test_invalid_initial_window_size_is_flow_control_error() {
     for invalid_size in [MAX_INITIAL_WINDOW_SIZE + 1, u32::MAX] {
         let mut client = Connection::client(Limits::default());
-        client.initiate().unwrap();
+        client.initiate().expect("initiate should succeed");
 
         // decoder が Setting::from_wire で検証するため、raw バイト列を直接構築する
         let mut settings_bytes = Vec::new();
@@ -658,7 +666,7 @@ fn test_invalid_initial_window_size_is_flow_control_error() {
         // SETTINGS パラメータ: id=0x0004 (INITIAL_WINDOW_SIZE), value=invalid_size
         settings_bytes.extend_from_slice(&0x0004u16.to_be_bytes());
         settings_bytes.extend_from_slice(&invalid_size.to_be_bytes());
-        client.feed(&settings_bytes).unwrap();
+        client.feed(&settings_bytes).expect("feed should succeed");
 
         let result = client.process();
         assert!(

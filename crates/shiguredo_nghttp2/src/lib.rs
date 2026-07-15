@@ -81,7 +81,7 @@ mod tests {
     fn test_client_session_new() {
         let session = Session::client();
         assert!(session.is_ok());
-        let session = session.unwrap();
+        let session = session.expect("should succeed");
         assert_eq!(session.role(), SessionRole::Client);
     }
 
@@ -89,7 +89,7 @@ mod tests {
     fn test_server_session_new() {
         let session = Session::server();
         assert!(session.is_ok());
-        let session = session.unwrap();
+        let session = session.expect("should succeed");
         assert_eq!(session.role(), SessionRole::Server);
     }
 
@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn test_session_submit_settings() {
-        let mut session = Session::client().unwrap();
+        let mut session = Session::client().expect("should succeed");
         let settings = vec![
             (SettingsId::MaxConcurrentStreams, 100),
             (SettingsId::InitialWindowSize, 65535),
@@ -130,13 +130,13 @@ mod tests {
 
     #[test]
     fn test_session_send() {
-        let mut session = Session::client().unwrap();
+        let mut session = Session::client().expect("should succeed");
         let settings = vec![(SettingsId::MaxConcurrentStreams, 100)];
-        session.submit_settings(&settings).unwrap();
+        session.submit_settings(&settings).expect("should succeed");
 
         let output = session.send();
         assert!(output.is_ok());
-        let output = output.unwrap();
+        let output = output.expect("should succeed");
         assert!(!output.is_empty());
         // HTTP/2 プリフェイスまたは SETTINGS フレームが含まれているはず
         println!("Output length: {} bytes", output.len());

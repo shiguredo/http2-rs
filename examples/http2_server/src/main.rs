@@ -191,9 +191,9 @@ async fn send_response(
 
     // 固定リテラルは from_static でコンパイル時検査、動的値は new でランタイム検査する。
     let headers = vec![
-        HeaderField::new(":status", status).unwrap(),
+        HeaderField::new(":status", status).expect("valid header field"),
         HeaderField::from_static(b"content-type", b"text/plain; charset=utf-8"),
-        HeaderField::new("content-length", body.len().to_string()).unwrap(),
+        HeaderField::new("content-length", body.len().to_string()).expect("valid header field"),
         HeaderField::from_static(b"server", b"shiguredo-http2"),
     ];
 

@@ -14,9 +14,11 @@ fn decode_single_capsule(bytes: &[u8]) -> Capsule {
 #[test]
 fn grow_recv_window_emits_wt_max_data() {
     let mut session = WtSession::server(WtConfig::default());
-    session.initiate().unwrap();
+    session.initiate().expect("initiate should succeed");
 
-    session.grow_recv_window(65_536).unwrap();
+    session
+        .grow_recv_window(65_536)
+        .expect("initiate should succeed");
     let out = session.poll_output().expect("output expected");
 
     let capsule = decode_single_capsule(&out);
@@ -33,7 +35,7 @@ fn grow_recv_window_emits_wt_max_data() {
 #[test]
 fn grow_stream_recv_window_unknown_stream_errors() {
     let mut session = WtSession::server(WtConfig::default());
-    session.initiate().unwrap();
+    session.initiate().expect("initiate should succeed");
 
     let err = session.grow_stream_recv_window(0, 1024).unwrap_err();
     assert_eq!(
@@ -51,9 +53,11 @@ fn grow_max_streams_bidi_emits_capsule() {
         ..WtConfig::default()
     };
     let mut session = WtSession::server(config);
-    session.initiate().unwrap();
+    session.initiate().expect("initiate should succeed");
 
-    session.grow_max_streams(4, true).unwrap();
+    session
+        .grow_max_streams(4, true)
+        .expect("initiate should succeed");
     let out = session.poll_output().expect("output expected");
     let capsule = decode_single_capsule(&out);
 
@@ -79,13 +83,13 @@ fn received_wt_max_data_decrease_errors() {
         ..WtConfig::default()
     };
     let mut session = WtSession::server(config);
-    session.initiate().unwrap();
+    session.initiate().expect("initiate should succeed");
 
     let mut encoder = CapsuleEncoder::new();
     encoder.encode(&Capsule::WtMaxData { maximum: 500 });
     let bytes = encoder.take();
 
-    session.feed(&bytes).unwrap();
+    session.feed(&bytes).expect("feed should succeed");
     let err = session.process().unwrap_err();
     assert_eq!(
         err.kind,
@@ -97,10 +101,10 @@ fn received_wt_max_data_decrease_errors() {
 #[test]
 fn send_after_close_errors() {
     let mut session = WtSession::client(WtConfig::default());
-    session.initiate().unwrap();
+    session.initiate().expect("initiate should succeed");
 
-    let bidi_id = session.open_bidi_stream().unwrap();
-    session.close(0, "bye").unwrap();
+    let bidi_id = session.open_bidi_stream().expect("initiate should succeed");
+    session.close(0, "bye").expect("open stream should succeed");
 
     // draft-ietf-webtrans-http2-14 Section 6.12: WT_CLOSE_SESSION 送信後は END_STREAM で half-close するため送信不可
     let err = session.send_stream_data(bidi_id, b"x", false).unwrap_err();
@@ -125,9 +129,9 @@ fn open_bidi_stream_over_limit_errors() {
         ..WtConfig::default()
     };
     let mut session = WtSession::client(config);
-    session.initiate().unwrap();
+    session.initiate().expect("initiate should succeed");
 
-    let _ = session.open_bidi_stream().unwrap();
+    let _ = session.open_bidi_stream().expect("initiate should succeed");
     let err = session.open_bidi_stream().unwrap_err();
     assert_eq!(
         err.kind,
@@ -139,9 +143,11 @@ fn open_bidi_stream_over_limit_errors() {
 #[test]
 fn send_max_data_emits_capsule() {
     let mut session = WtSession::server(WtConfig::default());
-    session.initiate().unwrap();
+    session.initiate().expect("initiate should succeed");
 
-    session.send_max_data(9_999_999).unwrap();
+    session
+        .send_max_data(9_999_999)
+        .expect("initiate should succeed");
     let out = session.poll_output().expect("output expected");
     let capsule = decode_single_capsule(&out);
     match capsule {
@@ -154,7 +160,7 @@ fn send_max_data_emits_capsule() {
 #[test]
 fn getters_return_expected_state() {
     let mut session = WtSession::server(WtConfig::default());
-    session.initiate().unwrap();
+    session.initiate().expect("initiate should succeed");
 
     // クライアント (peer) 起点の bidi ストリーム (id=0) から `hi` を受信した扱いにする
     let peer_id: WtStreamId = wt_stream_id::first(true, true);
@@ -164,8 +170,8 @@ fn getters_return_expected_state() {
         data: b"hi".to_vec(),
         fin: false,
     });
-    session.feed(&encoder.take()).unwrap();
-    session.process().unwrap();
+    session.feed(&encoder.take()).expect("feed should succeed");
+    session.process().expect("process should succeed");
 
     // StreamOpened と StreamData の 2 イベントが発火している想定
     let mut got_opened = false;
@@ -206,10 +212,12 @@ fn stop_sending_triggers_auto_reset_ready_state() {
     // サーバーが WT_STOP_SENDING を送り、ピアが WT_RESET_STREAM で応答するケースを模擬する。
     // ここではサーバーが stop_sending を送信した扱いでテストする。
     let mut session = WtSession::client(WtConfig::default());
-    session.initiate().unwrap();
+    session.initiate().expect("initiate should succeed");
 
     // クライアント側で bidi ストリームを開く (id=0, Ready → このストリームはピアから見て Ready)
-    let stream_id = session.open_bidi_stream().unwrap();
+    let stream_id = session
+        .open_bidi_stream()
+        .expect("open stream should succeed");
 
     // ピア (サーバー) から WT_STOP_SENDING を受信
     let mut encoder = CapsuleEncoder::new();
@@ -217,8 +225,8 @@ fn stop_sending_triggers_auto_reset_ready_state() {
         stream_id,
         error_code: 42,
     });
-    session.feed(&encoder.take()).unwrap();
-    session.process().unwrap();
+    session.feed(&encoder.take()).expect("feed should succeed");
+    session.process().expect("process should succeed");
 
     // WT_RESET_STREAM が出力バッファに含まれていることを確認
     assert!(session.has_output());
@@ -244,14 +252,14 @@ fn stop_sending_triggers_auto_reset_ready_state() {
 #[test]
 fn stop_sending_triggers_auto_reset_send_state() {
     let mut session = WtSession::client(WtConfig::default());
-    session.initiate().unwrap();
+    session.initiate().expect("initiate should succeed");
 
-    let stream_id = session.open_bidi_stream().unwrap();
+    let stream_id = session.open_bidi_stream().expect("initiate should succeed");
 
     // 送信して Send 状態に遷移させる
     session
         .send_stream_data(stream_id, b"hello", false)
-        .unwrap();
+        .expect("operation should succeed");
 
     // 出力を消費してから WT_STOP_SENDING を受信
     while session.poll_output().is_some() {}
@@ -261,8 +269,8 @@ fn stop_sending_triggers_auto_reset_send_state() {
         stream_id,
         error_code: 99,
     });
-    session.feed(&encoder.take()).unwrap();
-    session.process().unwrap();
+    session.feed(&encoder.take()).expect("feed should succeed");
+    session.process().expect("process should succeed");
 
     assert!(session.has_output());
 
@@ -287,10 +295,12 @@ fn stop_sending_triggers_auto_reset_send_state() {
 #[test]
 fn stop_sending_no_auto_reset_data_sent_state() {
     let mut session = WtSession::client(WtConfig::default());
-    session.initiate().unwrap();
+    session.initiate().expect("initiate should succeed");
 
-    let stream_id = session.open_bidi_stream().unwrap();
-    session.send_stream_data(stream_id, b"done", true).unwrap();
+    let stream_id = session.open_bidi_stream().expect("initiate should succeed");
+    session
+        .send_stream_data(stream_id, b"done", true)
+        .expect("operation should succeed");
 
     // 出力を消費
     while session.poll_output().is_some() {}
@@ -300,8 +310,8 @@ fn stop_sending_no_auto_reset_data_sent_state() {
         stream_id,
         error_code: 1,
     });
-    session.feed(&encoder.take()).unwrap();
-    session.process().unwrap();
+    session.feed(&encoder.take()).expect("feed should succeed");
+    session.process().expect("process should succeed");
 
     // DataSent では WT_RESET_STREAM が生成されない
     assert!(!session.has_output());
@@ -327,15 +337,15 @@ fn stop_sending_no_auto_reset_data_sent_state() {
 #[test]
 fn stop_sending_unknown_stream_emits_event() {
     let mut session = WtSession::client(WtConfig::default());
-    session.initiate().unwrap();
+    session.initiate().expect("initiate should succeed");
 
     let mut encoder = CapsuleEncoder::new();
     encoder.encode(&Capsule::WtStopSending {
         stream_id: 9999,
         error_code: 0,
     });
-    session.feed(&encoder.take()).unwrap();
-    session.process().unwrap();
+    session.feed(&encoder.take()).expect("feed should succeed");
+    session.process().expect("process should succeed");
 
     assert!(!session.has_output());
 
@@ -353,9 +363,9 @@ fn stop_sending_unknown_stream_emits_event() {
 #[test]
 fn stop_sending_duplicate_errors() {
     let mut session = WtSession::client(WtConfig::default());
-    session.initiate().unwrap();
+    session.initiate().expect("initiate should succeed");
 
-    let stream_id = session.open_bidi_stream().unwrap();
+    let stream_id = session.open_bidi_stream().expect("initiate should succeed");
 
     // 1 回目の WT_STOP_SENDING
     let mut encoder = CapsuleEncoder::new();
@@ -363,8 +373,8 @@ fn stop_sending_duplicate_errors() {
         stream_id,
         error_code: 0,
     });
-    session.feed(&encoder.take()).unwrap();
-    session.process().unwrap();
+    session.feed(&encoder.take()).expect("feed should succeed");
+    session.process().expect("process should succeed");
 
     // 出力消費
     while session.poll_output().is_some() {}
@@ -376,7 +386,7 @@ fn stop_sending_duplicate_errors() {
         stream_id,
         error_code: 0,
     });
-    session.feed(&encoder.take()).unwrap();
+    session.feed(&encoder.take()).expect("feed should succeed");
     let err = session.process().unwrap_err();
     assert_eq!(
         err.kind,
@@ -389,7 +399,7 @@ fn stop_sending_duplicate_errors() {
 #[test]
 fn wt_reset_stream_unknown_stream_id_errors() {
     let mut session = WtSession::server(WtConfig::default());
-    session.initiate().unwrap();
+    session.initiate().expect("initiate should succeed");
 
     let mut encoder = CapsuleEncoder::new();
     encoder.encode(&Capsule::WtResetStream {
@@ -397,7 +407,7 @@ fn wt_reset_stream_unknown_stream_id_errors() {
         error_code: 1,
         reliable_size: 0,
     });
-    session.feed(&encoder.take()).unwrap();
+    session.feed(&encoder.take()).expect("feed should succeed");
     let err = session.process().unwrap_err();
 
     assert_eq!(

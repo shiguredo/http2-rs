@@ -8,7 +8,7 @@ use shiguredo_http2::{HeaderField, HpackDecoder, HpackEncoder};
 #[test]
 fn test_c1_1_integer_encoding_10() {
     let mut buf = [0u8; 16];
-    let len = shiguredo_http2::hpack::integer::encode(&mut buf, 10, 5, 0).unwrap();
+    let len = shiguredo_http2::hpack::integer::encode(&mut buf, 10, 5, 0).expect("should succeed");
     assert_eq!(len, 1);
     assert_eq!(buf[0], 0x0a); // 10
 }
@@ -17,7 +17,8 @@ fn test_c1_1_integer_encoding_10() {
 #[test]
 fn test_c1_2_integer_encoding_1337() {
     let mut buf = [0u8; 16];
-    let len = shiguredo_http2::hpack::integer::encode(&mut buf, 1337, 5, 0).unwrap();
+    let len =
+        shiguredo_http2::hpack::integer::encode(&mut buf, 1337, 5, 0).expect("should succeed");
     assert_eq!(len, 3);
     assert_eq!(buf[0], 0x1f); // 31
     assert_eq!(buf[1], 0x9a); // 154
@@ -28,7 +29,7 @@ fn test_c1_2_integer_encoding_1337() {
 #[test]
 fn test_c1_3_integer_encoding_42() {
     let mut buf = [0u8; 16];
-    let len = shiguredo_http2::hpack::integer::encode(&mut buf, 42, 8, 0).unwrap();
+    let len = shiguredo_http2::hpack::integer::encode(&mut buf, 42, 8, 0).expect("should succeed");
     assert_eq!(len, 1);
     assert_eq!(buf[0], 0x2a); // 42
 }
@@ -45,7 +46,7 @@ fn test_c2_1_literal_header_with_indexing() {
         0x73, 0x74, 0x6f, 0x6d, 0x2d, 0x68, 0x65, 0x61, 0x64, 0x65, 0x72,
     ];
 
-    let headers = decoder.decode(&encoded).unwrap();
+    let headers = decoder.decode(&encoded).expect("decode should succeed");
     assert_eq!(headers.len(), 1);
     assert_eq!(headers[0].name(), b"custom-key");
     assert_eq!(headers[0].value(), b"custom-header");
@@ -64,7 +65,7 @@ fn test_c2_2_literal_header_without_indexing() {
         0x04, 0x0c, 0x2f, 0x73, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2f, 0x70, 0x61, 0x74, 0x68,
     ];
 
-    let headers = decoder.decode(&encoded).unwrap();
+    let headers = decoder.decode(&encoded).expect("decode should succeed");
     assert_eq!(headers.len(), 1);
     assert_eq!(headers[0].name(), b":path");
     assert_eq!(headers[0].value(), b"/sample/path");
@@ -84,7 +85,7 @@ fn test_c2_3_literal_header_never_indexed() {
         0x65, 0x74,
     ];
 
-    let headers = decoder.decode(&encoded).unwrap();
+    let headers = decoder.decode(&encoded).expect("decode should succeed");
     assert_eq!(headers.len(), 1);
     assert_eq!(headers[0].name(), b"password");
     assert_eq!(headers[0].value(), b"secret");
@@ -101,7 +102,7 @@ fn test_c2_4_indexed_header_field() {
     // 82
     let encoded = [0x82];
 
-    let headers = decoder.decode(&encoded).unwrap();
+    let headers = decoder.decode(&encoded).expect("decode should succeed");
     assert_eq!(headers.len(), 1);
     assert_eq!(headers[0].name(), b":method");
     assert_eq!(headers[0].value(), b"GET");
@@ -121,7 +122,7 @@ fn test_c3_1_first_request() {
         0x6d, // www.example.com
     ];
 
-    let headers = decoder.decode(&encoded).unwrap();
+    let headers = decoder.decode(&encoded).expect("decode should succeed");
     assert_eq!(headers.len(), 4);
 
     assert_eq!(headers[0].name(), b":method");
@@ -152,7 +153,7 @@ fn test_c4_1_first_request_huffman() {
         0xff, // www.example.com (Huffman)
     ];
 
-    let headers = decoder.decode(&encoded).unwrap();
+    let headers = decoder.decode(&encoded).expect("decode should succeed");
     assert_eq!(headers.len(), 4);
 
     assert_eq!(headers[0].name(), b":method");
@@ -188,7 +189,7 @@ fn test_c5_1_first_response() {
         0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x63, 0x6f, 0x6d, // https://www.example.com
     ];
 
-    let headers1 = decoder.decode(&encoded1).unwrap();
+    let headers1 = decoder.decode(&encoded1).expect("decode should succeed");
     assert_eq!(headers1.len(), 4);
     assert_eq!(headers1[0].name(), b":status");
     assert_eq!(headers1[0].value(), b"302");
@@ -210,7 +211,7 @@ fn test_huffman_www_example_com() {
     assert_eq!(encoded.len(), 12);
 
     // デコードして元に戻ることを確認
-    let decoded = shiguredo_http2::hpack::huffman::decode(&encoded).unwrap();
+    let decoded = shiguredo_http2::hpack::huffman::decode(&encoded).expect("should succeed");
     assert_eq!(decoded, input);
 }
 
@@ -218,12 +219,12 @@ fn test_huffman_www_example_com() {
 #[test]
 fn test_encoder_decoder_roundtrip() {
     let headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/index.html").unwrap(),
-        HeaderField::new(":authority", "www.example.com").unwrap(),
-        HeaderField::new("accept", "text/html").unwrap(),
-        HeaderField::new("accept-encoding", "gzip, deflate").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/index.html").expect("valid header field"),
+        HeaderField::new(":authority", "www.example.com").expect("valid header field"),
+        HeaderField::new("accept", "text/html").expect("valid header field"),
+        HeaderField::new("accept-encoding", "gzip, deflate").expect("valid header field"),
     ];
 
     let mut encoder = HpackEncoder::new(4096);
@@ -232,7 +233,7 @@ fn test_encoder_decoder_roundtrip() {
     let mut encoded = Vec::new();
     encoder.encode(&mut encoded, &headers);
 
-    let decoded = decoder.decode(&encoded).unwrap();
+    let decoded = decoder.decode(&encoded).expect("encode should succeed");
 
     assert_eq!(decoded.len(), headers.len());
     for (orig, dec) in headers.iter().zip(decoded.iter()) {
@@ -249,28 +250,28 @@ fn test_multiple_requests_dynamic_table() {
 
     // 最初のリクエスト
     let headers1 = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new("custom-header", "value1").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new("custom-header", "value1").expect("valid header field"),
     ];
 
     let mut encoded1 = Vec::new();
     encoder.encode(&mut encoded1, &headers1);
 
-    let decoded1 = decoder.decode(&encoded1).unwrap();
+    let decoded1 = decoder.decode(&encoded1).expect("encode should succeed");
     assert_eq!(decoded1.len(), 3);
 
     // 2番目のリクエスト（同じカスタムヘッダー名を使用）
     let headers2 = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":path", "/other").unwrap(),
-        HeaderField::new("custom-header", "value2").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":path", "/other").expect("valid header field"),
+        HeaderField::new("custom-header", "value2").expect("valid header field"),
     ];
 
     let mut encoded2 = Vec::new();
     encoder.encode(&mut encoded2, &headers2);
 
-    let decoded2 = decoder.decode(&encoded2).unwrap();
+    let decoded2 = decoder.decode(&encoded2).expect("encode should succeed");
     assert_eq!(decoded2.len(), 3);
     assert_eq!(decoded2[2].name(), b"custom-header");
     assert_eq!(decoded2[2].value(), b"value2");

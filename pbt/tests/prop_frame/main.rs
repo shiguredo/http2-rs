@@ -22,10 +22,12 @@ fn valid_setting() -> impl Strategy<Value = Setting> {
         any::<u32>().prop_map(Setting::HeaderTableSize),
         prop::bool::ANY.prop_map(Setting::EnablePush),
         any::<u32>().prop_map(Setting::MaxConcurrentStreams),
-        (0..=MAX_INITIAL_WINDOW_SIZE)
-            .prop_map(|v| Setting::InitialWindowSize(WindowSize::new(v).unwrap())),
-        (MIN_MAX_FRAME_SIZE..=MAX_MAX_FRAME_SIZE)
-            .prop_map(|v| Setting::MaxFrameSize(MaxFrameSize::new(v).unwrap())),
+        (0..=MAX_INITIAL_WINDOW_SIZE).prop_map(|v| Setting::InitialWindowSize(
+            WindowSize::new(v).expect("valid SETTINGS value")
+        )),
+        (MIN_MAX_FRAME_SIZE..=MAX_MAX_FRAME_SIZE).prop_map(|v| Setting::MaxFrameSize(
+            MaxFrameSize::new(v).expect("valid SETTINGS value")
+        )),
         any::<u32>().prop_map(Setting::MaxHeaderListSize),
         prop::bool::ANY.prop_map(Setting::EnableConnectProtocol),
         prop::bool::ANY.prop_map(Setting::NoRfc7540Priorities),
@@ -59,12 +61,12 @@ proptest! {
         });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::Data(df) = decoded {
             prop_assert_eq!(df.stream_id, stream_id);
@@ -93,12 +95,12 @@ proptest! {
         });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::Headers(hf) = decoded {
             prop_assert_eq!(hf.stream_id, stream_id);
@@ -122,12 +124,12 @@ proptest! {
         });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::RstStream(rf) = decoded {
             prop_assert_eq!(rf.stream_id, stream_id);
@@ -146,12 +148,12 @@ proptest! {
         let frame = Frame::Ping(PingFrame { ack, opaque_data });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::Ping(pf) = decoded {
             prop_assert_eq!(pf.ack, ack);
@@ -176,12 +178,12 @@ proptest! {
         });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::Goaway(gf) = decoded {
             prop_assert_eq!(gf.last_stream_id, last_stream_id);
@@ -202,12 +204,12 @@ proptest! {
         let frame = Frame::WindowUpdate(WindowUpdateFrame::for_connection(increment));
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::WindowUpdate(wuf) = decoded {
             prop_assert_eq!(wuf.stream_id, StreamId::Connection);
@@ -228,12 +230,12 @@ proptest! {
         let frame = Frame::WindowUpdate(WindowUpdateFrame::for_stream(stream_id, increment));
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::WindowUpdate(wuf) = decoded {
             prop_assert_eq!(wuf.stream_id, StreamId::from(stream_id));
@@ -261,12 +263,12 @@ proptest! {
         });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::Continuation(cf) = decoded {
             prop_assert_eq!(cf.stream_id, stream_id);
@@ -294,12 +296,12 @@ proptest! {
         });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::PriorityUpdate(puf) = decoded {
             prop_assert_eq!(puf.prioritized_element_id, prioritized_element_id);
@@ -340,12 +342,12 @@ proptest! {
         };
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::Unknown { header: h, payload: p } = decoded {
             prop_assert_eq!(h.frame_type, frame_type);
@@ -376,12 +378,12 @@ proptest! {
         });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::Data(df) = decoded {
             prop_assert_eq!(df.stream_id, stream_id);
@@ -412,12 +414,12 @@ proptest! {
         });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::Headers(hf) = decoded {
             prop_assert_eq!(hf.stream_id, stream_id);
@@ -451,7 +453,7 @@ proptest! {
         }).collect();
 
         for frame in &frames {
-            encoder.encode(frame).unwrap();
+            encoder.encode(frame).expect("encode should succeed");
         }
         let encoded = encoder.take();
 
@@ -460,14 +462,14 @@ proptest! {
         decoder.feed(&encoded);
 
         for (i, original) in frames.iter().enumerate() {
-            let decoded = decoder.decode().unwrap();
+            let decoded = decoder.decode().expect("decode should succeed");
             prop_assert!(
                 decoded.is_some(),
                 "Frame {} should be decoded",
                 i
             );
             prop_assert_eq!(
-                decoded.unwrap().stream_id(),
+                decoded.expect("should succeed").stream_id(),
                 original.stream_id(),
                 "Frame {} stream_id mismatch",
                 i
@@ -475,7 +477,7 @@ proptest! {
         }
 
         // これ以上フレームがないことを確認
-        prop_assert!(decoder.decode().unwrap().is_none());
+        prop_assert!(decoder.decode().expect("decode should succeed").is_none());
     }
 
     // ========================================
@@ -498,7 +500,7 @@ proptest! {
         });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder = FrameDecoder::new(16384);
@@ -509,7 +511,7 @@ proptest! {
 
             // 最後のバイトまではデコードできない
             if i < encoded.len() - 1 {
-                let result = decoder.decode().unwrap();
+                let result = decoder.decode().expect("decode should succeed");
                 prop_assert!(
                     result.is_none(),
                     "Should not decode until all bytes are fed (at byte {})",
@@ -519,7 +521,7 @@ proptest! {
         }
 
         // 全バイト feed 後はデコードできる
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("decode should succeed").expect("decode should succeed");
         prop_assert_eq!(decoded.stream_id(), StreamId::from(stream_id));
     }
 
@@ -535,12 +537,12 @@ proptest! {
         let frame = Frame::Settings(SettingsFrame::from_settings(settings.clone()));
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::Settings(sf) = decoded {
             prop_assert!(!sf.is_ack());
@@ -575,7 +577,7 @@ proptest! {
         });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder = FrameDecoder::new(max_frame_size);
@@ -606,7 +608,7 @@ proptest! {
         });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         // フレームヘッダー (9 バイト) + ペイロード
@@ -627,7 +629,7 @@ proptest! {
         };
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         // フレームヘッダーの 5 バイト目 (オフセット 5) の上位ビットは 0
@@ -635,7 +637,7 @@ proptest! {
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         prop_assert_eq!(decoded.stream_id(), stream_id);
     }
@@ -955,7 +957,7 @@ proptest! {
 
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&buf);
-        let result = decoder.decode().unwrap().unwrap();
+        let result = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::Priority(pf) = result {
             let expected_stream_id = NonZeroStreamId::new(stream_id_raw)
@@ -1022,7 +1024,7 @@ proptest! {
         });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         // length フィールドを抽出 (bytes 0-2, big-endian)
@@ -1066,11 +1068,11 @@ proptest! {
         });
 
         let mut encoder1 = FrameEncoder::new();
-        encoder1.encode(&frame).unwrap();
+        encoder1.encode(&frame).expect("encode should succeed");
         let encoded1 = encoder1.take();
 
         let mut encoder2 = FrameEncoder::new();
-        encoder2.encode(&frame).unwrap();
+        encoder2.encode(&frame).expect("encode should succeed");
         let encoded2 = encoder2.take();
 
         prop_assert_eq!(encoded1, encoded2, "encoding same frame twice must produce identical bytes");
@@ -1092,16 +1094,16 @@ proptest! {
         });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         let mut decoder1 = FrameDecoder::new(16384);
         decoder1.feed(&encoded);
-        let decoded1 = decoder1.decode().unwrap().unwrap();
+        let decoded1 = decoder1.decode().expect("feed should succeed").expect("feed should succeed");
 
         let mut decoder2 = FrameDecoder::new(16384);
         decoder2.feed(&encoded);
-        let decoded2 = decoder2.decode().unwrap().unwrap();
+        let decoded2 = decoder2.decode().expect("feed should succeed").expect("feed should succeed");
 
         prop_assert_eq!(decoded1, decoded2, "decoding same bytes twice must produce identical frames");
     }
@@ -1125,7 +1127,7 @@ proptest! {
                 data: data.clone(),
                 pad_length: None,
             });
-            encoder.encode(&frame).unwrap();
+            encoder.encode(&frame).expect("encode should succeed");
         }
         let encoded = encoder.take();
         let total_encoded_len = encoded.len();
@@ -1137,7 +1139,7 @@ proptest! {
         let mut consumed = 0;
         for _ in 0..frames.len() {
             let frame_start = consumed;
-            let decoded = decoder.decode().unwrap();
+            let decoded = decoder.decode().expect("decode should succeed");
             prop_assert!(decoded.is_some());
 
             // 消費されたバイト数を計算
@@ -1171,14 +1173,14 @@ proptest! {
         // 個別にエンコード
         let individual_encodings: Vec<Vec<u8>> = frames.iter().map(|f| {
             let mut enc = FrameEncoder::new();
-            enc.encode(f).unwrap();
+            enc.encode(f).expect("encode should succeed");
             enc.take()
         }).collect();
 
         // 連結してエンコード
         let mut combined_encoder = FrameEncoder::new();
         for frame in &frames {
-            combined_encoder.encode(frame).unwrap();
+            combined_encoder.encode(frame).expect("encode should succeed");
         }
         let combined = combined_encoder.take();
 
@@ -1191,7 +1193,7 @@ proptest! {
         decoder.feed(&combined);
 
         for (i, original) in frames.iter().enumerate() {
-            let decoded = decoder.decode().unwrap().unwrap();
+            let decoded = decoder.decode().expect("decode should succeed").expect("decode should succeed");
             prop_assert_eq!(
                 &decoded,
                 original,
@@ -1221,7 +1223,7 @@ proptest! {
         });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         // フラグフィールドを直接検証 (byte 4)
@@ -1235,7 +1237,7 @@ proptest! {
         // デコード後も一致
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::Headers(hf) = decoded {
             prop_assert_eq!(hf.end_stream, end_stream);
@@ -1262,7 +1264,7 @@ proptest! {
         });
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         // length フィールド
@@ -1286,7 +1288,7 @@ proptest! {
         // デコード後のデータが正しいことを確認
         let mut decoder = FrameDecoder::new(16384);
         decoder.feed(&encoded);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         if let Frame::Data(df) = decoded {
             prop_assert_eq!(df.data, data, "data must be preserved after padding");
@@ -1310,7 +1312,7 @@ proptest! {
         };
 
         let mut encoder = FrameEncoder::new();
-        encoder.encode(&frame).unwrap();
+        encoder.encode(&frame).expect("encode should succeed");
         let encoded = encoder.take();
 
         // stream_id フィールドを抽出 (bytes 5-8)
@@ -1340,7 +1342,7 @@ mod from_static_consistency {
         fn prop_window_increment_static_matches_new(
             v in 1u32..=WindowIncrement::MAX,
         ) {
-            let via_new = WindowIncrement::new(v).unwrap();
+            let via_new = WindowIncrement::new(v).expect("construction should succeed");
             let via_static = WindowIncrement::from_static(v);
             prop_assert_eq!(via_new, via_static);
         }
@@ -1350,7 +1352,7 @@ mod from_static_consistency {
         fn prop_weight_static_matches_new(
             w in 0u16..=255,
         ) {
-            let via_new = Weight::new(w).unwrap();
+            let via_new = Weight::new(w).expect("construction should succeed");
             let via_static = Weight::from_static(w);
             prop_assert_eq!(via_new, via_static);
         }
@@ -1360,7 +1362,7 @@ mod from_static_consistency {
         fn prop_last_stream_id_static_matches_new(
             id in 0u32..=LastStreamId::MAX,
         ) {
-            let via_new = LastStreamId::new(id).unwrap();
+            let via_new = LastStreamId::new(id).expect("construction should succeed");
             let via_static = LastStreamId::from_static(id);
             prop_assert_eq!(via_new, via_static);
         }
@@ -1373,7 +1375,7 @@ mod from_static_consistency {
                 |id| id % 2 == 1,
             ),
         ) {
-            let via_new = ClientStreamId::new(id).unwrap();
+            let via_new = ClientStreamId::new(id).expect("construction should succeed");
             let via_static = ClientStreamId::from_static(id);
             prop_assert_eq!(via_new, via_static);
         }
@@ -1386,7 +1388,7 @@ mod from_static_consistency {
                 |id| id % 2 == 0,
             ),
         ) {
-            let via_new = ServerStreamId::new(id).unwrap();
+            let via_new = ServerStreamId::new(id).expect("construction should succeed");
             let via_static = ServerStreamId::from_static(id);
             prop_assert_eq!(via_new, via_static);
         }
@@ -1396,7 +1398,7 @@ mod from_static_consistency {
         fn prop_non_zero_stream_id_static_matches_new(
             id in 1u32..=(1u32 << 31) - 1,
         ) {
-            let via_new = NonZeroStreamId::new(id).unwrap();
+            let via_new = NonZeroStreamId::new(id).expect("construction should succeed");
             let via_static = NonZeroStreamId::from_static(id);
             prop_assert_eq!(via_new, via_static);
         }

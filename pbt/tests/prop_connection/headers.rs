@@ -41,24 +41,24 @@ proptest! {
 
         let mut server = Connection::server(Limits::default());
         server.mark_preface_received();
-        server.initiate().unwrap();
+        server.initiate().expect("initiate should succeed");
 
         // SETTINGS を受信
         let settings_frame = Frame::Settings(SettingsFrame::new());
         let settings_bytes = encode_frame(&settings_frame);
-        server.feed(&settings_bytes).unwrap();
-        server.process().unwrap();
+        server.feed(&settings_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
 
         // HEADERS (END_HEADERS なし)
         let headers = create_headers_without_end_headers(first_id, vec![0x82]);
         let headers_bytes = encode_frame(&Frame::Headers(headers));
-        server.feed(&headers_bytes).unwrap();
-        server.process().unwrap();
+        server.feed(&headers_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
 
         // 異なるストリーム ID で CONTINUATION を送信
         let continuation = create_continuation(second_id, vec![0x84], true);
         let continuation_bytes = encode_frame(&Frame::Continuation(continuation));
-        server.feed(&continuation_bytes).unwrap();
+        server.feed(&continuation_bytes).expect("feed should succeed");
 
         let result = server.process();
         prop_assert!(result.is_err());

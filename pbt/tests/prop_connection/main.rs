@@ -23,7 +23,7 @@ pub(crate) fn client_stream_id() -> impl Strategy<Value = NonZeroStreamId> {
 /// フレームをバイト列にエンコードする
 pub(crate) fn encode_frame(frame: &Frame) -> Vec<u8> {
     let mut encoder = FrameEncoder::new();
-    encoder.encode(frame).unwrap();
+    encoder.encode(frame).expect("encode should succeed");
     encoder.buffer().to_vec()
 }
 
@@ -33,25 +33,27 @@ fn setup_client_server() -> (Connection, Connection) {
     let mut server = Connection::server(Limits::default());
 
     // クライアント: プリフェイスと SETTINGS を送信
-    client.initiate().unwrap();
-    let client_output = client.poll_output().unwrap();
+    client.initiate().expect("initiate should succeed");
+    let client_output = client.poll_output().expect("initiate should succeed");
 
     // サーバー: クライアントのプリフェイスを受信
     server.mark_preface_received();
-    server.initiate().unwrap();
+    server.initiate().expect("initiate should succeed");
     let settings_start = shiguredo_http2::CONNECTION_PREFACE_LEN;
-    server.feed(&client_output[settings_start..]).unwrap();
-    server.process().unwrap();
+    server
+        .feed(&client_output[settings_start..])
+        .expect("feed should succeed");
+    server.process().expect("process should succeed");
 
     // サーバー: イベントを消費
     while server.poll_event().is_some() {}
 
     // サーバー: SETTINGS + ACK を送信
-    let server_output = server.poll_output().unwrap();
+    let server_output = server.poll_output().expect("should succeed");
 
     // クライアント: サーバーの SETTINGS を受信
-    client.feed(&server_output).unwrap();
-    client.process().unwrap();
+    client.feed(&server_output).expect("feed should succeed");
+    client.process().expect("process should succeed");
 
     // クライアント: イベントを消費
     while client.poll_event().is_some() {}
@@ -68,22 +70,22 @@ proptest! {
         max_streams in 1u32..=5,
     ) {
         let mut client = Connection::client(Limits::default());
-        client.initiate().unwrap();
+        client.initiate().expect("initiate should succeed");
 
         // サーバーから max_concurrent_streams の SETTINGS を受信
         let mut settings = SettingsFrame::new();
         settings.add(Setting::MaxConcurrentStreams(max_streams));
         let settings_bytes = encode_frame(&Frame::Settings(settings));
-        client.feed(&settings_bytes).unwrap();
-        client.process().unwrap();
+        client.feed(&settings_bytes).expect("feed should succeed");
+        client.process().expect("process should succeed");
 
         // max_streams 個のストリームを開始（すべて成功するはず）
         for _ in 0..max_streams {
             let headers = vec![
-                HeaderField::new(":method", "GET").unwrap(),
-                HeaderField::new(":path", "/").unwrap(),
-                HeaderField::new(":scheme", "https").unwrap(),
-                HeaderField::new(":authority", "example.com").unwrap(),
+                HeaderField::new(":method", "GET").expect("valid header field"),
+                HeaderField::new(":path", "/").expect("valid header field"),
+                HeaderField::new(":scheme", "https").expect("valid header field"),
+                HeaderField::new(":authority", "example.com").expect("valid header field"),
             ];
             let result = client.start_stream(headers, false);
             prop_assert!(result.is_ok(), "stream should be started successfully");
@@ -91,10 +93,10 @@ proptest! {
 
         // max_streams + 1 個目はエラーになるはず
         let headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":authority", "example.com").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":authority", "example.com").expect("valid header field"),
         ];
         let result = client.start_stream(headers, false);
         prop_assert!(result.is_err(), "exceeding max concurrent streams should fail");
@@ -117,18 +119,18 @@ proptest! {
 
         // クライアント: リクエストを送信
         let request_headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", &path).unwrap(),
-            HeaderField::new(":authority", "example.com").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", &path).expect("valid header field"),
+            HeaderField::new(":authority", "example.com").expect("valid header field"),
         ];
-        let stream_id = client.start_stream(request_headers, true).unwrap();
+        let stream_id = client.start_stream(request_headers, true).expect("should succeed");
         prop_assert_eq!(stream_id, StreamId::from_wire(1)); // 最初のクライアントストリーム
 
         // クライアントの出力をサーバーに送信
         if let Some(client_output) = client.poll_output() {
-            server.feed(&client_output).unwrap();
-            server.process().unwrap();
+            server.feed(&client_output).expect("feed should succeed");
+            server.process().expect("process should succeed");
         }
 
         // サーバー: HeadersReceived イベントを確認
@@ -159,12 +161,12 @@ proptest! {
         let mut stream_ids = Vec::new();
         for i in 0..count {
             let request_headers = vec![
-                HeaderField::new(":method", "GET").unwrap(),
-                HeaderField::new(":scheme", "https").unwrap(),
-                HeaderField::new(":path", format!("/resource{}", i)).unwrap(),
-                HeaderField::new(":authority", "example.com").unwrap(),
+                HeaderField::new(":method", "GET").expect("valid header field"),
+                HeaderField::new(":scheme", "https").expect("valid header field"),
+                HeaderField::new(":path", format!("/resource{}", i)).expect("valid header field"),
+                HeaderField::new(":authority", "example.com").expect("valid header field"),
             ];
-            let stream_id = client.start_stream(request_headers, true).unwrap();
+            let stream_id = client.start_stream(request_headers, true).expect("should succeed");
             stream_ids.push(stream_id);
         }
 
@@ -185,8 +187,8 @@ proptest! {
         // クライアント: PING を送信
         let ping_frame = Frame::Ping(PingFrame::new(opaque_data));
         let ping_bytes = encode_frame(&ping_frame);
-        server.feed(&ping_bytes).unwrap();
-        server.process().unwrap();
+        server.feed(&ping_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
 
         // サーバー: PingReceived イベントを確認
         let mut found_ping = false;
@@ -199,7 +201,7 @@ proptest! {
         prop_assert!(found_ping, "expected PingReceived event");
 
         // サーバー: PING ACK を送信
-        let server_output = server.poll_output().unwrap();
+        let server_output = server.poll_output().expect("should succeed");
         prop_assert!(!server_output.is_empty());
     }
 
@@ -218,8 +220,8 @@ proptest! {
         let wi = WindowIncrement::new(increment).expect("1..=0x7FFF_FFFF is valid");
         let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::for_connection(wi));
         let wu_bytes = encode_frame(&wu_frame);
-        server.feed(&wu_bytes).unwrap();
-        server.process().unwrap();
+        server.feed(&wu_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
 
         // サーバー: WindowUpdateReceived イベントを確認
         let mut found_window_update = false;
@@ -241,15 +243,15 @@ proptest! {
 
         // クライアント: リクエストを送信 (END_STREAM なし)
         let request_headers = vec![
-            HeaderField::new(":method", "POST").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
-            HeaderField::new(":authority", "example.com").unwrap(),
+            HeaderField::new(":method", "POST").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
+            HeaderField::new(":authority", "example.com").expect("valid header field"),
         ];
-        client.start_stream(request_headers, false).unwrap();
-        let client_output = client.poll_output().unwrap();
-        server.feed(&client_output).unwrap();
-        server.process().unwrap();
+        client.start_stream(request_headers, false).expect("should succeed");
+        let client_output = client.poll_output().expect("should succeed");
+        server.feed(&client_output).expect("feed should succeed");
+        server.process().expect("process should succeed");
         // サーバー: イベントを消費
         while server.poll_event().is_some() {}
 
@@ -259,8 +261,8 @@ proptest! {
             error_code,
         ));
         let rst_bytes = encode_frame(&rst_frame);
-        client.feed(&rst_bytes).unwrap();
-        client.process().unwrap();
+        client.feed(&rst_bytes).expect("feed should succeed");
+        client.process().expect("process should succeed");
 
         // クライアント: StreamReset イベントを確認
         let mut found_reset = false;
@@ -276,7 +278,7 @@ proptest! {
 
 proptest! {
     // ========================================================================
-    // 接続レベル WINDOW_UPDATE の広告 (issue 0041) の PBT
+    // 接続レベル WINDOW_UPDATE の広告の PBT
     // ========================================================================
 
     /// `connection_window_size` がデフォルトより大きい場合、`initiate()` の出力に

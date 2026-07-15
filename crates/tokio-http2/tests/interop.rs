@@ -23,7 +23,7 @@ fn generate_http2_test_cert() -> Http2TlsServerConfig {
 
     Http2TlsServerConfig::from_der(
         vec![CertificateDer::from(cert.der().to_vec())],
-        PrivateKeyDer::try_from(signing_key.serialize_der()).unwrap(),
+        PrivateKeyDer::try_from(signing_key.serialize_der()).expect("should succeed"),
     )
     .expect("failed to create TLS server config")
 }
@@ -36,7 +36,7 @@ fn generate_nghttp2_test_cert() -> NgTlsServerConfig {
 
     NgTlsServerConfig::from_der(
         vec![CertificateDer::from(cert.der().to_vec())],
-        PrivateKeyDer::try_from(signing_key.serialize_der()).unwrap(),
+        PrivateKeyDer::try_from(signing_key.serialize_der()).expect("should succeed"),
     )
     .expect("failed to create TLS server config")
 }
@@ -73,9 +73,13 @@ async fn test_nghttp2_client_http2_server_basic() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -101,7 +105,8 @@ async fn test_nghttp2_client_http2_server_basic() {
                             .expect("missing :method header");
                         assert_eq!(method.value(), b"GET");
 
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -174,9 +179,12 @@ async fn test_http2_client_nghttp2_server_basic() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -231,10 +239,10 @@ async fn test_http2_client_nghttp2_server_basic() {
 
     // RFC 9113 Section 8.3.1: :method, :scheme, :path, :authority が必須
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -281,9 +289,13 @@ async fn test_nghttp2_client_http2_server_multiple_streams() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -298,7 +310,8 @@ async fn test_nghttp2_client_http2_server_multiple_streams() {
                     ..
                 })) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -379,9 +392,12 @@ async fn test_http2_client_nghttp2_server_multiple_streams() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -424,10 +440,10 @@ async fn test_http2_client_nghttp2_server_multiple_streams() {
     let mut stream_ids = Vec::new();
     for i in 0..3 {
         let request_headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":path", format!("/path{}", i)).unwrap(),
-            HeaderField::new(":authority", "localhost").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", format!("/path{}", i)).expect("valid header field"),
+            HeaderField::new(":authority", "localhost").expect("valid header field"),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -479,9 +495,13 @@ async fn test_nghttp2_client_http2_server_rst_stream() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -554,9 +574,12 @@ async fn test_http2_client_nghttp2_server_rst_stream() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -591,10 +614,10 @@ async fn test_http2_client_nghttp2_server_rst_stream() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -631,9 +654,13 @@ async fn test_nghttp2_client_http2_server_settings() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -704,9 +731,12 @@ async fn test_http2_client_nghttp2_server_settings() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -781,9 +811,13 @@ async fn test_nghttp2_client_http2_server_ping() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -837,9 +871,12 @@ async fn test_http2_client_nghttp2_server_ping() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -894,9 +931,13 @@ async fn test_nghttp2_client_http2_server_goaway() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -945,9 +986,12 @@ async fn test_http2_client_nghttp2_server_goaway() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -999,9 +1043,13 @@ async fn test_nghttp2_client_http2_server_post_with_body() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1062,7 +1110,8 @@ async fn test_nghttp2_client_http2_server_post_with_body() {
 
         // レスポンスを送信
         let sid = request_stream_id.expect("headers not received");
-        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+        let response_headers =
+            vec![HeaderField::new(":status", "200").expect("valid header field")];
         conn.send_response(sid, response_headers, true)
             .await
             .expect("failed to send response");
@@ -1123,9 +1172,12 @@ async fn test_http2_client_nghttp2_server_post_with_body() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1200,11 +1252,11 @@ async fn test_http2_client_nghttp2_server_post_with_body() {
 
     // POST リクエストを送信（ヘッダー）
     let request_headers = vec![
-        HeaderField::new(":method", "POST").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new("content-type", "text/plain").unwrap(),
+        HeaderField::new(":method", "POST").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new("content-type", "text/plain").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -1276,9 +1328,13 @@ async fn test_nghttp2_client_http2_server_response_body() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let response_body = b"This is the response body from the server.";
@@ -1296,8 +1352,9 @@ async fn test_nghttp2_client_http2_server_response_body() {
                     if end_stream {
                         // レスポンスヘッダーを送信
                         let response_headers = vec![
-                            HeaderField::new(":status", "200").unwrap(),
-                            HeaderField::new("content-type", "text/plain").unwrap(),
+                            HeaderField::new(":status", "200").expect("valid header field"),
+                            HeaderField::new("content-type", "text/plain")
+                                .expect("valid header field"),
                         ];
                         conn.send_response(stream_id, response_headers, false)
                             .await
@@ -1394,9 +1451,12 @@ async fn test_http2_client_nghttp2_server_response_body() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let response_body = b"response from nghttp2 server";
@@ -1442,10 +1502,10 @@ async fn test_http2_client_nghttp2_server_response_body() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -1510,9 +1570,13 @@ async fn test_nghttp2_client_http2_server_put() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1533,7 +1597,8 @@ async fn test_nghttp2_client_http2_server_put() {
                             .expect("missing :method header");
                         assert_eq!(method.value(), b"PUT");
 
-                        let response_headers = vec![HeaderField::new(":status", "204").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "204").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -1601,9 +1666,12 @@ async fn test_http2_client_nghttp2_server_delete() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1648,10 +1716,10 @@ async fn test_http2_client_nghttp2_server_delete() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "DELETE").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/resource/123").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "DELETE").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/resource/123").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -1690,9 +1758,13 @@ async fn test_nghttp2_client_http2_server_head() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1715,8 +1787,8 @@ async fn test_nghttp2_client_http2_server_head() {
 
                         // HEAD レスポンスはボディなし
                         let response_headers = vec![
-                            HeaderField::new(":status", "200").unwrap(),
-                            HeaderField::new("content-length", "1234").unwrap(),
+                            HeaderField::new(":status", "200").expect("valid header field"),
+                            HeaderField::new("content-length", "1234").expect("valid header field"),
                         ];
                         conn.send_response(stream_id, response_headers, true)
                             .await
@@ -1797,9 +1869,13 @@ async fn test_nghttp2_client_http2_server_404() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1813,7 +1889,8 @@ async fn test_nghttp2_client_http2_server_404() {
                     ..
                 })) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "404").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "404").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -1881,9 +1958,12 @@ async fn test_http2_client_nghttp2_server_500() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1921,10 +2001,10 @@ async fn test_http2_client_nghttp2_server_500() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/error").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/error").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -1967,9 +2047,13 @@ async fn test_nghttp2_client_http2_server_custom_headers() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1999,9 +2083,10 @@ async fn test_nghttp2_client_http2_server_custom_headers() {
 
                         // レスポンスにもカスタムヘッダーを付与
                         let response_headers = vec![
-                            HeaderField::new(":status", "200").unwrap(),
-                            HeaderField::new("x-response-id", "67890").unwrap(),
-                            HeaderField::new("x-server", "test-server").unwrap(),
+                            HeaderField::new(":status", "200").expect("valid header field"),
+                            HeaderField::new("x-response-id", "67890").expect("valid header field"),
+                            HeaderField::new("x-server", "test-server")
+                                .expect("valid header field"),
                         ];
                         conn.send_response(stream_id, response_headers, true)
                             .await
@@ -2084,9 +2169,12 @@ async fn test_http2_client_nghttp2_server_custom_headers() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -2136,11 +2224,11 @@ async fn test_http2_client_nghttp2_server_custom_headers() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new("x-custom-header", "custom-value").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new("x-custom-header", "custom-value").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -2189,9 +2277,13 @@ async fn test_nghttp2_client_http2_server_rst_stream_internal_error() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -2266,9 +2358,12 @@ async fn test_http2_client_nghttp2_server_rst_stream_refused() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -2305,10 +2400,10 @@ async fn test_http2_client_nghttp2_server_rst_stream_refused() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -2345,9 +2440,13 @@ async fn test_nghttp2_client_http2_server_large_response() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     // 16KB のレスポンスボディ（初期ウィンドウサイズ内）
@@ -2365,7 +2464,8 @@ async fn test_nghttp2_client_http2_server_large_response() {
                     ..
                 })) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response headers");
@@ -2444,9 +2544,12 @@ async fn test_http2_client_nghttp2_server_large_request() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     // 16KB のリクエストボディ（初期ウィンドウサイズ内）
@@ -2506,10 +2609,10 @@ async fn test_http2_client_nghttp2_server_large_request() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "POST").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/upload").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "POST").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/upload").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -2557,9 +2660,13 @@ async fn test_nghttp2_client_rst_stream_to_http2_server() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -2569,7 +2676,8 @@ async fn test_nghttp2_client_rst_stream_to_http2_server() {
             match tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await {
                 Ok(Ok(Http2Event::HeadersReceived { stream_id, .. })) => {
                     // レスポンスを送信開始（end_stream=false）
-                    let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                    let response_headers =
+                        vec![HeaderField::new(":status", "200").expect("valid header field")];
                     conn.send_response(stream_id, response_headers, false)
                         .await
                         .expect("failed to send response");
@@ -2645,9 +2753,13 @@ async fn test_multiple_nghttp2_clients_http2_server() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     // サーバータスク（2つの接続を処理）
@@ -2664,8 +2776,9 @@ async fn test_multiple_nghttp2_clients_http2_server() {
                             ..
                         })) => {
                             if end_stream {
-                                let response_headers =
-                                    vec![HeaderField::new(":status", "200").unwrap()];
+                                let response_headers = vec![
+                                    HeaderField::new(":status", "200").expect("valid header field"),
+                                ];
                                 conn.send_response(stream_id, response_headers, true)
                                     .await
                                     .expect("failed to send response");
@@ -2777,9 +2890,13 @@ async fn test_nghttp2_client_http2_server_response_headers_then_data() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let response_body = b"response body after headers";
@@ -2797,8 +2914,9 @@ async fn test_nghttp2_client_http2_server_response_headers_then_data() {
                     if end_stream {
                         // ヘッダーのみ送信 (end_stream=false)
                         let response_headers = vec![
-                            HeaderField::new(":status", "200").unwrap(),
-                            HeaderField::new("content-type", "text/plain").unwrap(),
+                            HeaderField::new(":status", "200").expect("valid header field"),
+                            HeaderField::new("content-type", "text/plain")
+                                .expect("valid header field"),
                         ];
                         conn.send_response(stream_id, response_headers, false)
                             .await
@@ -2895,9 +3013,13 @@ async fn test_http2_client_http2_server_response_headers_then_data() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let response_body = b"response body after headers";
@@ -2914,8 +3036,9 @@ async fn test_http2_client_http2_server_response_headers_then_data() {
                 })) => {
                     if end_stream {
                         let response_headers = vec![
-                            HeaderField::new(":status", "200").unwrap(),
-                            HeaderField::new("content-type", "text/plain").unwrap(),
+                            HeaderField::new(":status", "200").expect("valid header field"),
+                            HeaderField::new("content-type", "text/plain")
+                                .expect("valid header field"),
                         ];
                         conn.send_response(stream_id, response_headers, false)
                             .await
@@ -2946,10 +3069,10 @@ async fn test_http2_client_http2_server_response_headers_then_data() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -3016,9 +3139,13 @@ async fn test_nghttp2_client_http2_server_multiple_data_frames() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let chunks: Vec<&[u8]> = vec![b"chunk1-", b"chunk2-", b"chunk3"];
@@ -3035,7 +3162,8 @@ async fn test_nghttp2_client_http2_server_multiple_data_frames() {
                     ..
                 })) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response headers");
@@ -3116,9 +3244,12 @@ async fn test_http2_client_nghttp2_server_multiple_data_frames() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let expected_body: Vec<u8> = b"chunk1-chunk2-chunk3".to_vec();
@@ -3173,10 +3304,10 @@ async fn test_http2_client_nghttp2_server_multiple_data_frames() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "POST").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "POST").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -3235,9 +3366,13 @@ async fn test_nghttp2_client_http2_server_post_empty_body() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -3266,7 +3401,8 @@ async fn test_nghttp2_client_http2_server_post_empty_body() {
                     // end_stream=true であることを確認 (ボディなし)
                     assert!(end_stream);
 
-                    let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                    let response_headers =
+                        vec![HeaderField::new(":status", "200").expect("valid header field")];
                     conn.send_response(stream_id, response_headers, true)
                         .await
                         .expect("failed to send response");
@@ -3336,9 +3472,12 @@ async fn test_http2_client_nghttp2_server_post_empty_body() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -3389,11 +3528,11 @@ async fn test_http2_client_nghttp2_server_post_empty_body() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "POST").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new("content-length", "0").unwrap(),
+        HeaderField::new(":method", "POST").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new("content-length", "0").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -3438,9 +3577,13 @@ async fn test_nghttp2_client_http2_server_404_with_body() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let error_body = b"Not Found: the requested resource does not exist";
@@ -3457,8 +3600,9 @@ async fn test_nghttp2_client_http2_server_404_with_body() {
                 })) => {
                     if end_stream {
                         let response_headers = vec![
-                            HeaderField::new(":status", "404").unwrap(),
-                            HeaderField::new("content-type", "text/plain").unwrap(),
+                            HeaderField::new(":status", "404").expect("valid header field"),
+                            HeaderField::new("content-type", "text/plain")
+                                .expect("valid header field"),
                         ];
                         conn.send_response(stream_id, response_headers, false)
                             .await
@@ -3546,9 +3690,13 @@ async fn test_nghttp2_client_http2_server_500_with_body() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let error_body = b"Internal Server Error: an unexpected error occurred";
@@ -3565,8 +3713,9 @@ async fn test_nghttp2_client_http2_server_500_with_body() {
                 })) => {
                     if end_stream {
                         let response_headers = vec![
-                            HeaderField::new(":status", "500").unwrap(),
-                            HeaderField::new("content-type", "text/plain").unwrap(),
+                            HeaderField::new(":status", "500").expect("valid header field"),
+                            HeaderField::new("content-type", "text/plain")
+                                .expect("valid header field"),
                         ];
                         conn.send_response(stream_id, response_headers, false)
                             .await
@@ -3658,9 +3807,13 @@ async fn test_nghttp2_client_http2_server_options() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -3682,8 +3835,9 @@ async fn test_nghttp2_client_http2_server_options() {
                         assert_eq!(method.value(), b"OPTIONS");
 
                         let response_headers = vec![
-                            HeaderField::new(":status", "204").unwrap(),
-                            HeaderField::new("allow", "GET, POST, OPTIONS").unwrap(),
+                            HeaderField::new(":status", "204").expect("valid header field"),
+                            HeaderField::new("allow", "GET, POST, OPTIONS")
+                                .expect("valid header field"),
                         ];
                         conn.send_response(stream_id, response_headers, true)
                             .await
@@ -3760,9 +3914,12 @@ async fn test_http2_client_nghttp2_server_options() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -3810,10 +3967,10 @@ async fn test_http2_client_nghttp2_server_options() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "OPTIONS").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "OPTIONS").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -3864,9 +4021,13 @@ async fn test_nghttp2_client_http2_server_many_headers() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -3894,14 +4055,14 @@ async fn test_nghttp2_client_http2_server_many_headers() {
 
                         // レスポンスにも 20 個のカスタムヘッダーを付与
                         let mut response_headers =
-                            vec![HeaderField::new(":status", "200").unwrap()];
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         for i in 0..20 {
                             response_headers.push(
                                 HeaderField::new(
                                     format!("x-resp-{}", i),
                                     format!("resp-value-{}", i),
                                 )
-                                .unwrap(),
+                                .expect("should succeed"),
                             );
                         }
                         conn.send_response(stream_id, response_headers, true)
@@ -3990,9 +4151,12 @@ async fn test_http2_client_nghttp2_server_many_headers() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -4047,14 +4211,16 @@ async fn test_http2_client_nghttp2_server_many_headers() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let mut request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     for i in 0..20 {
-        request_headers
-            .push(HeaderField::new(format!("x-header-{}", i), format!("value-{}", i)).unwrap());
+        request_headers.push(
+            HeaderField::new(format!("x-header-{}", i), format!("value-{}", i))
+                .expect("valid header field"),
+        );
     }
 
     let stream_id = client
@@ -4110,9 +4276,13 @@ async fn test_nghttp2_client_http2_server_goaway_after_stream() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -4131,7 +4301,8 @@ async fn test_nghttp2_client_http2_server_goaway_after_stream() {
                         received_stream_id = Some(stream_id);
 
                         // まずレスポンスを送信
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -4230,9 +4401,12 @@ async fn test_http2_client_nghttp2_server_goaway_after_stream() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -4277,10 +4451,10 @@ async fn test_http2_client_nghttp2_server_goaway_after_stream() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -4348,9 +4522,13 @@ async fn test_http2_client_http2_server_bidirectional_data() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let request_body_expected = b"request body from client";
@@ -4393,7 +4571,7 @@ async fn test_http2_client_http2_server_bidirectional_data() {
         assert_eq!(received_body, request_body_expected);
 
         let sid = request_stream_id.expect("headers not received");
-        let resp_headers = vec![HeaderField::new(":status", "200").unwrap()];
+        let resp_headers = vec![HeaderField::new(":status", "200").expect("valid header field")];
         conn.send_response(sid, resp_headers, false)
             .await
             .expect("failed to send response headers");
@@ -4413,10 +4591,10 @@ async fn test_http2_client_http2_server_bidirectional_data() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "POST").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "POST").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -4479,9 +4657,12 @@ async fn test_http2_client_nghttp2_server_bidirectional_data() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let request_body_expected = b"bidirectional request body";
@@ -4536,10 +4717,10 @@ async fn test_http2_client_nghttp2_server_bidirectional_data() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "POST").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "POST").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -4589,9 +4770,13 @@ async fn test_nghttp2_client_http2_server_rst_one_stream_continue_other() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -4623,8 +4808,10 @@ async fn test_nghttp2_client_http2_server_rst_one_stream_continue_other() {
                                         .await
                                         .expect("failed to send rst_stream");
                                 } else {
-                                    let response_headers =
-                                        vec![HeaderField::new(":status", "200").unwrap()];
+                                    let response_headers = vec![
+                                        HeaderField::new(":status", "200")
+                                            .expect("valid header field"),
+                                    ];
                                     conn.send_response(*sid, response_headers, true)
                                         .await
                                         .expect("failed to send response");
@@ -4731,9 +4918,12 @@ async fn test_http2_client_nghttp2_server_rst_one_stream_continue_other() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -4790,10 +4980,10 @@ async fn test_http2_client_nghttp2_server_rst_one_stream_continue_other() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let reset_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/reset").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/reset").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let reset_stream_id = client
         .send_request(reset_headers, true)
@@ -4801,10 +4991,10 @@ async fn test_http2_client_nghttp2_server_rst_one_stream_continue_other() {
         .expect("failed to send request");
 
     let ok_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/ok").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/ok").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let ok_stream_id = client
         .send_request(ok_headers, true)
@@ -4871,9 +5061,13 @@ async fn test_nghttp2_client_http2_server_204_no_content() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -4888,7 +5082,8 @@ async fn test_nghttp2_client_http2_server_204_no_content() {
                 })) => {
                     if end_stream {
                         // 204 はボディなし (end_stream=true)
-                        let response_headers = vec![HeaderField::new(":status", "204").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "204").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -4958,9 +5153,12 @@ async fn test_http2_client_nghttp2_server_204_no_content() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -4998,10 +5196,10 @@ async fn test_http2_client_nghttp2_server_204_no_content() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "DELETE").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/resource/1").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "DELETE").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/resource/1").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -5050,9 +5248,13 @@ mod stress_tests {
         let tls_config = generate_http2_test_cert();
         let limits = Limits::default();
 
-        let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-            .await
-            .expect("failed to bind server");
+        let server = Http2Server::bind(
+            "127.0.0.1:0".parse().expect("parse should succeed"),
+            tls_config,
+            limits,
+        )
+        .await
+        .expect("failed to bind server");
         let server_addr = server.local_addr();
 
         let stream_count = 30;
@@ -5074,8 +5276,9 @@ mod stress_tests {
                         ..
                     } => {
                         if end_stream {
-                            let response_headers =
-                                vec![HeaderField::new(":status", "200").unwrap()];
+                            let response_headers = vec![
+                                HeaderField::new(":status", "200").expect("valid header field"),
+                            ];
                             conn.send_response(stream_id, response_headers, true)
                                 .await
                                 .expect("failed to send response");
@@ -5138,9 +5341,12 @@ mod stress_tests {
     async fn test_http2_client_nghttp2_server_many_concurrent_streams() {
         let tls_config = generate_nghttp2_test_cert();
 
-        let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-            .await
-            .expect("failed to bind server");
+        let server = NgServer::bind(
+            "127.0.0.1:0".parse().expect("parse should succeed"),
+            tls_config,
+        )
+        .await
+        .expect("failed to bind server");
         let server_addr = server.local_addr();
 
         let stream_count = 30;
@@ -5187,10 +5393,10 @@ mod stress_tests {
         let mut stream_ids = Vec::new();
         for i in 0..stream_count {
             let request_headers = vec![
-                HeaderField::new(":method", "GET").unwrap(),
-                HeaderField::new(":scheme", "https").unwrap(),
-                HeaderField::new(":authority", "localhost").unwrap(),
-                HeaderField::new(":path", format!("/path/{}", i)).unwrap(),
+                HeaderField::new(":method", "GET").expect("valid header field"),
+                HeaderField::new(":scheme", "https").expect("valid header field"),
+                HeaderField::new(":authority", "localhost").expect("valid header field"),
+                HeaderField::new(":path", format!("/path/{}", i)).expect("valid header field"),
             ];
             let stream_id = client
                 .send_request(request_headers, true)
@@ -5227,9 +5433,13 @@ mod stress_tests {
         let tls_config = generate_http2_test_cert();
         let limits = Limits::default();
 
-        let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-            .await
-            .expect("failed to bind server");
+        let server = Http2Server::bind(
+            "127.0.0.1:0".parse().expect("parse should succeed"),
+            tls_config,
+            limits,
+        )
+        .await
+        .expect("failed to bind server");
         let server_addr = server.local_addr();
 
         let rst_count = 10;
@@ -5309,9 +5519,12 @@ mod stress_tests {
     async fn test_http2_client_nghttp2_server_rapid_rst_stream() {
         let tls_config = generate_nghttp2_test_cert();
 
-        let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-            .await
-            .expect("failed to bind server");
+        let server = NgServer::bind(
+            "127.0.0.1:0".parse().expect("parse should succeed"),
+            tls_config,
+        )
+        .await
+        .expect("failed to bind server");
         let server_addr = server.local_addr();
 
         let rst_count = 10;
@@ -5356,10 +5569,10 @@ mod stress_tests {
 
         for _ in 0..rst_count {
             let request_headers = vec![
-                HeaderField::new(":method", "GET").unwrap(),
-                HeaderField::new(":scheme", "https").unwrap(),
-                HeaderField::new(":authority", "localhost").unwrap(),
-                HeaderField::new(":path", "/").unwrap(),
+                HeaderField::new(":method", "GET").expect("valid header field"),
+                HeaderField::new(":scheme", "https").expect("valid header field"),
+                HeaderField::new(":authority", "localhost").expect("valid header field"),
+                HeaderField::new(":path", "/").expect("valid header field"),
             ];
             client
                 .send_request(request_headers, true)
@@ -5393,9 +5606,13 @@ mod stress_tests {
         let tls_config = generate_http2_test_cert();
         let limits = Limits::default();
 
-        let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-            .await
-            .expect("failed to bind server");
+        let server = Http2Server::bind(
+            "127.0.0.1:0".parse().expect("parse should succeed"),
+            tls_config,
+            limits,
+        )
+        .await
+        .expect("failed to bind server");
         let server_addr = server.local_addr();
 
         let chunk_count: usize = 50;
@@ -5416,8 +5633,9 @@ mod stress_tests {
                         ..
                     } => {
                         if end_stream {
-                            let response_headers =
-                                vec![HeaderField::new(":status", "200").unwrap()];
+                            let response_headers = vec![
+                                HeaderField::new(":status", "200").expect("valid header field"),
+                            ];
                             conn.send_response(stream_id, response_headers, false)
                                 .await
                                 .expect("failed to send response");
@@ -5483,9 +5701,12 @@ mod stress_tests {
     async fn test_http2_client_nghttp2_server_many_small_data_frames() {
         let tls_config = generate_nghttp2_test_cert();
 
-        let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-            .await
-            .expect("failed to bind server");
+        let server = NgServer::bind(
+            "127.0.0.1:0".parse().expect("parse should succeed"),
+            tls_config,
+        )
+        .await
+        .expect("failed to bind server");
         let server_addr = server.local_addr();
 
         let chunk_count: usize = 50;
@@ -5533,10 +5754,10 @@ mod stress_tests {
         wait_for_http2_settings_ack(&mut client).await;
 
         let request_headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":authority", "localhost").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":authority", "localhost").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
         ];
         client
             .send_request(request_headers, true)
@@ -5574,9 +5795,13 @@ mod stress_tests {
         let tls_config = generate_http2_test_cert();
         let limits = Limits::default();
 
-        let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-            .await
-            .expect("failed to bind server");
+        let server = Http2Server::bind(
+            "127.0.0.1:0".parse().expect("parse should succeed"),
+            tls_config,
+            limits,
+        )
+        .await
+        .expect("failed to bind server");
         let server_addr = server.local_addr();
 
         let server_handle = tokio::spawn(async move {
@@ -5593,7 +5818,8 @@ mod stress_tests {
                 match event {
                     Http2Event::HeadersReceived { stream_id: sid, .. } => {
                         stream_id = Some(sid);
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(sid, response_headers, false)
                             .await
                             .expect("failed to send response");
@@ -5670,9 +5896,12 @@ mod stress_tests {
     async fn test_http2_client_nghttp2_server_bidirectional_echo() {
         let tls_config = generate_nghttp2_test_cert();
 
-        let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-            .await
-            .expect("failed to bind server");
+        let server = NgServer::bind(
+            "127.0.0.1:0".parse().expect("parse should succeed"),
+            tls_config,
+        )
+        .await
+        .expect("failed to bind server");
         let server_addr = server.local_addr();
 
         let server_handle = tokio::spawn(async move {
@@ -5716,10 +5945,10 @@ mod stress_tests {
         wait_for_http2_settings_ack(&mut client).await;
 
         let request_headers = vec![
-            HeaderField::new(":method", "POST").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":authority", "localhost").unwrap(),
-            HeaderField::new(":path", "/echo").unwrap(),
+            HeaderField::new(":method", "POST").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":authority", "localhost").expect("valid header field"),
+            HeaderField::new(":path", "/echo").expect("valid header field"),
         ];
         let stream_id = client
             .send_request(request_headers, false)
@@ -5766,9 +5995,13 @@ mod stress_tests {
         let tls_config = generate_http2_test_cert();
         let limits = Limits::default();
 
-        let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-            .await
-            .expect("failed to bind server");
+        let server = Http2Server::bind(
+            "127.0.0.1:0".parse().expect("parse should succeed"),
+            tls_config,
+            limits,
+        )
+        .await
+        .expect("failed to bind server");
         let server_addr = server.local_addr();
 
         let ping_count: u8 = 10;
@@ -5829,9 +6062,12 @@ mod stress_tests {
     async fn test_http2_client_nghttp2_server_rapid_ping() {
         let tls_config = generate_nghttp2_test_cert();
 
-        let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-            .await
-            .expect("failed to bind server");
+        let server = NgServer::bind(
+            "127.0.0.1:0".parse().expect("parse should succeed"),
+            tls_config,
+        )
+        .await
+        .expect("failed to bind server");
         let server_addr = server.local_addr();
 
         let ping_count: u8 = 10;
@@ -5894,9 +6130,13 @@ mod stress_tests {
         let tls_config = generate_http2_test_cert();
         let limits = Limits::default();
 
-        let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-            .await
-            .expect("failed to bind server");
+        let server = Http2Server::bind(
+            "127.0.0.1:0".parse().expect("parse should succeed"),
+            tls_config,
+            limits,
+        )
+        .await
+        .expect("failed to bind server");
         let server_addr = server.local_addr();
 
         let header_count = 40;
@@ -5924,8 +6164,9 @@ mod stress_tests {
                                 .count();
                             assert_eq!(custom_count, header_count);
 
-                            let response_headers =
-                                vec![HeaderField::new(":status", "200").unwrap()];
+                            let response_headers = vec![
+                                HeaderField::new(":status", "200").expect("valid header field"),
+                            ];
                             conn.send_response(stream_id, response_headers, true)
                                 .await
                                 .expect("failed to send response");
@@ -5988,9 +6229,12 @@ mod stress_tests {
     async fn test_http2_client_nghttp2_server_many_headers_stress() {
         let tls_config = generate_nghttp2_test_cert();
 
-        let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-            .await
-            .expect("failed to bind server");
+        let server = NgServer::bind(
+            "127.0.0.1:0".parse().expect("parse should succeed"),
+            tls_config,
+        )
+        .await
+        .expect("failed to bind server");
         let server_addr = server.local_addr();
 
         let header_count = 40;
@@ -6038,14 +6282,16 @@ mod stress_tests {
         wait_for_http2_settings_ack(&mut client).await;
 
         let mut request_headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":authority", "localhost").unwrap(),
-            HeaderField::new(":path", "/").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":authority", "localhost").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
         ];
         for i in 0..header_count {
-            request_headers
-                .push(HeaderField::new(format!("x-stress-{}", i), format!("value-{}", i)).unwrap());
+            request_headers.push(
+                HeaderField::new(format!("x-stress-{}", i), format!("value-{}", i))
+                    .expect("valid header field"),
+            );
         }
 
         let stream_id = client
@@ -6085,9 +6331,12 @@ mod stress_tests {
 async fn test_http2_client_nghttp2_server_trailers() {
     let tls_config = generate_nghttp2_test_cert();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -6137,10 +6386,10 @@ async fn test_http2_client_nghttp2_server_trailers() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
     ];
     client
         .send_request(request_headers, true)
@@ -6196,9 +6445,13 @@ async fn test_nghttp2_client_http2_server_trailers() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -6212,7 +6465,8 @@ async fn test_nghttp2_client_http2_server_trailers() {
                     ..
                 })) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, false)
                             .await
                             .expect("failed to send response");
@@ -6221,7 +6475,8 @@ async fn test_nghttp2_client_http2_server_trailers() {
                             .await
                             .expect("failed to send data");
 
-                        let trailer_headers = vec![HeaderField::new("x-result", "ok").unwrap()];
+                        let trailer_headers =
+                            vec![HeaderField::new("x-result", "ok").expect("valid header field")];
                         conn.send_trailers(stream_id, trailer_headers)
                             .await
                             .expect("failed to send trailers");
@@ -6303,9 +6558,12 @@ async fn test_nghttp2_client_http2_server_trailers() {
 async fn test_http2_client_nghttp2_server_client_sends_trailers() {
     let tls_config = generate_nghttp2_test_cert();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -6361,10 +6619,10 @@ async fn test_http2_client_nghttp2_server_client_sends_trailers() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "POST").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":method", "POST").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -6376,7 +6634,8 @@ async fn test_http2_client_nghttp2_server_client_sends_trailers() {
         .await
         .expect("failed to send data");
 
-    let trailer_headers = vec![HeaderField::new("x-client-trailer", "end").unwrap()];
+    let trailer_headers =
+        vec![HeaderField::new("x-client-trailer", "end").expect("valid header field")];
     client
         .send_trailers(stream_id, trailer_headers)
         .await
@@ -6404,9 +6663,13 @@ async fn test_nghttp2_client_http2_server_client_sends_trailers() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -6422,7 +6685,8 @@ async fn test_nghttp2_client_http2_server_client_sends_trailers() {
                     ..
                 })) => {
                     if !end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(sid, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -6503,9 +6767,13 @@ async fn test_nghttp2_client_http2_server_1xx_informational() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -6520,12 +6788,13 @@ async fn test_nghttp2_client_http2_server_1xx_informational() {
                 })) => {
                     if end_stream {
                         let informational_headers =
-                            vec![HeaderField::new(":status", "100").unwrap()];
+                            vec![HeaderField::new(":status", "100").expect("valid header field")];
                         conn.send_response(stream_id, informational_headers, false)
                             .await
                             .expect("failed to send 100 Continue");
 
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send 200 OK");
@@ -6598,9 +6867,12 @@ async fn test_nghttp2_client_http2_server_1xx_informational() {
 async fn test_http2_client_nghttp2_server_1xx_informational() {
     let tls_config = generate_nghttp2_test_cert();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -6644,10 +6916,10 @@ async fn test_http2_client_nghttp2_server_1xx_informational() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
     ];
     client
         .send_request(request_headers, true)
@@ -6699,9 +6971,13 @@ async fn test_nghttp2_client_http2_server_cookie_concatenation() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -6723,7 +6999,8 @@ async fn test_nghttp2_client_http2_server_cookie_concatenation() {
                             .expect("missing cookie header");
                         assert_eq!(cookie.value(), b"a=1; b=2; c=3");
 
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -6790,9 +7067,12 @@ async fn test_nghttp2_client_http2_server_cookie_concatenation() {
 async fn test_http2_client_nghttp2_server_cookie_concatenation() {
     let tls_config = generate_nghttp2_test_cert();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -6837,12 +7117,12 @@ async fn test_http2_client_nghttp2_server_cookie_concatenation() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new("cookie", "x=foo").unwrap(),
-        HeaderField::new("cookie", "y=bar").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new("cookie", "x=foo").expect("valid header field"),
+        HeaderField::new("cookie", "y=bar").expect("valid header field"),
     ];
     client
         .send_request(request_headers, true)
@@ -6884,9 +7164,12 @@ async fn test_http2_client_nghttp2_server_cookie_concatenation() {
 async fn test_http2_client_nghttp2_server_goaway_graceful() {
     let tls_config = generate_nghttp2_test_cert();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -6928,10 +7211,10 @@ async fn test_http2_client_nghttp2_server_goaway_graceful() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
     ];
     client
         .send_request(request_headers, true)
@@ -6975,9 +7258,12 @@ async fn test_http2_client_nghttp2_server_goaway_graceful() {
 async fn test_http2_client_nghttp2_server_manual_window_update() {
     let tls_config = generate_nghttp2_test_cert();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -7026,10 +7312,10 @@ async fn test_http2_client_nghttp2_server_manual_window_update() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -7074,9 +7360,12 @@ async fn test_http2_client_nghttp2_server_put() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -7121,10 +7410,10 @@ async fn test_http2_client_nghttp2_server_put() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "PUT").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/resource").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "PUT").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/resource").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -7163,9 +7452,13 @@ async fn test_nghttp2_client_http2_server_delete() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -7186,7 +7479,8 @@ async fn test_nghttp2_client_http2_server_delete() {
                             .expect("missing :method header");
                         assert_eq!(method.value(), b"DELETE");
 
-                        let response_headers = vec![HeaderField::new(":status", "204").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "204").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -7254,9 +7548,12 @@ async fn test_http2_client_nghttp2_server_head() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -7304,10 +7601,10 @@ async fn test_http2_client_nghttp2_server_head() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "HEAD").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "HEAD").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -7358,9 +7655,12 @@ async fn test_http2_client_nghttp2_server_404() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -7398,10 +7698,10 @@ async fn test_http2_client_nghttp2_server_404() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/not-found").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/not-found").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -7440,9 +7740,13 @@ async fn test_nghttp2_client_http2_server_500() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -7456,7 +7760,8 @@ async fn test_nghttp2_client_http2_server_500() {
                     ..
                 })) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "500").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "500").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -7524,9 +7829,12 @@ async fn test_http2_client_nghttp2_server_404_with_body() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let error_body = b"Not Found: the requested resource does not exist";
@@ -7573,10 +7881,10 @@ async fn test_http2_client_nghttp2_server_404_with_body() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/not-found").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/not-found").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -7630,9 +7938,12 @@ async fn test_http2_client_nghttp2_server_500_with_body() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let error_body = b"Internal Server Error: an unexpected error occurred";
@@ -7679,10 +7990,10 @@ async fn test_http2_client_nghttp2_server_500_with_body() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/error").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/error").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -7740,9 +8051,12 @@ async fn test_http2_client_nghttp2_server_rst_stream_internal_error() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -7779,10 +8093,10 @@ async fn test_http2_client_nghttp2_server_rst_stream_internal_error() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -7815,9 +8129,13 @@ async fn test_nghttp2_client_http2_server_rst_stream_refused() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -7896,9 +8214,12 @@ async fn test_http2_client_nghttp2_server_large_response() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     // 16KB のレスポンスボディ（初期ウィンドウサイズ内）
@@ -7944,10 +8265,10 @@ async fn test_http2_client_nghttp2_server_large_response() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/large").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/large").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -7995,9 +8316,13 @@ async fn test_nghttp2_client_http2_server_large_request() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     // 16KB のリクエストボディ（初期ウィンドウサイズ内）
@@ -8041,7 +8366,8 @@ async fn test_nghttp2_client_http2_server_large_request() {
         assert_eq!(received_body, request_body_clone);
 
         let sid = request_stream_id.expect("headers not received");
-        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+        let response_headers =
+            vec![HeaderField::new(":status", "200").expect("valid header field")];
         conn.send_response(sid, response_headers, true)
             .await
             .expect("failed to send response");
@@ -8102,9 +8428,12 @@ async fn test_nghttp2_client_http2_server_large_request() {
 async fn test_multiple_http2_clients_nghttp2_server() {
     let tls_config = generate_nghttp2_test_cert();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -8149,10 +8478,10 @@ async fn test_multiple_http2_clients_nghttp2_server() {
         wait_for_http2_settings_ack(&mut client).await;
 
         let request_headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":authority", "localhost").unwrap(),
-            HeaderField::new(":path", "/client1").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":authority", "localhost").expect("valid header field"),
+            HeaderField::new(":path", "/client1").expect("valid header field"),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -8185,10 +8514,10 @@ async fn test_multiple_http2_clients_nghttp2_server() {
         wait_for_http2_settings_ack(&mut client).await;
 
         let request_headers = vec![
-            HeaderField::new(":method", "GET").unwrap(),
-            HeaderField::new(":scheme", "https").unwrap(),
-            HeaderField::new(":authority", "localhost").unwrap(),
-            HeaderField::new(":path", "/client2").unwrap(),
+            HeaderField::new(":method", "GET").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":authority", "localhost").expect("valid header field"),
+            HeaderField::new(":path", "/client2").expect("valid header field"),
         ];
         let stream_id = client
             .send_request(request_headers, true)
@@ -8230,9 +8559,12 @@ async fn test_http2_client_nghttp2_server_goaway_protocol_error() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -8278,9 +8610,13 @@ async fn test_nghttp2_client_http2_server_goaway_internal_error() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -8323,9 +8659,12 @@ async fn test_http2_client_nghttp2_server_goaway_after_response() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -8368,10 +8707,10 @@ async fn test_http2_client_nghttp2_server_goaway_after_response() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
     ];
     client
         .send_request(request_headers, true)
@@ -8422,9 +8761,13 @@ async fn test_nghttp2_client_http2_server_mixed_methods() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -8451,7 +8794,8 @@ async fn test_nghttp2_client_http2_server_mixed_methods() {
                             _ => b"200",
                         };
 
-                        let response_headers = vec![HeaderField::new(":status", status).unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", status).expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -8467,7 +8811,8 @@ async fn test_nghttp2_client_http2_server_mixed_methods() {
                 Ok(Ok(Http2Event::DataReceived { end_stream, .. })) => {
                     if end_stream {
                         let sid = post_stream_id.expect("POST stream ID not set");
-                        let response_headers = vec![HeaderField::new(":status", "201").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "201").expect("valid header field")];
                         conn.send_response(sid, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -8574,9 +8919,12 @@ async fn test_http2_client_nghttp2_server_mixed_methods() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -8609,7 +8957,10 @@ async fn test_http2_client_nghttp2_server_mixed_methods() {
                     };
 
                     let response_headers = vec![NgHeader::status(
-                        std::str::from_utf8(status).unwrap().parse().unwrap(),
+                        std::str::from_utf8(status)
+                            .expect("should succeed")
+                            .parse()
+                            .expect("parse should succeed"),
                     )];
                     conn.send_response(stream_id, &response_headers, true)
                         .await
@@ -8653,10 +9004,10 @@ async fn test_http2_client_nghttp2_server_mixed_methods() {
 
     // GET リクエスト
     let get_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
     ];
     let get_stream_id = client
         .send_request(get_headers, true)
@@ -8665,10 +9016,10 @@ async fn test_http2_client_nghttp2_server_mixed_methods() {
 
     // POST リクエスト (ボディ付き)
     let post_headers = vec![
-        HeaderField::new(":method", "POST").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":path", "/create").unwrap(),
+        HeaderField::new(":method", "POST").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":path", "/create").expect("valid header field"),
     ];
     let post_stream_id = client
         .send_request(post_headers, false)
@@ -8733,9 +9084,13 @@ async fn test_nghttp2_client_http2_server_patch() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -8757,7 +9112,8 @@ async fn test_nghttp2_client_http2_server_patch() {
                     assert_eq!(method.value(), b"PATCH");
 
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -8769,7 +9125,8 @@ async fn test_nghttp2_client_http2_server_patch() {
                 Ok(Ok(Http2Event::DataReceived { end_stream, .. })) => {
                     if end_stream {
                         let sid = patch_stream_id.expect("PATCH stream ID not set");
-                        let response_headers = vec![HeaderField::new(":status", "200").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "200").expect("valid header field")];
                         conn.send_response(sid, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -8837,9 +9194,12 @@ async fn test_http2_client_nghttp2_server_patch() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -8901,10 +9261,10 @@ async fn test_http2_client_nghttp2_server_patch() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "PATCH").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/resource").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "PATCH").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/resource").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, false)
@@ -8952,9 +9312,13 @@ async fn test_nghttp2_client_http2_server_301() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -8969,8 +9333,9 @@ async fn test_nghttp2_client_http2_server_301() {
                 })) => {
                     if end_stream {
                         let response_headers = vec![
-                            HeaderField::new(":status", "301").unwrap(),
-                            HeaderField::new("location", "/new-location").unwrap(),
+                            HeaderField::new(":status", "301").expect("valid header field"),
+                            HeaderField::new("location", "/new-location")
+                                .expect("valid header field"),
                         ];
                         conn.send_response(stream_id, response_headers, true)
                             .await
@@ -9045,9 +9410,12 @@ async fn test_http2_client_nghttp2_server_302() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -9088,10 +9456,10 @@ async fn test_http2_client_nghttp2_server_302() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/old-path").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/old-path").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -9136,9 +9504,13 @@ async fn test_nghttp2_client_http2_server_400() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -9152,7 +9524,8 @@ async fn test_nghttp2_client_http2_server_400() {
                     ..
                 })) => {
                     if end_stream {
-                        let response_headers = vec![HeaderField::new(":status", "400").unwrap()];
+                        let response_headers =
+                            vec![HeaderField::new(":status", "400").expect("valid header field")];
                         conn.send_response(stream_id, response_headers, true)
                             .await
                             .expect("failed to send response");
@@ -9220,9 +9593,12 @@ async fn test_http2_client_nghttp2_server_403() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -9260,10 +9636,10 @@ async fn test_http2_client_nghttp2_server_403() {
     wait_for_http2_settings_ack(&mut client).await;
 
     let request_headers = vec![
-        HeaderField::new(":method", "GET").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/forbidden").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
+        HeaderField::new(":method", "GET").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/forbidden").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
     ];
     let stream_id = client
         .send_request(request_headers, true)
@@ -9306,9 +9682,13 @@ async fn test_nghttp2_client_http2_server_settings_values() {
     let tls_config = generate_http2_test_cert();
     let limits = Limits::default();
 
-    let server = Http2Server::bind("127.0.0.1:0".parse().unwrap(), tls_config, limits)
-        .await
-        .expect("failed to bind server");
+    let server = Http2Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+        limits,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -9357,9 +9737,12 @@ async fn test_http2_client_nghttp2_server_settings_values() {
     let tls_config = generate_nghttp2_test_cert();
     let limits = Limits::default();
 
-    let server = NgServer::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = NgServer::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {

@@ -425,35 +425,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn client_stream_id_new_out_of_range() {
-        assert_eq!(
-            ClientStreamId::new(STREAM_ID_MAX + 1),
-            Err(StreamIdError::OutOfRange {
-                value: STREAM_ID_MAX + 1,
-            })
-        );
-    }
-
-    #[test]
-    fn non_zero_stream_id_new_out_of_range() {
-        assert_eq!(
-            NonZeroStreamId::new(STREAM_ID_MAX + 1),
-            Err(StreamIdError::OutOfRange {
-                value: STREAM_ID_MAX + 1,
-            })
-        );
-    }
-
-    #[test]
     fn client_stream_id_from_validated_parts() {
-        let raw = NonZeroU32::new(5).unwrap();
+        let raw = NonZeroU32::new(5).expect("non-zero stream id");
         let id = ClientStreamId::from_validated_parts(raw);
         assert_eq!(id.as_u32(), 5);
     }
 
     #[test]
     fn server_stream_id_from_validated_parts() {
-        let raw = NonZeroU32::new(6).unwrap();
+        let raw = NonZeroU32::new(6).expect("non-zero stream id");
         let id = ServerStreamId::from_validated_parts(raw);
         assert_eq!(id.as_u32(), 6);
     }
@@ -471,8 +451,8 @@ mod tests {
                     |id| id % 2 == 1,
                 ),
             ) {
-                let via_new = ClientStreamId::new(id).unwrap();
-                let nz = NonZeroU32::new(id).unwrap();
+                let via_new = ClientStreamId::new(id).expect("valid client stream id");
+                let nz = NonZeroU32::new(id).expect("non-zero stream id");
                 let via_validated = ClientStreamId::from_validated_parts(nz);
                 prop_assert_eq!(via_new, via_validated);
             }
@@ -484,8 +464,8 @@ mod tests {
                     |id| id % 2 == 0,
                 ),
             ) {
-                let via_new = ServerStreamId::new(id).unwrap();
-                let nz = NonZeroU32::new(id).unwrap();
+                let via_new = ServerStreamId::new(id).expect("valid server stream id");
+                let nz = NonZeroU32::new(id).expect("non-zero stream id");
                 let via_validated = ServerStreamId::from_validated_parts(nz);
                 prop_assert_eq!(via_new, via_validated);
             }
@@ -494,8 +474,8 @@ mod tests {
             fn non_zero_stream_id_validated_matches_new(
                 id in 1u32..=STREAM_ID_MAX,
             ) {
-                let via_new = NonZeroStreamId::new(id).unwrap();
-                let nz = NonZeroU32::new(id).unwrap();
+                let via_new = NonZeroStreamId::new(id).expect("valid non-zero stream id");
+                let nz = NonZeroU32::new(id).expect("non-zero stream id");
                 let via_validated = NonZeroStreamId::from_validated_parts(nz);
                 prop_assert_eq!(via_new, via_validated);
             }

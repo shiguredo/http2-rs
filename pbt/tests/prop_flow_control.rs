@@ -64,7 +64,7 @@ proptest! {
     ) {
         let mut fc = FlowControl::new(initial_window);
         let consume = consume_size.min(initial_window as usize);
-        fc.consume_send(consume).unwrap();
+        fc.consume_send(consume).expect("should succeed");
 
         let available = fc.send_available();
         let expected = (initial_window as usize).saturating_sub(consume);
@@ -80,7 +80,7 @@ proptest! {
     ) {
         let mut fc = FlowControl::new(initial_window);
         let consume = consume_size.min(initial_window as usize);
-        fc.consume_send(consume).unwrap();
+        fc.consume_send(consume).expect("should succeed");
 
         let before = fc.send_window();
         let result = fc.recv_window_update(increment);
@@ -103,7 +103,7 @@ proptest! {
     ) {
         let mut fc = FlowControl::new(initial_window);
         let consume = consume_size.min(initial_window as usize);
-        fc.consume_send(consume).unwrap();
+        fc.consume_send(consume).expect("should succeed");
 
         let before = fc.send_window();
         let result = fc.update_initial_window_size(new_initial);
@@ -137,8 +137,8 @@ proptest! {
         let mut fc_b = FlowControl::with_separate_windows(send_initial_b, recv_initial);
 
         let consume = consume_amount.min(recv_initial as usize);
-        fc_a.consume_recv(consume).unwrap();
-        fc_b.consume_recv(consume).unwrap();
+        fc_a.consume_recv(consume).expect("should succeed");
+        fc_b.consume_recv(consume).expect("should succeed");
 
         prop_assert_eq!(
             fc_a.should_send_window_update(),
@@ -175,7 +175,7 @@ proptest! {
         // recv_window を recv_initial 超に増加させる
         let new_recv = i64::from(recv_initial) + i64::from(extra);
         if new_recv <= i64::from(shiguredo_http2::MAX_WINDOW_SIZE) {
-            fc.add_recv_window(extra).unwrap();
+            fc.add_recv_window(extra).expect("should succeed");
             prop_assert!(!fc.should_send_window_update());
             prop_assert_eq!(fc.window_update_increment(), 0);
         }
@@ -202,14 +202,14 @@ proptest! {
                 Op::Consume(size) => {
                     let available = fc.send_available();
                     if size <= available {
-                        fc.consume_send(size).unwrap();
+                        fc.consume_send(size).expect("should succeed");
                         // 不変条件: 送信ウィンドウは負にならない（消費後も正または 0）
                         prop_assert!(fc.send_window() >= 0);
                     }
                 }
                 Op::WindowUpdate(increment) => {
                     if fc.send_window() + i64::from(increment) <= i64::from(shiguredo_http2::MAX_WINDOW_SIZE) {
-                        fc.recv_window_update(increment).unwrap();
+                        fc.recv_window_update(increment).expect("operation should succeed");
                         // 不変条件: ウィンドウは MAX_WINDOW_SIZE を超えない
                         prop_assert!(fc.send_window() <= i64::from(shiguredo_http2::MAX_WINDOW_SIZE));
                     }

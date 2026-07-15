@@ -20,10 +20,10 @@ fn test_encode_decode_1_byte() {
     let mut buf = [0u8; 8];
 
     for value in [0, 1, 37, 63] {
-        let len = encode(value, &mut buf).unwrap();
+        let len = encode(value, &mut buf).expect("should succeed");
         assert_eq!(len, 1);
 
-        let (decoded, consumed) = decode(&buf[..len]).unwrap();
+        let (decoded, consumed) = decode(&buf[..len]).expect("should succeed");
         assert_eq!(decoded, value);
         assert_eq!(consumed, 1);
     }
@@ -34,10 +34,10 @@ fn test_encode_decode_2_bytes() {
     let mut buf = [0u8; 8];
 
     for value in [64, 100, 494, 16383] {
-        let len = encode(value, &mut buf).unwrap();
+        let len = encode(value, &mut buf).expect("should succeed");
         assert_eq!(len, 2);
 
-        let (decoded, consumed) = decode(&buf[..len]).unwrap();
+        let (decoded, consumed) = decode(&buf[..len]).expect("should succeed");
         assert_eq!(decoded, value);
         assert_eq!(consumed, 2);
     }
@@ -48,10 +48,10 @@ fn test_encode_decode_4_bytes() {
     let mut buf = [0u8; 8];
 
     for value in [16384, 65535, 494878333, 1073741823] {
-        let len = encode(value, &mut buf).unwrap();
+        let len = encode(value, &mut buf).expect("should succeed");
         assert_eq!(len, 4);
 
-        let (decoded, consumed) = decode(&buf[..len]).unwrap();
+        let (decoded, consumed) = decode(&buf[..len]).expect("should succeed");
         assert_eq!(decoded, value);
         assert_eq!(consumed, 4);
     }
@@ -62,10 +62,10 @@ fn test_encode_decode_8_bytes() {
     let mut buf = [0u8; 8];
 
     for value in [1073741824, 151288809941952652, MAX_VALUE] {
-        let len = encode(value, &mut buf).unwrap();
+        let len = encode(value, &mut buf).expect("should succeed");
         assert_eq!(len, 8);
 
-        let (decoded, consumed) = decode(&buf[..len]).unwrap();
+        let (decoded, consumed) = decode(&buf[..len]).expect("should succeed");
         assert_eq!(decoded, value);
         assert_eq!(consumed, 8);
     }
@@ -130,19 +130,19 @@ fn test_rfc_examples() {
     let mut buf = [0u8; 8];
 
     // 37 -> 0x25 (1 byte)
-    let len = encode(37, &mut buf).unwrap();
+    let len = encode(37, &mut buf).expect("should succeed");
     assert_eq!(&buf[..len], &[0x25]);
 
     // 15293 -> 0x7bbd (2 bytes)
-    let len = encode(15293, &mut buf).unwrap();
+    let len = encode(15293, &mut buf).expect("should succeed");
     assert_eq!(&buf[..len], &[0x7b, 0xbd]);
 
     // 494878333 -> 0x9d7f3e7d (4 bytes)
-    let len = encode(494878333, &mut buf).unwrap();
+    let len = encode(494878333, &mut buf).expect("should succeed");
     assert_eq!(&buf[..len], &[0x9d, 0x7f, 0x3e, 0x7d]);
 
     // 151288809941952652 -> 0xc2197c5eff14e88c (8 bytes)
-    let len = encode(151288809941952652, &mut buf).unwrap();
+    let len = encode(151288809941952652, &mut buf).expect("should succeed");
     assert_eq!(
         &buf[..len],
         &[0xc2, 0x19, 0x7c, 0x5e, 0xff, 0x14, 0xe8, 0x8c]
@@ -151,9 +151,9 @@ fn test_rfc_examples() {
 
 #[test]
 fn test_encode_to_vec() {
-    let buf = encode_to_vec(37).unwrap();
+    let buf = encode_to_vec(37).expect("should succeed");
     assert_eq!(buf, vec![0x25]);
 
-    let buf = encode_to_vec(15293).unwrap();
+    let buf = encode_to_vec(15293).expect("should succeed");
     assert_eq!(buf, vec![0x7b, 0xbd]);
 }

@@ -23,10 +23,10 @@ proptest! {
     #[test]
     fn prop_varint_roundtrip(value in valid_varint_value()) {
         let mut buf = [0u8; 8];
-        let encoded_len_result = varint_encode(value, &mut buf).unwrap();
+        let encoded_len_result = varint_encode(value, &mut buf).expect("should succeed");
         prop_assert_eq!(encoded_len_result, encoded_len(value));
 
-        let (decoded, consumed) = varint_decode(&buf[..encoded_len_result]).unwrap();
+        let (decoded, consumed) = varint_decode(&buf[..encoded_len_result]).expect("should succeed");
         prop_assert_eq!(decoded, value);
         prop_assert_eq!(consumed, encoded_len_result);
     }
@@ -58,7 +58,7 @@ proptest! {
         encoder.encode(&capsule);
 
         decoder.feed(encoder.buffer());
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
 
@@ -80,7 +80,7 @@ proptest! {
         encoder.encode(&capsule);
 
         decoder.feed(encoder.buffer());
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
 
@@ -102,7 +102,7 @@ proptest! {
         encoder.encode(&capsule);
 
         decoder.feed(encoder.buffer());
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
 
@@ -122,7 +122,7 @@ proptest! {
         encoder.encode(&capsule);
 
         decoder.feed(encoder.buffer());
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
 
@@ -136,7 +136,7 @@ proptest! {
         encoder.encode(&capsule);
 
         decoder.feed(encoder.buffer());
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
 
@@ -153,7 +153,7 @@ proptest! {
         encoder.encode(&capsule);
 
         decoder.feed(encoder.buffer());
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
 
@@ -170,7 +170,7 @@ proptest! {
         encoder.encode(&capsule);
 
         decoder.feed(encoder.buffer());
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
 
@@ -190,7 +190,7 @@ proptest! {
         encoder.encode(&capsule);
 
         decoder.feed(encoder.buffer());
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
 
@@ -214,12 +214,12 @@ proptest! {
         decoder.feed(encoder.buffer());
 
         for expected in &capsules {
-            let decoded = decoder.decode().unwrap().unwrap();
+            let decoded = decoder.decode().expect("decode should succeed").expect("decode should succeed");
             prop_assert_eq!(expected, &decoded);
         }
 
         // これ以上 Capsule はない
-        prop_assert!(decoder.decode().unwrap().is_none());
+        prop_assert!(decoder.decode().expect("decode should succeed").is_none());
     }
 
     /// Unknown Capsule タイプの往復テスト
@@ -238,7 +238,7 @@ proptest! {
         encoder.encode(&capsule);
 
         decoder.feed(encoder.buffer());
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
 
@@ -252,7 +252,7 @@ proptest! {
         encoder.encode(&capsule);
 
         decoder.feed(encoder.buffer());
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
 
@@ -266,7 +266,7 @@ proptest! {
         encoder.encode(&capsule);
 
         decoder.feed(encoder.buffer());
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
 
@@ -283,7 +283,7 @@ proptest! {
         encoder.encode(&capsule);
 
         decoder.feed(encoder.buffer());
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
 
@@ -300,7 +300,7 @@ proptest! {
         encoder.encode(&capsule);
 
         decoder.feed(encoder.buffer());
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
 
@@ -318,7 +318,7 @@ proptest! {
         // Type: WT_MAX_DATA
         let type_len = encoded_len(0x190B4D3D);
         buf.resize(type_len, 0);
-        varint_encode(0x190B4D3D, &mut buf).unwrap();
+        varint_encode(0x190B4D3D, &mut buf).expect("should succeed");
 
         // payload: varint(maximum) + trailing bytes
         let max_len = encoded_len(maximum);
@@ -326,12 +326,12 @@ proptest! {
         let len_start = buf.len();
         let len_len = encoded_len(payload_total as u64);
         buf.resize(len_start + len_len, 0);
-        varint_encode(payload_total as u64, &mut buf[len_start..]).unwrap();
+        varint_encode(payload_total as u64, &mut buf[len_start..]).expect("should succeed");
 
         // maximum の varint
         let val_start = buf.len();
         buf.resize(val_start + max_len, 0);
-        varint_encode(maximum, &mut buf[val_start..]).unwrap();
+        varint_encode(maximum, &mut buf[val_start..]).expect("should succeed");
 
         // trailing bytes
         buf.extend_from_slice(&trailing);
@@ -606,7 +606,7 @@ proptest! {
         } else {
             WtSession::server(WtConfig::default())
         };
-        session.initiate().unwrap();
+        session.initiate().expect("initiate should succeed");
 
         let mut bidi_ids: Vec<u64> = Vec::new();
         let mut uni_ids: Vec<u64> = Vec::new();
@@ -667,7 +667,7 @@ proptest! {
         // デコード
         let mut decoder = CapsuleDecoder::new();
         decoder.feed(&encoded1);
-        let decoded = decoder.decode().unwrap().unwrap();
+        let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         // 再エンコード
         let mut encoder2 = CapsuleEncoder::new();

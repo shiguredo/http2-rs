@@ -3,7 +3,7 @@
 //! draft-ietf-webtrans-http2-14 Section 4.3.2 (L519-L541) と RFC 8941
 //! Section 4.2 (Parsing Structured Fields) の動作を境界値・型不一致を含めて検証する。
 //! 加えて、`apply_init` 後の `WtConfig` が `WtSession` の初期最大データ量に
-//! 反映されることを Sans I/O 層で確認する (issue 0064 完了条件)。
+//! 反映されることを Sans I/O 層で確認する。
 
 use shiguredo_http2::webtransport::{WtConfig, WtInit, WtSession};
 
@@ -237,7 +237,7 @@ fn test_parse_handles_leading_and_trailing_ows() {
 }
 
 /// `apply_init` で更新された `u` 値が `WtSession::server(config)` 経由で
-/// 単方向ストリームの初期最大データ量に反映されること (issue 0064 完了条件)
+/// 単方向ストリームの初期最大データ量に反映されること
 #[test]
 fn test_apply_init_propagates_to_uni_stream_initial_max() {
     let mut config = WtConfig::default();
@@ -260,7 +260,7 @@ fn test_apply_init_propagates_to_uni_stream_initial_max() {
 }
 
 /// `apply_init` で更新された `br` 値が自身が開く双方向ストリームの
-/// 初期最大データ量に反映されること (issue 0064 完了条件)
+/// 初期最大データ量に反映されること
 #[test]
 fn test_apply_init_propagates_to_bidi_local_stream_initial_max() {
     let mut config = WtConfig::default();

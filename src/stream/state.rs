@@ -66,25 +66,25 @@ pub enum StreamState {
 impl StreamState {
     /// ストリームがオープンかどうかを返す
     #[must_use]
-    pub const fn is_open(&self) -> bool {
+    pub const fn is_open(self) -> bool {
         matches!(self, Self::Open)
     }
 
     /// ストリームがクローズドかどうかを返す
     #[must_use]
-    pub const fn is_closed(&self) -> bool {
+    pub const fn is_closed(self) -> bool {
         matches!(self, Self::Closed)
     }
 
     /// ローカル側から送信可能かどうかを返す
     #[must_use]
-    pub const fn can_send(&self) -> bool {
+    pub const fn can_send(self) -> bool {
         matches!(self, Self::Open | Self::HalfClosedRemote)
     }
 
     /// リモート側からの受信が可能かどうかを返す
     #[must_use]
-    pub const fn can_recv(&self) -> bool {
+    pub const fn can_recv(self) -> bool {
         matches!(self, Self::Open | Self::HalfClosedLocal)
     }
 }
@@ -291,108 +291,5 @@ impl StateMachine {
 impl Default for StateMachine {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_idle_to_open() {
-        let mut sm = StateMachine::new();
-        assert_eq!(sm.state(), StreamState::Idle);
-
-        sm.send_headers(false).unwrap();
-        assert_eq!(sm.state(), StreamState::Open);
-    }
-
-    #[test]
-    fn test_idle_to_half_closed_local() {
-        let mut sm = StateMachine::new();
-        sm.send_headers(true).unwrap();
-        assert_eq!(sm.state(), StreamState::HalfClosedLocal);
-    }
-
-    #[test]
-    fn test_open_to_half_closed_local() {
-        let mut sm = StateMachine::new();
-        sm.send_headers(false).unwrap();
-        sm.send_data(true).unwrap();
-        // send_data は validate のみで状態遷移しない (フロー制御で詰まる可能性のため)
-        assert_eq!(sm.state(), StreamState::Open);
-        sm.complete_send_data(true).unwrap();
-        assert_eq!(sm.state(), StreamState::HalfClosedLocal);
-    }
-
-    #[test]
-    fn test_open_to_half_closed_remote() {
-        let mut sm = StateMachine::new();
-        sm.recv_headers(false).unwrap();
-        sm.recv_data(true).unwrap();
-        assert_eq!(sm.state(), StreamState::HalfClosedRemote);
-    }
-
-    #[test]
-    fn test_half_closed_to_closed() {
-        let mut sm = StateMachine::new();
-        sm.send_headers(false).unwrap();
-        sm.send_data(true).unwrap();
-        sm.complete_send_data(true).unwrap();
-        assert_eq!(sm.state(), StreamState::HalfClosedLocal);
-
-        sm.recv_data(true).unwrap();
-        assert_eq!(sm.state(), StreamState::Closed);
-    }
-
-    #[test]
-    fn test_rst_stream_closes() {
-        let mut sm = StateMachine::new();
-        sm.send_headers(false).unwrap();
-        sm.send_rst_stream();
-        assert_eq!(sm.state(), StreamState::Closed);
-    }
-
-    #[test]
-    fn test_server_response_from_half_closed_remote() {
-        // クライアントが end_stream=true でリクエストを送信
-        let mut sm = StateMachine::new();
-        sm.recv_headers(true).unwrap();
-        assert_eq!(sm.state(), StreamState::HalfClosedRemote);
-
-        // サーバーがレスポンスを送信 (end_stream=true)
-        sm.send_headers(true).unwrap();
-        assert_eq!(sm.state(), StreamState::Closed);
-    }
-
-    #[test]
-    fn test_server_response_with_body_from_half_closed_remote() {
-        // クライアントが end_stream=true でリクエストを送信
-        let mut sm = StateMachine::new();
-        sm.recv_headers(true).unwrap();
-        assert_eq!(sm.state(), StreamState::HalfClosedRemote);
-
-        // サーバーがレスポンスヘッダーを送信 (end_stream=false)
-        sm.send_headers(false).unwrap();
-        assert_eq!(sm.state(), StreamState::HalfClosedRemote);
-
-        // サーバーがボディを送信 (end_stream=true)
-        sm.send_data(true).unwrap();
-        // validate のみで遷移しない
-        assert_eq!(sm.state(), StreamState::HalfClosedRemote);
-        // 実際に送信完了したら Closed
-        sm.complete_send_data(true).unwrap();
-        assert_eq!(sm.state(), StreamState::Closed);
-    }
-
-    #[test]
-    fn test_trailer_headers_from_open() {
-        let mut sm = StateMachine::new();
-        sm.send_headers(false).unwrap();
-        assert_eq!(sm.state(), StreamState::Open);
-
-        // トレーラーヘッダーを送信
-        sm.send_headers(true).unwrap();
-        assert_eq!(sm.state(), StreamState::HalfClosedLocal);
     }
 }

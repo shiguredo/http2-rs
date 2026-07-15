@@ -18,11 +18,11 @@ use tokio_http2::{
 /// テストで繰り返し使う CONNECT 要求ヘッダー
 fn connect_request() -> Vec<HeaderField> {
     vec![
-        HeaderField::new(":method", "CONNECT").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":protocol", "webtransport").unwrap(),
+        HeaderField::new(":method", "CONNECT").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":protocol", "webtransport").expect("valid header field"),
     ]
 }
 
@@ -74,7 +74,7 @@ fn test_tls() -> TlsServerConfig {
             .expect("failed to generate cert");
     TlsServerConfig::from_der(
         vec![CertificateDer::from(cert.der().to_vec())],
-        PrivateKeyDer::try_from(signing_key.serialize_der()).unwrap(),
+        PrivateKeyDer::try_from(signing_key.serialize_der()).expect("should succeed"),
     )
     .expect("failed to build TLS server config")
 }
@@ -100,9 +100,13 @@ fn server_limits() -> Limits {
 async fn test_wt_bidi_echo() {
     let tls = test_tls();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("bind");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("bind");
     let addr = server.local_addr();
 
     // サーバータスク
@@ -162,11 +166,11 @@ async fn test_wt_bidi_echo() {
 
     // Extended CONNECT
     let request = vec![
-        HeaderField::new(":method", "CONNECT").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":protocol", "webtransport").unwrap(),
+        HeaderField::new(":method", "CONNECT").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":protocol", "webtransport").expect("valid header field"),
     ];
     let connect_stream = client
         .send_request(request, false)
@@ -235,9 +239,13 @@ async fn test_wt_bidi_echo() {
 #[tokio::test]
 async fn test_wt_reject() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("bind");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("bind");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {
@@ -271,11 +279,11 @@ async fn test_wt_reject() {
     }
 
     let request = vec![
-        HeaderField::new(":method", "CONNECT").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":protocol", "webtransport").unwrap(),
+        HeaderField::new(":method", "CONNECT").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":protocol", "webtransport").expect("valid header field"),
     ];
     let connect_stream = client
         .send_request(request, false)
@@ -313,9 +321,13 @@ async fn test_wt_reject() {
 #[tokio::test]
 async fn test_wt_uni_echo() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("bind");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("bind");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {
@@ -386,9 +398,13 @@ async fn test_wt_uni_echo() {
 #[tokio::test]
 async fn test_wt_datagram_echo() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("bind");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("bind");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {
@@ -439,7 +455,7 @@ async fn test_wt_datagram_echo() {
             }
         }
     }
-    assert_eq!(received.unwrap(), b"dgram-payload");
+    assert_eq!(received.expect("should succeed"), b"dgram-payload");
     server_task.await.expect("server join");
 }
 
@@ -447,9 +463,13 @@ async fn test_wt_datagram_echo() {
 #[tokio::test]
 async fn test_wt_close() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("bind");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("bind");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {
@@ -491,7 +511,7 @@ async fn test_wt_close() {
             }
         }
     }
-    let (code, reason) = closed.unwrap();
+    let (code, reason) = closed.expect("should succeed");
     assert_eq!(code, 99);
     assert_eq!(reason, "shutdown");
     server_task.await.expect("server join");
@@ -501,9 +521,13 @@ async fn test_wt_close() {
 #[tokio::test]
 async fn test_wt_drain() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("bind");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("bind");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {
@@ -559,9 +583,13 @@ async fn test_wt_drain() {
 #[tokio::test]
 async fn test_wt_close_sends_end_stream() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("bind");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("bind");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {
@@ -625,9 +653,13 @@ async fn test_wt_close_sends_end_stream() {
 #[tokio::test]
 async fn test_wt_close_received_sends_end_stream() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("bind");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("bind");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {
@@ -696,13 +728,17 @@ async fn test_wt_close_received_sends_end_stream() {
 /// サーバーが END_STREAM を返信することを確認する。
 ///
 /// end_stream=true と WT_CLOSE_SESSION が同一フレームで届くエッジケースでも、
-/// 先に END_STREAM を返信してから driver が終了すること (issue 0058 エッジケース)。
+/// 先に END_STREAM を返信してから driver が終了すること。
 #[tokio::test]
 async fn test_wt_close_same_frame_end_stream() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("bind");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("bind");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {
@@ -764,24 +800,24 @@ async fn test_wt_close_same_frame_end_stream() {
 /// `WebTransport-Init` ヘッダーつきの CONNECT 要求ヘッダー
 fn connect_request_with_webtransport_init(init: &str) -> Vec<HeaderField> {
     vec![
-        HeaderField::new(":method", "CONNECT").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":protocol", "webtransport").unwrap(),
-        HeaderField::new("webtransport-init", init).unwrap(),
+        HeaderField::new(":method", "CONNECT").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":protocol", "webtransport").expect("valid header field"),
+        HeaderField::new("webtransport-init", init).expect("valid header field"),
     ]
 }
 
 /// Origin ヘッダーつきの CONNECT 要求ヘッダー
 fn connect_request_with_origin(origin: &str) -> Vec<HeaderField> {
     vec![
-        HeaderField::new(":method", "CONNECT").unwrap(),
-        HeaderField::new(":scheme", "https").unwrap(),
-        HeaderField::new(":path", "/").unwrap(),
-        HeaderField::new(":authority", "localhost").unwrap(),
-        HeaderField::new(":protocol", "webtransport").unwrap(),
-        HeaderField::new("origin", origin).unwrap(),
+        HeaderField::new(":method", "CONNECT").expect("valid header field"),
+        HeaderField::new(":scheme", "https").expect("valid header field"),
+        HeaderField::new(":path", "/").expect("valid header field"),
+        HeaderField::new(":authority", "localhost").expect("valid header field"),
+        HeaderField::new(":protocol", "webtransport").expect("valid header field"),
+        HeaderField::new("origin", origin).expect("valid header field"),
     ]
 }
 
@@ -789,9 +825,13 @@ fn connect_request_with_origin(origin: &str) -> Vec<HeaderField> {
 #[tokio::test]
 async fn test_wt_origin_allowed() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("bind");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("bind");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {
@@ -849,9 +889,13 @@ async fn test_wt_origin_allowed() {
 #[tokio::test]
 async fn test_wt_origin_rejected() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("bind");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("bind");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {
@@ -916,9 +960,13 @@ async fn test_wt_origin_rejected() {
 #[tokio::test]
 async fn test_wt_tls13_accept() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("バインドに失敗");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("バインドに失敗");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {
@@ -947,9 +995,13 @@ async fn test_wt_tls13_accept() {
 #[tokio::test]
 async fn test_wt_tls12_rejected() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("バインドに失敗");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("バインドに失敗");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {
@@ -1036,9 +1088,13 @@ async fn test_wt_tls12_rejected() {
 #[tokio::test]
 async fn test_wt_origin_missing_rejected() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("bind");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("bind");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {
@@ -1081,9 +1137,13 @@ async fn test_wt_origin_missing_rejected() {
 #[tokio::test]
 async fn test_wt_init_accept_with_large_value() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("バインドに失敗");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("バインドに失敗");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {
@@ -1133,9 +1193,13 @@ async fn test_wt_init_accept_with_large_value() {
 #[tokio::test]
 async fn test_wt_init_accept_with_small_value() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("バインドに失敗");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("バインドに失敗");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {
@@ -1175,9 +1239,13 @@ async fn test_wt_init_accept_with_small_value() {
 #[tokio::test]
 async fn test_wt_init_rejected_on_invalid_value() {
     let tls = test_tls();
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls, server_limits())
-        .await
-        .expect("バインドに失敗");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("バインドに失敗");
     let addr = server.local_addr();
 
     let server_task = tokio::spawn(async move {

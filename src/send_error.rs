@@ -1,4 +1,4 @@
-//! 送信時エラー型 (issue 0029)
+//! 送信時エラー型
 //!
 //! `Connection::send_*` 系の API が返す構築時検査エラー。
 //! 文字列ベースの [`crate::error::Error`] とは分離し、違反値を構造化フィールドで保持する。
@@ -7,7 +7,7 @@
 //! この型は未統合。統合は送信 API のリファクタリング時に行う。
 
 /// HTTP/2 送信エラー
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SendError {
     /// 接続が既にクローズされている
     ConnectionClosed,

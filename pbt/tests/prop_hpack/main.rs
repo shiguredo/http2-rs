@@ -17,7 +17,7 @@ fn valid_header_name() -> impl Strategy<Value = Vec<u8>> {
         prop::sample::select(
             (b'a'..=b'z')
                 .chain(b'0'..=b'9')
-                .chain([b'-', b'_'])
+                .chain(*b"-_")
                 .collect::<Vec<_>>(),
         ),
         1..=32,
@@ -33,7 +33,10 @@ fn valid_header_value() -> impl Strategy<Value = Vec<u8>> {
         v.iter()
             .position(|&b| b != 0x20 && b != 0x09)
             .map(|start| {
-                let end = v.iter().rposition(|&b| b != 0x20 && b != 0x09).unwrap();
+                let end = v
+                    .iter()
+                    .rposition(|&b| b != 0x20 && b != 0x09)
+                    .expect("should succeed");
                 v[start..=end].to_vec()
             })
             .unwrap_or_default()
@@ -56,7 +59,7 @@ proptest! {
     ) {
         let headers: Vec<HeaderField> = headers
             .into_iter()
-            .map(|(name, value)| HeaderField::new(name, value).unwrap())
+            .map(|(name, value)| HeaderField::new(name, value).expect("valid header field"))
             .collect();
 
         let mut encoder = HpackEncoder::new(4096);
@@ -65,7 +68,7 @@ proptest! {
         let mut encoded = Vec::new();
         encoder.encode(&mut encoded, &headers);
 
-        let decoded = decoder.decode(&encoded).unwrap();
+        let decoded = decoder.decode(&encoded).expect("encode should succeed");
 
         prop_assert_eq!(decoded.len(), headers.len());
         for (original, decoded) in headers.iter().zip(decoded.iter()) {
@@ -83,11 +86,11 @@ proptest! {
         let mut buf = [0u8; 16];
         let encoded_len = shiguredo_http2::hpack::integer::encode(
             &mut buf, value, prefix_bits, 0
-        ).unwrap();
+        ).expect("should succeed");
 
         let (decoded, decoded_len) = shiguredo_http2::hpack::integer::decode(
             &buf, prefix_bits
-        ).unwrap();
+        ).expect("should succeed");
 
         prop_assert_eq!(value, decoded);
         prop_assert_eq!(encoded_len, decoded_len);
@@ -97,7 +100,7 @@ proptest! {
     #[test]
     fn prop_huffman_roundtrip(data in arbitrary_bytes(128)) {
         let encoded = shiguredo_http2::hpack::huffman::encode_to_vec(&data);
-        let decoded = shiguredo_http2::hpack::huffman::decode(&encoded).unwrap();
+        let decoded = shiguredo_http2::hpack::huffman::decode(&encoded).expect("should succeed");
 
         prop_assert_eq!(data, decoded);
     }
@@ -121,7 +124,7 @@ proptest! {
     ) {
         let headers: Vec<HeaderField> = headers
             .into_iter()
-            .map(|(name, value)| HeaderField::new(name, value).unwrap())
+            .map(|(name, value)| HeaderField::new(name, value).expect("valid header field"))
             .collect();
 
         let mut encoder = HpackEncoder::new(max_size);
@@ -144,7 +147,7 @@ proptest! {
         let headers: Vec<HeaderField> = headers
             .into_iter()
             .map(|(name, value, sensitive)| {
-                HeaderField::new_with_sensitive(name, value, sensitive).unwrap()
+                HeaderField::new_with_sensitive(name, value, sensitive).expect("valid header field")
             })
             .collect();
 
@@ -154,7 +157,7 @@ proptest! {
         let mut encoded = Vec::new();
         encoder.encode(&mut encoded, &headers);
 
-        let decoded = decoder.decode(&encoded).unwrap();
+        let decoded = decoder.decode(&encoded).expect("encode should succeed");
 
         prop_assert_eq!(decoded.len(), headers.len());
         for (original, decoded) in headers.iter().zip(decoded.iter()) {
@@ -216,13 +219,13 @@ proptest! {
             value.clone(),
             true,
         )
-        .unwrap()];
+        .expect("should succeed")];
 
         let mut encoded = Vec::new();
         encoder.encode(&mut encoded, &headers);
 
         // デコード後、動的テーブルは空のままであること
-        let _ = decoder.decode(&encoded).unwrap();
+        let _ = decoder.decode(&encoded).expect("decode should succeed");
         prop_assert_eq!(decoder.dynamic_table().len(), 0);
 
         // エンコーダーの動的テーブルも空のままであること

@@ -53,12 +53,16 @@ fn test_stream_creation() {
 fn test_send_data() {
     let mut stream = WtStream::new(0, 65536, true);
 
-    stream.send_data(100, false).unwrap();
+    stream
+        .send_data(100, false)
+        .expect("operation should succeed");
     assert_eq!(stream.send_state(), SendState::Send);
     assert_eq!(stream.send_offset(), 100);
     assert!(stream.can_send());
 
-    stream.send_data(100, true).unwrap();
+    stream
+        .send_data(100, true)
+        .expect("operation should succeed");
     assert_eq!(stream.send_state(), SendState::DataSent);
     assert_eq!(stream.send_offset(), 200);
     assert!(!stream.can_send());
@@ -68,12 +72,16 @@ fn test_send_data() {
 fn test_recv_data() {
     let mut stream = WtStream::new(0, 65536, true);
 
-    stream.recv_data(100, false).unwrap();
+    stream
+        .recv_data(100, false)
+        .expect("operation should succeed");
     assert_eq!(stream.recv_state(), RecvState::Recv);
     assert_eq!(stream.recv_offset(), 100);
     assert!(stream.can_recv());
 
-    stream.recv_data(100, true).unwrap();
+    stream
+        .recv_data(100, true)
+        .expect("operation should succeed");
     assert_eq!(stream.recv_state(), RecvState::SizeKnown);
     assert_eq!(stream.recv_offset(), 200);
 }
@@ -82,7 +90,9 @@ fn test_recv_data() {
 fn test_send_reset() {
     let mut stream = WtStream::new(0, 65536, true);
 
-    stream.send_data(100, false).unwrap();
+    stream
+        .send_data(100, false)
+        .expect("operation should succeed");
     stream.send_reset();
     assert_eq!(stream.send_state(), SendState::ResetSent);
     assert!(!stream.can_send());
@@ -92,7 +102,9 @@ fn test_send_reset() {
 fn test_recv_reset() {
     let mut stream = WtStream::new(0, 65536, true);
 
-    stream.recv_data(100, false).unwrap();
+    stream
+        .recv_data(100, false)
+        .expect("operation should succeed");
     stream.recv_reset();
     assert_eq!(stream.recv_state(), RecvState::ResetRecvd);
     assert!(!stream.can_recv());
@@ -103,7 +115,9 @@ fn test_update_send_max() {
     let mut stream = WtStream::new(0, 65536, true);
     assert_eq!(stream.send_available(), 65536);
 
-    stream.update_send_max(131072).unwrap();
+    stream
+        .update_send_max(131072)
+        .expect("operation should succeed");
     assert_eq!(stream.send_available(), 131072);
 
     // draft-ietf-webtrans-http2-14 Section 6.6: 減少はエラー

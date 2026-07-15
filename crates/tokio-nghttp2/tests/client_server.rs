@@ -15,7 +15,7 @@ fn generate_test_cert() -> TlsServerConfig {
 
     TlsServerConfig::from_der(
         vec![CertificateDer::from(cert.der().to_vec())],
-        PrivateKeyDer::try_from(signing_key.serialize_der()).unwrap(),
+        PrivateKeyDer::try_from(signing_key.serialize_der()).expect("should succeed"),
     )
     .expect("failed to create TLS server config")
 }
@@ -26,9 +26,12 @@ async fn test_basic_request_response() {
     let tls_config = generate_test_cert();
 
     // サーバー起動
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     // サーバータスク
@@ -135,9 +138,12 @@ async fn test_basic_request_response() {
 async fn test_ping_pong() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -195,9 +201,12 @@ async fn test_ping_pong() {
 async fn test_settings_exchange() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -260,9 +269,12 @@ async fn test_settings_exchange() {
 async fn test_multiple_streams() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -362,9 +374,12 @@ async fn test_multiple_streams() {
 async fn test_goaway() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -411,9 +426,12 @@ async fn test_goaway() {
 async fn test_rst_stream() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -490,9 +508,12 @@ async fn test_rst_stream() {
 async fn test_response_with_body() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let response_body: &[u8] = b"Hello, World!";
@@ -600,9 +621,12 @@ async fn test_response_with_body() {
 async fn test_request_with_body() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -710,9 +734,12 @@ async fn test_request_with_body() {
 async fn test_large_data_transfer() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     // 100KB のデータを生成
@@ -825,9 +852,12 @@ async fn test_large_data_transfer() {
 async fn test_multiple_data_frames() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -925,9 +955,12 @@ async fn test_multiple_data_frames() {
 async fn test_client_shutdown() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -983,9 +1016,12 @@ async fn test_client_shutdown() {
 async fn test_rst_stream_internal_error() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1061,9 +1097,12 @@ async fn test_rst_stream_internal_error() {
 async fn test_head_request() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1165,9 +1204,12 @@ async fn test_head_request() {
 async fn test_custom_headers() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1266,9 +1308,12 @@ async fn test_custom_headers() {
 async fn test_empty_request_body() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1362,9 +1407,12 @@ async fn test_empty_request_body() {
 async fn test_trailer() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1490,9 +1538,12 @@ async fn test_trailer() {
 async fn test_graceful_shutdown() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1556,9 +1607,12 @@ async fn test_graceful_shutdown() {
 async fn test_session_options() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1653,9 +1707,12 @@ async fn test_session_options() {
 async fn test_settings_query() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1776,9 +1833,12 @@ async fn test_settings_query() {
 async fn test_terminate_session() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -1824,9 +1884,12 @@ async fn test_terminate_session() {
 async fn test_many_concurrent_streams() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let stream_count = 50;
@@ -1914,9 +1977,12 @@ async fn test_many_concurrent_streams() {
 async fn test_rapid_rst_stream() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let rst_count = 10;
@@ -2000,9 +2066,12 @@ async fn test_rapid_rst_stream() {
 async fn test_rapid_ping() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let ping_count: u8 = 20;
@@ -2062,9 +2131,12 @@ async fn test_rapid_ping() {
 async fn test_many_small_data_frames() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let chunk_count: usize = 100;
@@ -2151,9 +2223,12 @@ async fn test_many_small_data_frames() {
 async fn test_many_headers() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let header_count = 50;
@@ -2241,9 +2316,12 @@ async fn test_many_headers() {
 async fn test_goaway_then_drain() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -2334,9 +2412,12 @@ async fn test_goaway_then_drain() {
 async fn test_empty_data_frames() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -2424,9 +2505,12 @@ async fn test_empty_data_frames() {
 async fn test_bidirectional_streaming() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
@@ -2523,9 +2607,12 @@ async fn test_bidirectional_streaming() {
 async fn test_interleaved_streams() {
     let tls_config = generate_test_cert();
 
-    let server = Server::bind("127.0.0.1:0".parse().unwrap(), tls_config)
-        .await
-        .expect("failed to bind server");
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls_config,
+    )
+    .await
+    .expect("failed to bind server");
     let server_addr = server.local_addr();
 
     let server_handle = tokio::spawn(async move {
