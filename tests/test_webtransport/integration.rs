@@ -74,7 +74,7 @@ fn grow_max_streams_bidi_emits_capsule() {
 }
 
 /// ピア側から受信した `WT_MAX_DATA` が減少値ならセッションエラー
-/// (draft-ietf-webtrans-http2-14 Section 6.5: 減少値の受信時は WEBTRANSPORT_FLOW_CONTROL_ERROR でセッションを閉じなければならない (MUST))
+/// (draft-ietf-webtrans-http2-14 Section 6.5: 減少値の受信時は WT_FLOW_CONTROL_ERROR でセッションを閉じなければならない (MUST))
 #[test]
 fn received_wt_max_data_decrease_errors() {
     // initial_max_data = 1024 のセッションに対し、500 という減少値を送り込む
@@ -359,7 +359,7 @@ fn stop_sending_unknown_stream_emits_event() {
 }
 
 /// 重複 WT_STOP_SENDING 受信は stream_state_error になることを確認する。
-/// (draft-ietf-webtrans-http2-14 Section 6.3: 2 回目の WT_STOP_SENDING 受信時は WEBTRANSPORT_STREAM_STATE_ERROR のストリームエラーを送らなければならない (MUST))
+/// (draft-ietf-webtrans-http2-14 Section 6.3: 2 回目の WT_STOP_SENDING 受信時は WT_STREAM_STATE_ERROR のストリームエラーを送らなければならない (MUST))
 #[test]
 fn stop_sending_duplicate_errors() {
     let mut session = WtSession::client(WtConfig::default());
@@ -395,7 +395,7 @@ fn stop_sending_duplicate_errors() {
 }
 
 /// 未登録ストリームへの WT_RESET_STREAM が stream_state_error を返すことを確認する。
-/// (draft-ietf-webtrans-http2-14 Section 6.2: 有効な状態にないストリームへの WT_RESET_STREAM 受信時は WEBTRANSPORT_STREAM_STATE_ERROR のストリームエラーを送らなければならない (MUST))
+/// (draft-ietf-webtrans-http2-14 Section 6.2: 有効な状態にないストリームへの WT_RESET_STREAM 受信時は WT_STREAM_STATE_ERROR のストリームエラーを送らなければならない (MUST))
 #[test]
 fn wt_reset_stream_unknown_stream_id_errors() {
     let mut session = WtSession::server(WtConfig::default());

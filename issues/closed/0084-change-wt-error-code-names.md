@@ -2,6 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-07-20
+- Completed: 2026-07-20
 - Polished: 2026-07-20
 - Model: Grok 4.5
 - Branch: feature/change-wt-error-code-names
@@ -84,3 +85,11 @@ draft-15 の登録名は `WT_ERROR` / `WT_STREAM_STATE_ERROR` / `WT_FLOW_CONTROL
 - `refs/draft-ietf-webtrans-http2-14.txt` Section 3.4 / Section 11.3（旧名: WEBTRANSPORT_ERROR 等）
 - `src/error.rs` — `ErrorCode::Webtransport*` / `Display`
 - `src/webtransport/error.rs` — `WtError` 構造体（同名衝突の注意）
+
+## 解決方法
+
+`src/error.rs` の `ErrorCode` バリアントを `WebtransportError` → `WtError`、`WebtransportStreamStateError` → `WtStreamStateError`、`WebtransportFlowControlError` → `WtFlowControlError` にリネームした。Display 文字列も `WT_ERROR` / `WT_STREAM_STATE_ERROR` / `WT_FLOW_CONTROL_ERROR` に変更した。wire 値 (0x100-0x102) は変更していない。`WtError` バリアントの doc コメントに `webtransport::WtError` 構造体との同名衝突注意を追記した。
+
+`src/webtransport/mod.rs`、`src/webtransport/flow_control.rs`、`src/webtransport/stream.rs`、`tests/test_webtransport/integration.rs` のコメント内の旧名 (`WEBTRANSPORT_*`) を新名 (`WT_*`) に更新した。
+
+`tests/test_error.rs` に Display 文字列の直接 assert テストを追加した。`pbt/tests/prop_error.rs` の strategy を新バリアント名に更新した。

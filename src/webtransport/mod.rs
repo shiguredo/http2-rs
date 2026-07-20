@@ -646,7 +646,7 @@ impl WtSession {
 
                 // draft-ietf-webtrans-http2-14 Section 6.2:
                 // クローズ済みまたはリセット済みのストリームへの WT_RESET_STREAM は
-                // WEBTRANSPORT_STREAM_STATE_ERROR
+                // WT_STREAM_STATE_ERROR
                 if !stream.can_recv() {
                     return Err(WtError::stream_state_error(
                         "WT_RESET_STREAM received for stream not in valid state",
@@ -679,7 +679,7 @@ impl WtSession {
 
                 if let Some(stream) = self.streams.get_mut(&stream_id) {
                     // draft-ietf-webtrans-http2-14 Section 6.3:
-                    // 2 回目の WT_STOP_SENDING は WEBTRANSPORT_STREAM_STATE_ERROR
+                    // 2 回目の WT_STOP_SENDING は WT_STREAM_STATE_ERROR
                     if stream.stop_sending_received() {
                         return Err(WtError::stream_state_error(
                             "duplicate WT_STOP_SENDING received",
@@ -707,7 +707,7 @@ impl WtSession {
                 if let Some(stream) = self.streams.get_mut(&stream_id) {
                     // draft-ietf-webtrans-http2-14 Section 6.6:
                     // WT_STOP_SENDING を送信した後の WT_MAX_STREAM_DATA は
-                    // WEBTRANSPORT_STREAM_STATE_ERROR
+                    // WT_STREAM_STATE_ERROR
                     if stream.stop_sending_sent() {
                         return Err(WtError::stream_state_error(
                             "WT_MAX_STREAM_DATA received after WT_STOP_SENDING",
@@ -733,7 +733,7 @@ impl WtSession {
             } => {
                 // draft-ietf-webtrans-http2-14 Section 6.9:
                 // クローズ済みまたはリセット済みのストリームでは
-                // WEBTRANSPORT_STREAM_STATE_ERROR
+                // WT_STREAM_STATE_ERROR
                 if let Some(stream) = self.streams.get(&stream_id)
                     && !stream.can_recv()
                     && !stream.can_send()

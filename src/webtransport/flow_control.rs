@@ -128,7 +128,7 @@ impl WtFlowControl {
     pub fn consume_recv(&mut self, size: u64) -> WtResult<()> {
         let new_offset = self.recv_offset.saturating_add(size);
         // draft-ietf-webtrans-http2-14 Section 6.5: 上限を超える受信は
-        // WEBTRANSPORT_FLOW_CONTROL_ERROR のセッションエラー (MUST)
+        // WT_FLOW_CONTROL_ERROR のセッションエラー (MUST)
         if new_offset > self.recv_max {
             return Err(WtError::flow_control_error("recv window exceeded"));
         }
@@ -139,7 +139,7 @@ impl WtFlowControl {
     /// 送信上限を更新する (WT_MAX_DATA 受信時)
     ///
     /// draft-ietf-webtrans-http2-14 Section 6.5:
-    /// 値が減少した場合は WEBTRANSPORT_FLOW_CONTROL_ERROR セッションエラーを返す。
+    /// 値が減少した場合は WT_FLOW_CONTROL_ERROR セッションエラーを返す。
     ///
     /// 注: draft-ietf-webtrans-http2-14 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
     pub fn update_send_max(&mut self, maximum: u64) -> WtResult<()> {
@@ -201,7 +201,7 @@ impl WtFlowControl {
     /// ストリーム数上限を更新する (WT_MAX_STREAMS 受信時)
     ///
     /// draft-ietf-webtrans-http2-14 Section 6.7:
-    /// 値が減少した場合は WEBTRANSPORT_FLOW_CONTROL_ERROR セッションエラーを返す。
+    /// 値が減少した場合は WT_FLOW_CONTROL_ERROR セッションエラーを返す。
     ///
     /// 注: draft-ietf-webtrans-http2-14 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
     pub fn update_max_streams(&mut self, maximum: u64, bidirectional: bool) -> WtResult<()> {

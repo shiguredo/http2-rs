@@ -19,9 +19,9 @@ const KNOWN_ERROR_CODES: &[(u32, ErrorCode)] = &[
     (0x0b, ErrorCode::EnhanceYourCalm),
     (0x0c, ErrorCode::InadequateSecurity),
     (0x0d, ErrorCode::Http11Required),
-    (0x100, ErrorCode::WebtransportError),
-    (0x101, ErrorCode::WebtransportStreamStateError),
-    (0x102, ErrorCode::WebtransportFlowControlError),
+    (0x100, ErrorCode::WtError),
+    (0x101, ErrorCode::WtStreamStateError),
+    (0x102, ErrorCode::WtFlowControlError),
 ];
 
 #[test]
@@ -186,5 +186,20 @@ fn test_debug_alternate_accepts_backtrace() {
     assert!(
         alt_debug.contains('/'),
         "Debug alternate にファイルパスが含まれていること"
+    );
+}
+
+/// draft-ietf-webtrans-http2-15 Section 3.4 / Section 11.3 で改名された
+/// HTTP/2 エラーコード名の Display 文字列を直接検証する
+#[test]
+fn test_wt_error_code_display_names() {
+    assert_eq!(ErrorCode::WtError.to_string(), "WT_ERROR");
+    assert_eq!(
+        ErrorCode::WtStreamStateError.to_string(),
+        "WT_STREAM_STATE_ERROR"
+    );
+    assert_eq!(
+        ErrorCode::WtFlowControlError.to_string(),
+        "WT_FLOW_CONTROL_ERROR"
     );
 }
