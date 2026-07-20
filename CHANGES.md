@@ -8,6 +8,8 @@
 
 ## develop
 
+- [CHANGE] `WtSession::close()` の reason が 1024 バイト超過時にエラーを返す代わりに UTF-8 境界で切り詰めて送るように変更する。`WtServerRequest::accept()` の Origin 検証をヘッダー存在時のみに行い、欠落時は検証スキップに変更する。WT_MAX_STREAMS / WT_STREAMS_BLOCKED の Maximum Streams に 2^60 上限を追加する (draft-ietf-webtrans-http2-15 Section 3.2 / Section 6.7 / Section 6.10 / Section 6.12)
+  - @voluntas
 - [CHANGE] `ErrorCode` の WebTransport エラーコードバリアントを `WtError` / `WtStreamStateError` / `WtFlowControlError` にリネームし、Display を `WT_ERROR` / `WT_STREAM_STATE_ERROR` / `WT_FLOW_CONTROL_ERROR` に変更する (draft-ietf-webtrans-http2-15 Section 3.4 / Section 11.3)
   - @voluntas
 - [CHANGE] WT_RESET_STREAM の Reliable Size 検証を受信バイトとの一致必須 (MUST equal) に変更し、過小・過大いずれの不一致もセッションエラーにする (draft-ietf-webtrans-http2-15 Section 6.2)

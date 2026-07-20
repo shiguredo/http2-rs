@@ -140,8 +140,8 @@ async fn handle_connection(mut conn: ServerConnection, reject_connect: bool) -> 
     tracing::info!("[{remote}] WT CONNECT authority={authority} path={path}");
 
     if reject_connect {
-        tracing::warn!("[{remote}] rejecting with 404 (--reject-connect)");
-        req.reject(404).await?;
+        tracing::warn!("[{remote}] rejecting with 405 (--reject-connect)");
+        req.reject(405).await?;
         return Ok(());
     }
 
@@ -278,7 +278,7 @@ fn parse_args() -> Args {
         .expect("conversion should succeed");
 
     let reject_connect: bool = noargs::flag("reject-connect")
-        .doc("Reject every WebTransport CONNECT with 404 (WtServerRequest::reject demo)")
+        .doc("Reject every WebTransport CONNECT with 405 (WtServerRequest::reject demo)")
         .take(&mut args)
         .is_present();
 

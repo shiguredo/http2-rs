@@ -144,9 +144,9 @@ impl WtServerRequest {
             )));
         }
 
-        // draft-ietf-webtrans-http2-14 Section 3.2 (L290-L301):
-        // Web context では Origin ヘッダーを MUST verify する。
-        // Origin の形式は RFC 6454 Section 7 で定義される。
+        // draft-ietf-webtrans-http2-15 Section 3.2:
+        // Origin ヘッダーがある場合に MUST verify。失敗は SHOULD 403。
+        // 欠落時の必須検証は書かれていない (draft-14 の無条件 MUST verify から変更)。
         // self の部分ムーブ前に &self 借用が必要な値 (origin / webtransport-init) を取得する。
         let origin = self.origin().map(|o| o.to_vec());
         let init_bytes = self.webtransport_init().map(|v| v.to_vec());
@@ -158,19 +158,20 @@ impl WtServerRequest {
         } = self;
 
         if let Some(allowed) = allowed_origin {
-            let actual = origin.ok_or_else(|| {
-                Error::InvalidArgument("Origin header is required but missing".into())
-            })?;
-            // RFC 6454 Section 7: Origin = scheme "://" host [ ":" port ]
-            // ASCII case-insensitive で比較する
-            if !actual.eq_ignore_ascii_case(allowed) {
-                let response = vec![HeaderField::from_static(b":status", b"403")];
-                conn.send_response(stream_id, response, true).await?;
-                return Err(Error::InvalidArgument(format!(
-                    "origin rejected: allowed={}, actual={}",
-                    String::from_utf8_lossy(allowed),
-                    String::from_utf8_lossy(&actual),
-                )));
+            // draft-ietf-webtrans-http2-15 Section 3.2:
+            // Origin ヘッダーがある場合のみ照合。欠落時は検証スキップ (accept 継続可)。
+            if let Some(actual) = origin {
+                // RFC 6454 Section 7: Origin = scheme "://" host [ ":" port ]
+                // ASCII case-insensitive で比較する
+                if !actual.eq_ignore_ascii_case(allowed) {
+                    let response = vec![HeaderField::from_static(b":status", b"403")];
+                    conn.send_response(stream_id, response, true).await?;
+                    return Err(Error::InvalidArgument(format!(
+                        "origin rejected: allowed={}, actual={}",
+                        String::from_utf8_lossy(allowed),
+                        String::from_utf8_lossy(&actual),
+                    )));
+                }
             }
         }
 

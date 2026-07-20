@@ -1085,9 +1085,10 @@ async fn test_wt_tls12_rejected() {
     );
 }
 
-/// Origin ヘッダーが存在しない場合に 403 で拒否されることを確認する。
+/// Origin ヘッダーが存在しない場合、allowed_origin=Some でも accept が成功することを確認する。
+/// (draft-ietf-webtrans-http2-15 Section 3.2: Origin 検証はヘッダーがある場合のみ)
 #[tokio::test]
-async fn test_wt_origin_missing_rejected() {
+async fn test_wt_origin_missing_accepted() {
     let tls = test_tls();
     let server = Server::bind(
         "127.0.0.1:0".parse().expect("parse should succeed"),
@@ -1102,16 +1103,10 @@ async fn test_wt_origin_missing_rejected() {
         let mut conn = server.accept().await.expect("accept");
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
-        match req
-            .accept(WtConfig::default(), Some(b"https://example.com"))
+        // Origin 欠落時は検証スキップ → accept 成功
+        req.accept(WtConfig::default(), Some(b"https://example.com"))
             .await
-        {
-            Ok(_) => panic!("expected missing origin error but succeeded"),
-            Err(err) => assert!(
-                format!("{err}").contains("Origin header is required but missing"),
-                "expected missing origin error, got {err}"
-            ),
-        }
+            .expect("missing origin should be accepted (verification skipped)");
     });
 
     let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
@@ -1128,7 +1123,7 @@ async fn test_wt_origin_missing_rejected() {
         .await
         .expect("send CONNECT");
 
-    // サーバー側のエラーチェックのみで十分
+    // サーバー側の成功チェックのみで十分
     server_task.await.expect("server join");
 }
 

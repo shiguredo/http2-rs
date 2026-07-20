@@ -7,6 +7,13 @@
 
 use crate::webtransport::error::{WtError, WtResult};
 
+/// Maximum Streams の上限 (2^60)
+///
+/// draft-ietf-webtrans-http2-15 Section 6.7 / Section 6.10:
+/// "This value cannot exceed 2^60, as it is not possible to encode
+/// stream IDs larger than 2^62-1"
+const MAX_STREAMS_LIMIT: u64 = 1 << 60;
+
 /// WebTransport フロー制御
 #[derive(Debug, Clone)]
 pub struct WtFlowControl {
@@ -200,11 +207,19 @@ impl WtFlowControl {
 
     /// ストリーム数上限を更新する (WT_MAX_STREAMS 受信時)
     ///
-    /// draft-ietf-webtrans-http2-14 Section 6.7:
+    /// draft-ietf-webtrans-http2-15 Section 6.7:
     /// 値が減少した場合は WT_FLOW_CONTROL_ERROR セッションエラーを返す。
+    /// 2^60 を超える値も WT_FLOW_CONTROL_ERROR で MUST close。
     ///
-    /// 注: draft-ietf-webtrans-http2-14 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
+    /// 注: draft-ietf-webtrans-http2-15 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
     pub fn update_max_streams(&mut self, maximum: u64, bidirectional: bool) -> WtResult<()> {
+        // draft-ietf-webtrans-http2-15 Section 6.7: 2^60 超過はセッションエラー
+        if maximum > MAX_STREAMS_LIMIT {
+            return Err(WtError::flow_control_error(format!(
+                "WT_MAX_STREAMS value {} exceeds 2^60 limit",
+                maximum
+            )));
+        }
         if bidirectional {
             if maximum < self.max_streams_bidi_remote {
                 return Err(WtError::flow_control_error(
