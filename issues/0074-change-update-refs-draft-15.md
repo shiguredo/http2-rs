@@ -56,9 +56,20 @@
 - **0072 (`refactor-remove-unused-code`)**: `src/webtransport/error.rs` / `src/webtransport/flow_control.rs` への影響あり。0072 マージ後にマージする
 - **0073 (`change-rfc9297-allow-non-minimal-varint`)**: `src/webtransport/varint.rs` のコメント書き換えに触れる。0073 マージ後にマージする。本 issue で draft-14 ファイルが削除されるため、0073 の「参照」セクションに残る draft-14 への参照は本 issue 内で同時に最新版番号に置換する
 - **0075 (`fmt-replace-unwrap-with-expect`) / 0076 (`fmt-translate-english-comments`)**: それぞれ無関係
-- **0065 / 0066 (open)**: WebTransport モジュール本体を触る issue で、本 issue マージ後に着手するのが安全
+- **0065 / 0066 (open)**: WebTransport モジュール本体を触る issue で、本 issue および意味追従群の後に着手するのが安全
+- **draft-15 意味追従（本 issue のスコープ外として分解起票済み）**:
+  - **0081** `change-settings-wt-enabled` — `SETTINGS_WT_ENABLED` (0x2b60)
+  - **0082** `change-wt-stream-fin-polarity` — WT_STREAM FIN 極性
+  - **0083** `change-wt-reset-reliable-size-exact` — Reliable Size 一致必須
+  - **0084** `change-wt-error-code-names` — エラーコード名 `WT_*`
+  - **0085** `change-wt-draft15-session-semantics` — CLOSE / Origin / Max Streams / 405 ガイダンス
 
-順序関係: **0068 → 0070 → 0072 → 0073 → 0074 → 0065/0066** の順を推奨。
+### refs の現状（2026-07-20）
+
+- `refs/draft-ietf-webtrans-http2-15.txt` は追加済み。旧 `refs/draft-ietf-webtrans-http2-14.txt` も参照用に維持する方針（削除しない）
+- 本 issue の残作業はソースコメント等の draft 番号機械置換と `CHANGES.md` 追記。意味的な仕様追従は 0081–0085 で行う
+
+順序関係: **0074（コメント同期）→ 0081 → (0082 / 0083) → 0084 → 0085 → 0065/0066** を推奨。
 
 ## 変更対象ファイル一覧
 
