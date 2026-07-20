@@ -50,7 +50,7 @@ proptest! {
         prop_assert!(result.is_ok());
     }
 
-    /// WebTransport 設定 + enable_connect_protocol=true で build は成功する
+    /// WebTransport 設定 + enable_connect_protocol=true + wt_enabled=true で build は成功する
     #[test]
     fn prop_wt_with_connect_protocol_succeeds(
         max_data in prop::option::of(any::<u32>()),
@@ -70,6 +70,7 @@ proptest! {
 
         let result = Limits::builder()
             .enable_connect_protocol(true)
+            .wt_enabled(true)
             .webtransport(
                 max_data,
                 max_stream_uni,
@@ -80,7 +81,7 @@ proptest! {
             )
             .build();
 
-        // WT 設定有無に関わらず enable_connect_protocol=true なら成功する
+        // WT 設定有無に関わらず enable_connect_protocol=true + wt_enabled=true なら成功する
         prop_assert!(result.is_ok(), "has_any={has_any}");
     }
 
@@ -118,6 +119,50 @@ proptest! {
             )
             .build();
         prop_assert!(result.is_err());
+    }
+
+    /// WebTransport 初期設定あり + wt_enabled=false + enable_connect_protocol=true で build は失敗する
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 3.1: WT 初期設定は SETTINGS_WT_ENABLED=1 の
+    /// サポート表明があって意味を持つ。
+    #[test]
+    fn prop_wt_initial_settings_without_wt_enabled_fails(
+        wt_value in any::<u32>(),
+        field_idx in 0usize..6,
+    ) {
+        let mut max_data = None;
+        let mut max_stream_uni = None;
+        let mut max_stream_bidi_local = None;
+        let mut max_streams_uni = None;
+        let mut max_streams_bidi = None;
+        let mut max_stream_bidi_remote = None;
+
+        match field_idx {
+            0 => max_data = Some(wt_value),
+            1 => max_stream_uni = Some(wt_value),
+            2 => max_stream_bidi_local = Some(wt_value),
+            3 => max_streams_uni = Some(wt_value),
+            4 => max_streams_bidi = Some(wt_value),
+            _ => max_stream_bidi_remote = Some(wt_value),
+        }
+
+        let result = Limits::builder()
+            .enable_connect_protocol(true)
+            .wt_enabled(false)
+            .webtransport(
+                max_data,
+                max_stream_uni,
+                max_stream_bidi_local,
+                max_streams_uni,
+                max_streams_bidi,
+                max_stream_bidi_remote,
+            )
+            .build();
+        prop_assert!(result.is_err());
+        prop_assert_eq!(
+            result.expect_err("should fail"),
+            shiguredo_http2::LimitsError::WebtransportRequiresWtEnabled
+        );
     }
 
     /// build したあとの getter が設定値と一致する

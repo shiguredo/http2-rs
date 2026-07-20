@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-07-20
+- Completed: 2026-07-20
 - Polished: 2026-07-20
 - Model: Grok 4.5
 - Branch: feature/change-settings-wt-enabled
@@ -99,3 +100,15 @@ draft-ietf-webtrans-http2-15 Section 3.1 / Section 11.2 で新設された `SETT
 - `src/settings.rs` — 既存 `Setting` / `Settings::to_settings_list` / `SettingError`
 - `src/limits.rs` — WT 初期 SETTINGS と `enable_connect_protocol` の整合性
 - `src/connection/mod.rs` — `peer_sent_enable_connect_protocol`
+
+## 解決方法
+
+`src/settings.rs` に `Setting::WtEnabled(bool)` バリアント (wire ID 0x2b60) を追加し、`from_wire` / `as_wire` / `Settings` 構造体（`wt_enabled` フィールド・`apply`・`from_limits`・`to_settings_list`）・`SettingError::WtEnabledNotBoolean` を実装した。
+
+`src/limits.rs` に `Limits` / `LimitsBuilder` の `wt_enabled: bool` フィールドと `LimitsBuilder::wt_enabled()` メソッドを追加し、`build()` / `build_static()` に二段構えの整合性チェック（`WebtransportRequiresConnectProtocol` → `WebtransportRequiresWtEnabled` の順）を追加した。`LimitsError::WebtransportRequiresWtEnabled` を新規追加した。
+
+`src/connection/mod.rs` の `start_stream` に `:protocol=webtransport` 時の `SETTINGS_WT_ENABLED=1` 二重ゲートを追加した。`ENABLE_CONNECT_PROTOCOL` と異なり 1→0 ダウングレードが合法なため、追跡フラグは追加していない。
+
+テスト: `tests/test_settings.rs` にデフォルト値・wire 値検証、`tests/test_limits.rs` に整合性チェックの境界テストを追加。`pbt/tests/prop_settings.rs` に `WtEnabled` の wire roundtrip・無効値拒否、`pbt/tests/prop_limits.rs` に `wt_enabled` + WT 設定の整合性 PBT、`pbt/tests/prop_connection/settings.rs` に 1→0 ダウングレード許可・>1 拒否の接続レベル PBT を追加した。
+
+`crates/tokio-http2/tests/test_webtransport.rs` と `examples/wt_server/src/main.rs` の Limits 構築に `.wt_enabled(true)` を追加した。

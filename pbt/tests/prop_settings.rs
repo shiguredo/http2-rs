@@ -21,6 +21,7 @@ fn valid_setting() -> impl Strategy<Value = Setting> {
         any::<u32>().prop_map(Setting::MaxHeaderListSize),
         prop::bool::ANY.prop_map(Setting::EnableConnectProtocol),
         prop::bool::ANY.prop_map(Setting::NoRfc7540Priorities),
+        prop::bool::ANY.prop_map(Setting::WtEnabled),
         any::<u32>().prop_map(Setting::WtInitialMaxData),
         any::<u32>().prop_map(Setting::WtInitialMaxStreamDataUni),
         any::<u32>().prop_map(Setting::WtInitialMaxStreamDataBidiLocal),
@@ -58,11 +59,16 @@ fn invalid_no_rfc7540_priorities_wire() -> impl Strategy<Value = (u16, u32)> {
     (2..=u32::MAX).prop_map(|v| (0x09, v))
 }
 
+/// 無効な WT_ENABLED wire 値を生成 (2 以上)
+fn invalid_wt_enabled_wire() -> impl Strategy<Value = (u16, u32)> {
+    (2..=u32::MAX).prop_map(|v| (0x2b60, v))
+}
+
 /// 未知の SETTINGS ID を生成
 fn unknown_setting_wire() -> impl Strategy<Value = (u16, u32)> {
-    // 既知 ID (0x01-0x06, 0x08, 0x09, 0x2b61-0x2b66) を除外
+    // 既知 ID (0x01-0x06, 0x08, 0x09, 0x2b60-0x2b66) を除外
     (0x0a..=0xffffu16, any::<u32>()).prop_filter("must not be a known ID", |(id, _)| {
-        !matches!(*id, 0x2b61..=0x2b66)
+        !matches!(*id, 0x2b60..=0x2b66)
     })
 }
 
@@ -139,6 +145,22 @@ proptest! {
         );
     }
 
+    /// 無効な WT_ENABLED wire 値は from_wire で拒否される
+    ///
+    /// 数学的意義: 二値性の検証 (0 または 1 のみ)
+    /// draft-ietf-webtrans-http2-15 Section 3.1: クライアントは 1 より大きい値を
+    /// 接続エラー PROTOCOL_ERROR として扱わなければならない (MUST)。
+    #[test]
+    fn prop_invalid_wt_enabled_rejected(
+        (id, value) in invalid_wt_enabled_wire(),
+    ) {
+        let result = Setting::from_wire(id, value);
+        prop_assert!(
+            result.is_err(),
+            "Invalid WT_ENABLED wire ({id}, {value}) should be rejected",
+        );
+    }
+
     /// 未知の SETTINGS wire 値は from_wire で Unknown として受理される
     ///
     /// RFC 9113 Section 6.5.2: unknown settings MUST be ignored
@@ -172,6 +194,7 @@ proptest! {
         prop_assert_eq!(settings.max_header_list_size(), original.max_header_list_size());
         prop_assert_eq!(settings.enable_connect_protocol(), original.enable_connect_protocol());
         prop_assert_eq!(settings.no_rfc7540_priorities(), original.no_rfc7540_priorities());
+        prop_assert_eq!(settings.wt_enabled(), original.wt_enabled());
     }
 
     /// 同じ SETTINGS を複数回適用しても結果は同じ
@@ -281,6 +304,7 @@ proptest! {
         max_header_list_size in prop::option::of(any::<u32>()),
         enable_connect_protocol in prop::bool::ANY,
         no_rfc7540_priorities in prop::bool::ANY,
+        wt_enabled in prop::bool::ANY,
         wt_max_data in prop::option::of(any::<u32>()),
     ) {
         let mut original = Settings::default();
@@ -300,6 +324,9 @@ proptest! {
         if no_rfc7540_priorities {
             original.apply(Setting::NoRfc7540Priorities(true));
         }
+        if wt_enabled {
+            original.apply(Setting::WtEnabled(true));
+        }
         if let Some(v) = wt_max_data {
             original.apply(Setting::WtInitialMaxData(v));
         }
@@ -316,6 +343,7 @@ proptest! {
         prop_assert_eq!(restored.max_frame_size(), original.max_frame_size());
         prop_assert_eq!(restored.enable_connect_protocol(), original.enable_connect_protocol());
         prop_assert_eq!(restored.no_rfc7540_priorities(), original.no_rfc7540_priorities());
+        prop_assert_eq!(restored.wt_enabled(), original.wt_enabled());
         if max_concurrent_streams.is_some() {
             prop_assert_eq!(restored.max_concurrent_streams(), original.max_concurrent_streams());
         }
