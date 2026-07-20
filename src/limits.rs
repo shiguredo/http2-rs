@@ -18,6 +18,7 @@ pub struct Limits {
     connection_window_size: WindowSize,
     enable_connect_protocol: bool,
     no_rfc7540_priorities: bool,
+    wt_enabled: bool,
     wt_initial_max_data: Option<u32>,
     wt_initial_max_stream_data_uni: Option<u32>,
     wt_initial_max_stream_data_bidi_local: Option<u32>,
@@ -38,6 +39,7 @@ impl Limits {
             connection_window_size: WindowSize::from_static(DEFAULT_INITIAL_WINDOW_SIZE),
             enable_connect_protocol: false,
             no_rfc7540_priorities: false,
+            wt_enabled: false,
             wt_initial_max_data: None,
             wt_initial_max_stream_data_uni: None,
             wt_initial_max_stream_data_bidi_local: None,
@@ -93,6 +95,14 @@ impl Limits {
     #[must_use]
     pub const fn no_rfc7540_priorities(&self) -> bool {
         self.no_rfc7540_priorities
+    }
+
+    /// SETTINGS_WT_ENABLED (0x2b60) (draft-ietf-webtrans-http2-15 Section 3.1)
+    ///
+    /// サーバーの WebTransport サポート合図。
+    #[must_use]
+    pub const fn wt_enabled(&self) -> bool {
+        self.wt_enabled
     }
 
     /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61)
@@ -151,6 +161,7 @@ pub struct LimitsBuilder {
     connection_window_size: WindowSize,
     enable_connect_protocol: bool,
     no_rfc7540_priorities: bool,
+    wt_enabled: bool,
     wt_initial_max_data: Option<u32>,
     wt_initial_max_stream_data_uni: Option<u32>,
     wt_initial_max_stream_data_bidi_local: Option<u32>,
@@ -225,6 +236,16 @@ impl LimitsBuilder {
         self
     }
 
+    /// SETTINGS_WT_ENABLED (0x2b60) を設定する (draft-ietf-webtrans-http2-15 Section 3.1)
+    ///
+    /// サーバーの WebTransport サポート合図。`enable_connect_protocol(true)` と
+    /// 同様に呼び出し側が明示的に設定する。
+    #[must_use]
+    pub const fn wt_enabled(mut self, enable: bool) -> Self {
+        self.wt_enabled = enable;
+        self
+    }
+
     /// WebTransport 初期設定を一括設定する (draft-ietf-webtrans-http2-14 Section 11.2)
     #[must_use]
     pub const fn webtransport(
@@ -249,11 +270,21 @@ impl LimitsBuilder {
     ///
     /// # Errors
     ///
-    /// - WebTransport 関連フィールドが設定されているのに `enable_connect_protocol = false`
+    /// - `wt_enabled=true` または WebTransport 関連フィールドが設定されているのに
+    ///   `enable_connect_protocol = false`
     ///   → [`LimitsError::WebtransportRequiresConnectProtocol`]
+    /// - WebTransport 関連フィールドが設定されているのに `wt_enabled = false`
+    ///   → [`LimitsError::WebtransportRequiresWtEnabled`]
     pub fn build(self) -> Result<Limits, LimitsError> {
-        if !self.enable_connect_protocol && self.has_webtransport_settings() {
+        // draft-ietf-webtrans-http2-15 Section 3.1:
+        // WebTransport を構成するなら SETTINGS_ENABLE_CONNECT_PROTOCOL=1 が必須
+        if !self.enable_connect_protocol && (self.wt_enabled || self.has_webtransport_settings()) {
             return Err(LimitsError::WebtransportRequiresConnectProtocol);
+        }
+        // draft-ietf-webtrans-http2-15 Section 3.1:
+        // WT 初期設定は SETTINGS_WT_ENABLED=1 のサポート表明があって意味を持つ
+        if !self.wt_enabled && self.has_webtransport_settings() {
+            return Err(LimitsError::WebtransportRequiresWtEnabled);
         }
 
         Ok(Limits {
@@ -265,6 +296,7 @@ impl LimitsBuilder {
             connection_window_size: self.connection_window_size,
             enable_connect_protocol: self.enable_connect_protocol,
             no_rfc7540_priorities: self.no_rfc7540_priorities,
+            wt_enabled: self.wt_enabled,
             wt_initial_max_data: self.wt_initial_max_data,
             wt_initial_max_stream_data_uni: self.wt_initial_max_stream_data_uni,
             wt_initial_max_stream_data_bidi_local: self.wt_initial_max_stream_data_bidi_local,
@@ -276,9 +308,14 @@ impl LimitsBuilder {
 
     /// const コンテキスト用。不正制約でコンパイル時 panic になる
     pub const fn build_static(self) -> Limits {
-        if !self.enable_connect_protocol && self.has_webtransport_settings() {
+        if !self.enable_connect_protocol && (self.wt_enabled || self.has_webtransport_settings()) {
             panic!(
                 "LimitsBuilder::build_static: WebTransport settings require enable_connect_protocol = true"
+            );
+        }
+        if !self.wt_enabled && self.has_webtransport_settings() {
+            panic!(
+                "LimitsBuilder::build_static: WebTransport initial settings require wt_enabled = true"
             );
         }
 
@@ -291,6 +328,7 @@ impl LimitsBuilder {
             connection_window_size: self.connection_window_size,
             enable_connect_protocol: self.enable_connect_protocol,
             no_rfc7540_priorities: self.no_rfc7540_priorities,
+            wt_enabled: self.wt_enabled,
             wt_initial_max_data: self.wt_initial_max_data,
             wt_initial_max_stream_data_uni: self.wt_initial_max_stream_data_uni,
             wt_initial_max_stream_data_bidi_local: self.wt_initial_max_stream_data_bidi_local,
@@ -315,10 +353,16 @@ impl LimitsBuilder {
 pub enum LimitsError {
     /// WebTransport 関連設定があるのに `enable_connect_protocol = false`
     ///
-    /// draft-ietf-webtrans-http2-14 §3.1: サーバーは WebTransport 対応を示すために
+    /// draft-ietf-webtrans-http2-15 §3.1: サーバーは WebTransport 対応を示すために
     /// `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` を SETTINGS フレームで MUST 送信する。
     /// SETTINGS の定義は §11.2 (将来変更される可能性がある)。
     WebtransportRequiresConnectProtocol,
+
+    /// WebTransport 初期設定があるのに `wt_enabled = false`
+    ///
+    /// draft-ietf-webtrans-http2-15 §3.1: WT 初期設定 (SETTINGS_WT_INITIAL_MAX_*) は
+    /// `SETTINGS_WT_ENABLED = 1` のサポート表明があって意味を持つ。
+    WebtransportRequiresWtEnabled,
 }
 
 impl std::fmt::Display for LimitsError {
@@ -328,6 +372,9 @@ impl std::fmt::Display for LimitsError {
                 f,
                 "WebTransport settings require enable_connect_protocol = true"
             ),
+            Self::WebtransportRequiresWtEnabled => {
+                write!(f, "WebTransport initial settings require wt_enabled = true")
+            }
         }
     }
 }

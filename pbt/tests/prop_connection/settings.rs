@@ -280,3 +280,86 @@ proptest! {
         );
     }
 }
+
+proptest! {
+    /// SETTINGS_WT_ENABLED の 1→0 ダウングレードは許可される
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 3.1: SETTINGS_WT_ENABLED は接続ライフタイム中に
+    /// 更新可能。サーバーが WebTransport を無効化しても既存セッションには影響しない。
+    /// ENABLE_CONNECT_PROTOCOL と異なり、1→0 のダウングレードは合法。
+    #[test]
+    fn prop_wt_enabled_downgrade_allowed(
+        initial_value in prop::bool::ANY,
+    ) {
+        let mut client = Connection::client(Limits::default());
+        client.initiate().expect("initiate must succeed");
+
+        // 最初の SETTINGS を受信して接続を Active にする
+        let default_settings = SettingsFrame::new();
+        let default_bytes = encode_frame(&Frame::Settings(default_settings));
+        client.feed(&default_bytes).expect("feed must succeed");
+        client.process().expect("process must succeed");
+
+        // WT_ENABLED=initial_value の SETTINGS を受信
+        let mut settings1 = SettingsFrame::new();
+        settings1.add(Setting::WtEnabled(initial_value));
+        let settings1_bytes = encode_frame(&Frame::Settings(settings1));
+        client.feed(&settings1_bytes).expect("feed must succeed");
+        client.process().expect("process must succeed");
+
+        // WT_ENABLED=!initial_value の SETTINGS を受信 (ダウングレードまたはアップグレード)
+        let mut settings2 = SettingsFrame::new();
+        settings2.add(Setting::WtEnabled(!initial_value));
+        let settings2_bytes = encode_frame(&Frame::Settings(settings2));
+        client.feed(&settings2_bytes).expect("feed must succeed");
+
+        // 1→0 も 0→1 もエラーにならない
+        let result = client.process();
+        prop_assert!(
+            result.is_ok(),
+            "WT_ENABLED の 1→0 ダウングレードは許可されなければならない (initial={initial_value})"
+        );
+    }
+
+    /// SETTINGS_WT_ENABLED の 1 より大きい値は PROTOCOL_ERROR
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 3.1: クライアントは 1 より大きい値を
+    /// 接続エラー PROTOCOL_ERROR として扱わなければならない (MUST)。
+    #[test]
+    fn prop_wt_enabled_greater_than_one_is_error(
+        value in 2u32..=u32::MAX,
+    ) {
+        let mut client = Connection::client(Limits::default());
+        client.initiate().expect("initiate must succeed");
+
+        // 最初の SETTINGS を受信して接続を Active にする
+        let default_settings = SettingsFrame::new();
+        let default_bytes = encode_frame(&Frame::Settings(default_settings));
+        client.feed(&default_bytes).expect("feed must succeed");
+        client.process().expect("process must succeed");
+
+        // SETTINGS_WT_ENABLED (0x2b60) に 1 より大きい値を raw バイトで構築
+        // SETTINGS フレーム: type=0x04, flags=0x00, stream_id=0, payload=6 bytes
+        let mut raw = Vec::new();
+        // ペイロード長 = 6 (setting 1 個分)
+        raw.extend_from_slice(&[0x00, 0x00, 0x06]);
+        // フレームタイプ = SETTINGS (0x04)
+        raw.push(0x04);
+        // フラグ = 0x00 (ACK なし)
+        raw.push(0x00);
+        // ストリーム ID = 0
+        raw.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        // ペイロード: ID=0x2b60, value
+        raw.extend_from_slice(&0x2b60u16.to_be_bytes());
+        raw.extend_from_slice(&value.to_be_bytes());
+
+        client.feed(&raw).expect("feed must succeed");
+
+        let result = client.process();
+        prop_assert!(result.is_err(), "WT_ENABLED={value} は PROTOCOL_ERROR でなければならない");
+        if let Err(e) = result {
+            prop_assert!(e.is_connection_error());
+            prop_assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
+        }
+    }
+}

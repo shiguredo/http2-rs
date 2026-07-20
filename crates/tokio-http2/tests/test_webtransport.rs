@@ -82,6 +82,7 @@ fn test_tls() -> TlsServerConfig {
 fn server_limits() -> Limits {
     Limits::builder()
         .enable_connect_protocol(true)
+        .wt_enabled(true)
         .webtransport(
             Some(1 << 20),
             Some(64 * 1024),

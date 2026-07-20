@@ -52,6 +52,7 @@ async fn run_server(listen: &str, reject_connect: bool) -> Result<(), Error> {
     let limits = Limits::builder()
         .max_concurrent_streams(Some(100))
         .enable_connect_protocol(true)
+        .wt_enabled(true)
         .webtransport(
             Some(4 * 1024 * 1024),
             Some(512 * 1024),

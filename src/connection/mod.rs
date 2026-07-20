@@ -268,7 +268,7 @@ impl Connection {
     ///
     /// ピアから受信して ACK した SETTINGS に対応する設定。
     /// WebTransport セッションを張る前に `enable_connect_protocol` や
-    /// `wt_initial_max_*` を確認する用途で使用する。
+    /// `wt_enabled`、`wt_initial_max_*` を確認する用途で使用する。
     #[must_use]
     pub const fn remote_settings(&self) -> &Settings {
         &self.remote_settings
@@ -517,15 +517,28 @@ impl Connection {
             }
         }
 
-        // RFC 8441 Section 3, draft-ietf-webtrans-http2-14 Section 3.1:
+        // RFC 8441 Section 3, draft-ietf-webtrans-http2-15 Section 3.1:
         // :protocol を含むリクエストは、ピアが SETTINGS_ENABLE_CONNECT_PROTOCOL=1 を
         // 送信済みの場合のみ許可する。
-        let has_protocol = headers
+        let protocol_value = headers
             .iter()
-            .any(|h| h.name() == crate::validation::pseudo_headers::PROTOCOL);
-        if has_protocol && !self.remote_settings.enable_connect_protocol() {
+            .find(|h| h.name() == crate::validation::pseudo_headers::PROTOCOL)
+            .map(|h| h.value());
+        if protocol_value.is_some() && !self.remote_settings.enable_connect_protocol() {
             return Err(Error::protocol_error(
                 "cannot send :protocol without peer's SETTINGS_ENABLE_CONNECT_PROTOCOL=1",
+            ));
+        }
+
+        // draft-ietf-webtrans-http2-15 Section 3.1:
+        // :protocol = webtransport の場合、ピアが SETTINGS_WT_ENABLED=1 を
+        // 送信済みの場合のみ許可する (二重ゲート)。
+        // SETTINGS_WT_ENABLED は 1→0 ダウングレードが合法であり、
+        // ENABLE_CONNECT_PROTOCOL と異なり追跡フラグは不要。
+        if protocol_value == Some(b"webtransport".as_slice()) && !self.remote_settings.wt_enabled()
+        {
+            return Err(Error::protocol_error(
+                "cannot send :protocol=webtransport without peer's SETTINGS_WT_ENABLED=1",
             ));
         }
 

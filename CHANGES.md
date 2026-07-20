@@ -8,6 +8,8 @@
 
 ## develop
 
+- [CHANGE] `Setting::WtEnabled(bool)` バリアント (0x2b60) を追加し、`Limits` / `LimitsBuilder` に `wt_enabled` フィールドを追加する。`:protocol=webtransport` の CONNECT 開始に `SETTINGS_WT_ENABLED=1` の二重ゲートを適用する。`LimitsError::WebtransportRequiresWtEnabled` / `SettingError::WtEnabledNotBoolean` を追加する (draft-ietf-webtrans-http2-15 Section 3.1 / Section 11.2)
+  - @voluntas
 - [CHANGE] `WtServerRequest::accept()` に `allowed_origin: Option<&[u8]>` パラメータを追加し、Origin ヘッダー検証を実装する (issue 0062)
   - @voluntas
 - [CHANGE] `Settings` の全フィールドを private 化し、getter メソッド経由でのみ読み取れるようにする。`Connection::new()` の初期化を `Settings::from_limits(&limits)` に置き換える (issue 0043)
