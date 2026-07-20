@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-07-20
+- Completed: 2026-07-20
 - Polished: 2026-07-20
 - Model: Grok 4.5
 - Branch: feature/change-wt-stream-fin-polarity
@@ -81,3 +82,9 @@ LSB=FIN と整合させると、終端 `0x190B4D3B` の LSB が 1 であるた�
 - `refs/draft-ietf-webtrans-http2-15.txt` Section 6.4（WT_STREAM、LSB=FIN、3C 連続 + 終端 3B）
 - `refs/draft-ietf-webtrans-http2-14.txt` Section 6.4（旧: 3B 連続 + 終端 3C。LSB=FIN との内部矛盾あり）
 - `src/webtransport/capsule.rs` — `capsule_type::WT_STREAM` / `WT_STREAM_FIN`
+
+## 解決方法
+
+`src/webtransport/capsule.rs` の `capsule_type::WT_STREAM` を 0x190B4D3C (FIN=0, 非終端)、`capsule_type::WT_STREAM_FIN` を 0x190B4D3B (FIN=1, 終端) に変更した。encode/decode ロジックは定数名参照のため、定数値入れ替えだけで自動的に追従する。
+
+`tests/test_webtransport/capsule.rs` に wire バイト正確性のテスト 6 件を追加した: fin=true/false の encode 後 capsule type 直接検証、空データ + fin=true のラウンドトリップ、非終端→終端シーケンス、raw バイトからの decode 検証 (0x190B4D3B → fin=true、0x190B4D3C → fin=false)。
