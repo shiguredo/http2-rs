@@ -134,19 +134,73 @@ fn test_close_reason_max_length_ok() {
     assert_eq!(session.state(), WtSessionState::Closed);
 }
 
-/// reason が 1024 バイトを超えると close() がエラーを返すことを確認する。
-/// (draft-ietf-webtrans-http2-14 Section 6.12: メッセージ長は 1024 バイトを超えてはならない (MUST NOT))
+/// reason が 1024 バイトを超えると UTF-8 境界で切り詰められることを確認する。
+/// (draft-ietf-webtrans-http2-15 Section 6.12: 切り詰めは義務ではないが許容される)
 #[test]
-fn test_close_reason_exceeds_max_length_errors() {
+fn test_close_reason_exceeds_max_length_truncated() {
     let mut session = WtSession::client(WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
+    // 1025 バイトの ASCII reason → 1024 バイトに切り詰め
     let reason = "a".repeat(1025);
-    let err = session.close(0, &reason).unwrap_err();
-    assert_eq!(
-        err.kind,
-        shiguredo_http2::webtransport::WtErrorKind::CapsuleDecode
-    );
+    session
+        .close(0, &reason)
+        .expect("truncation should succeed, not error");
+    assert_eq!(session.state(), WtSessionState::Closed);
+
+    // 出力された capsule の reason が 1024 バイト以下であることを確認
+    let out = session.poll_output().expect("output expected");
+    let mut decoder = shiguredo_http2::webtransport::CapsuleDecoder::new();
+    decoder.feed(&out);
+    let capsule = decoder
+        .decode()
+        .expect("decode should succeed")
+        .expect("capsule expected");
+    if let shiguredo_http2::webtransport::Capsule::WtCloseSession { reason, .. } = capsule {
+        assert!(
+            reason.len() <= 1024,
+            "truncated reason should be <= 1024 bytes, got {}",
+            reason.len()
+        );
+    } else {
+        panic!("expected WtCloseSession capsule");
+    }
+}
+
+/// マルチバイト文字が 1024 バイト境界にまたがる場合の切り詰めを確認する。
+#[test]
+fn test_close_reason_truncation_utf8_boundary() {
+    let mut session = WtSession::client(WtConfig::default());
+    session.initiate().expect("initiate should succeed");
+
+    // 1023 バイトの ASCII + 2 バイト文字 (U+00E9 = é = 0xC3 0xA9) = 1025 バイト
+    // 切り詰め後: 1023 バイト (é の 1 バイト目は 1024 バイト目に来るが、
+    // continuation byte ではないので 1024 バイト目で切ると不完全な文字になる)
+    // 実際には 1023 バイトの ASCII の後に é があり、1024 バイト位置は
+    // é の 1 バイト目 (0xC3) なので、後退して 1023 バイトで切る
+    let mut reason = "a".repeat(1023);
+    reason.push('é'); // 2 バイト文字
+    assert_eq!(reason.len(), 1025);
+
+    session
+        .close(0, &reason)
+        .expect("truncation should succeed");
+    assert_eq!(session.state(), WtSessionState::Closed);
+
+    let out = session.poll_output().expect("output expected");
+    let mut decoder = shiguredo_http2::webtransport::CapsuleDecoder::new();
+    decoder.feed(&out);
+    let capsule = decoder
+        .decode()
+        .expect("decode should succeed")
+        .expect("capsule expected");
+    if let shiguredo_http2::webtransport::Capsule::WtCloseSession { reason, .. } = capsule {
+        // 1023 バイト (é は切り捨て)
+        assert_eq!(reason.len(), 1023);
+        assert!(reason.chars().all(|c| c == 'a'));
+    } else {
+        panic!("expected WtCloseSession capsule");
+    }
 }
 
 /// draft-ietf-webtrans-http2-14 Section 6.2 / 6.3: `reset_stream` / `stop_sending` の

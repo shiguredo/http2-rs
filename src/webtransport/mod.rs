@@ -486,15 +486,22 @@ impl WtSession {
             return Err(WtError::session_state_error("session already closed"));
         }
 
-        // draft-ietf-webtrans-http2-14 Section 6.12 (L1355-L1358):
-        // reason の長さは MUST NOT exceed 1024 bytes
-        if reason.len() > MAX_CLOSE_REASON_LEN {
-            return Err(WtError::capsule_decode(format!(
-                "WT_CLOSE_SESSION reason exceeds {} bytes (got {})",
-                MAX_CLOSE_REASON_LEN,
-                reason.len(),
-            )));
-        }
+        // draft-ietf-webtrans-http2-15 Section 6.12:
+        // reason の長さは MUST NOT exceed 1024 bytes。
+        // 超過時は UTF-8 文字境界で 1024 バイト以下に切り詰めて送る
+        // (呼び出し側の利便性優先。draft-15 でも切り詰めは義務ではないが許容される)。
+        let reason = if reason.len() > MAX_CLOSE_REASON_LEN {
+            let bytes = reason.as_bytes();
+            let mut end = MAX_CLOSE_REASON_LEN;
+            // UTF-8 continuation byte (0b10xxxxxx) でない位置まで後退
+            while end > 0 && bytes[end] & 0b1100_0000 == 0b1000_0000 {
+                end -= 1;
+            }
+            // 安全: end は char 境界を指している
+            &reason[..end]
+        } else {
+            reason
+        };
 
         // WT_CLOSE_SESSION Capsule をエンコード
         let capsule = Capsule::WtCloseSession {
@@ -532,8 +539,16 @@ impl WtSession {
 
     /// ストリーム数上限を増やす `WT_MAX_STREAMS` を送信する
     ///
-    /// draft-ietf-webtrans-http2-14 Section 6.7: ピアが新規ストリームを開ける上限を通知する。
+    /// draft-ietf-webtrans-http2-15 Section 6.7: ピアが新規ストリームを開ける上限を通知する。
+    /// 2^60 を超える値は送信できない。
     pub fn send_max_streams(&mut self, maximum: u64, bidirectional: bool) -> WtResult<()> {
+        // draft-ietf-webtrans-http2-15 Section 6.7: 2^60 超過値の送信は不可
+        if maximum > (1u64 << 60) {
+            return Err(WtError::flow_control_error(format!(
+                "WT_MAX_STREAMS value {} exceeds 2^60 limit",
+                maximum
+            )));
+        }
         let capsule = Capsule::WtMaxStreams {
             maximum,
             bidirectional,
@@ -583,6 +598,8 @@ impl WtSession {
     }
 
     /// ローカル側ストリーム上限を拡張し、`WT_MAX_STREAMS` を自動送信する
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 6.7: 2^60 を超える値は送信できない。
     pub fn grow_max_streams(&mut self, increment: u64, bidirectional: bool) -> WtResult<()> {
         self.flow_control
             .add_max_streams_local(increment, bidirectional);
@@ -591,6 +608,7 @@ impl WtSession {
         } else {
             self.flow_control.max_streams_uni_local()
         };
+        // saturating_add で 2^60 を超えた場合にエラーを返す
         self.send_max_streams(new_max, bidirectional)
     }
 
@@ -744,9 +762,17 @@ impl WtSession {
                 }
             }
             Capsule::WtStreamsBlocked {
-                maximum: _,
+                maximum,
                 bidirectional: _,
             } => {
+                // draft-ietf-webtrans-http2-15 Section 6.10:
+                // Maximum Streams が 2^60 を超える場合は WT_FLOW_CONTROL_ERROR
+                if maximum > (1u64 << 60) {
+                    return Err(WtError::flow_control_error(format!(
+                        "WT_STREAMS_BLOCKED maximum {} exceeds 2^60 limit",
+                        maximum
+                    )));
+                }
                 // ピアがストリーム数制限でブロックされていることを通知
             }
             Capsule::WtCloseSession { error_code, reason } => {

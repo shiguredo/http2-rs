@@ -556,19 +556,21 @@ impl CapsuleDecoder {
                         "WT_CLOSE_SESSION payload too short",
                     ));
                 }
-                // draft-ietf-webtrans-http2-14 Section 6.12:
-                // reason の長さは 1024 バイト以下でなければならない (MUST NOT)
+                // draft-ietf-webtrans-http2-15 Section 6.12:
+                // 1024 超または非 UTF-8 は session error WT_ERROR として扱う (MUST)。
+                // 0077 完了後は ErrorCode::WtError に対応付ける。
                 let reason_len = payload.len() - 4;
                 if reason_len > MAX_CLOSE_REASON_LEN {
-                    return Err(WtError::capsule_decode(
+                    return Err(WtError::session_state_error(
                         "WT_CLOSE_SESSION reason exceeds 1024 bytes",
                     ));
                 }
                 let error_code =
                     u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
                 let reason = if payload.len() > 4 {
-                    String::from_utf8(payload[4..].to_vec())
-                        .map_err(|_| WtError::capsule_decode("invalid UTF-8 in close reason"))?
+                    String::from_utf8(payload[4..].to_vec()).map_err(|_| {
+                        WtError::session_state_error("invalid UTF-8 in close reason")
+                    })?
                 } else {
                     String::new()
                 };

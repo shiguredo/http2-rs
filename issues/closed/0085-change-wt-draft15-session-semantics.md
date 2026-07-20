@@ -2,6 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-07-20
+- Completed: 2026-07-20
 - Polished: 2026-07-20
 - Model: Grok 4.5
 - Branch: feature/change-wt-draft15-session-semantics
@@ -132,3 +133,29 @@ draft-ietf-webtrans-http2-15 で変わったセッション周辺の MUST/SHOULD
 - `crates/tokio-http2/src/webtransport.rs` — `accept` の Origin 検証
 - `issues/closed/0061-bug-fix-wt-close-session-reason-truncation.md` — CLOSE reason エラー返却の過去判断
 - `issues/closed/0062-add-origin-header-verification.md` — Origin 欠落時 403 の過去判断
+
+## 解決方法
+
+### CLOSE reason（送信）
+
+`src/webtransport/mod.rs` の `close()` で 1024 バイト超過時にエラーを返す代わりに、UTF-8 文字境界で 1024 バイト以下に切り詰めて送るように変更した。continuation byte (0b10xxxxxx) でない位置まで後退するアルゴリズムで切り詰める。
+
+### CLOSE reason（受信）
+
+`src/webtransport/capsule.rs` の CLOSE decode で 1024 超・非 UTF-8 のエラー種別を `CapsuleDecode` から `SessionStateError` に変更した。0077 完了後は `ErrorCode::WtError` に対応付ける予定。
+
+### Origin
+
+`crates/tokio-http2/src/webtransport.rs` の `accept()` で Origin 欠落時にエラーを返す代わりに検証をスキップして accept を継続するように変更した。不一致時のみ 403 を返す。
+
+### Max Streams
+
+`src/webtransport/flow_control.rs` の `update_max_streams()` と `src/webtransport/mod.rs` の `WtStreamsBlocked` アーム・`send_max_streams()` に 2^60 上限チェックを追加した。`grow_max_streams()` は `send_max_streams()` 経由で間接的に検証される。
+
+### 405
+
+`examples/wt_server/src/main.rs` の reject status を 404 から 405 に更新した。
+
+### テスト
+
+`tests/test_webtransport/root.rs` の `test_close_reason_exceeds_max_length_errors` を `test_close_reason_exceeds_max_length_truncated` に置き換え、UTF-8 境界切り詰めのテスト `test_close_reason_truncation_utf8_boundary` を追加した。`crates/tokio-http2/tests/test_webtransport.rs` の `test_wt_origin_missing_rejected` を `test_wt_origin_missing_accepted` に置き換えた。
