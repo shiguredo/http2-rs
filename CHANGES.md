@@ -8,6 +8,8 @@
 
 ## develop
 
+- [CHANGE] WT_STREAM Capsule の FIN 極性を draft-15 に合わせ、非終端を 0x190B4D3C・終端を 0x190B4D3B に変更する (draft-ietf-webtrans-http2-15 Section 6.4)
+  - @voluntas
 - [CHANGE] `Setting::WtEnabled(bool)` バリアント (0x2b60) を追加し、`Limits` / `LimitsBuilder` に `wt_enabled` フィールドを追加する。`:protocol=webtransport` の CONNECT 開始に `SETTINGS_WT_ENABLED=1` の二重ゲートを適用する。`LimitsError::WebtransportRequiresWtEnabled` / `SettingError::WtEnabledNotBoolean` を追加する (draft-ietf-webtrans-http2-15 Section 3.1 / Section 11.2)
   - @voluntas
 - [CHANGE] `WtServerRequest::accept()` に `allowed_origin: Option<&[u8]>` パラメータを追加し、Origin ヘッダー検証を実装する (issue 0062)

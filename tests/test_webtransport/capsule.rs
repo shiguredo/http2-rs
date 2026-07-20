@@ -1,5 +1,169 @@
 use shiguredo_http2::webtransport::{Capsule, CapsuleDecoder, CapsuleEncoder};
 
+// draft-ietf-webtrans-http2-15 Section 6.4:
+// 非終端 WT_STREAM (FIN=0) の capsule type は 0x190B4D3C、
+// 終端 WT_STREAM (FIN=1) の capsule type は 0x190B4D3B。
+// LSB が FIN bit であり、0x3B の LSB=1 → FIN=1、0x3C の LSB=0 → FIN=0。
+
+/// fin=true で encode した capsule type が varint 表現で 0x190B4D3B であることを直接検証する
+#[test]
+fn test_wt_stream_fin_wire_type() {
+    let mut encoder = CapsuleEncoder::new();
+    let capsule = Capsule::WtStream {
+        stream_id: 0,
+        data: vec![],
+        fin: true,
+    };
+    encoder.encode(&capsule);
+
+    // capsule type の varint 表現は先頭 4 バイト (0x190B4D3B は 4 バイト varint)
+    // 0x190B4D3B = 0b10_011001_00001011_01001101_00111011 → [0x99, 0x0B, 0x4D, 0x3B]
+    let buf = encoder.buffer();
+    assert!(buf.len() >= 4, "encoded buffer too short");
+    assert_eq!(
+        &buf[0..4],
+        &[0x99, 0x0B, 0x4D, 0x3B],
+        "fin=true の capsule type は 0x190B4D3B でなければならない"
+    );
+}
+
+/// fin=false で encode した capsule type が varint 表現で 0x190B4D3C であることを直接検証する
+#[test]
+fn test_wt_stream_non_fin_wire_type() {
+    let mut encoder = CapsuleEncoder::new();
+    let capsule = Capsule::WtStream {
+        stream_id: 0,
+        data: vec![],
+        fin: false,
+    };
+    encoder.encode(&capsule);
+
+    // 0x190B4D3C = 0b10_011001_00001011_01001101_00111100 → [0x99, 0x0B, 0x4D, 0x3C]
+    let buf = encoder.buffer();
+    assert!(buf.len() >= 4, "encoded buffer too short");
+    assert_eq!(
+        &buf[0..4],
+        &[0x99, 0x0B, 0x4D, 0x3C],
+        "fin=false の capsule type は 0x190B4D3C でなければならない"
+    );
+}
+
+/// 空データ + fin=true の capsule が正しく encode/decode される
+#[test]
+fn test_wt_stream_empty_data_with_fin() {
+    let mut encoder = CapsuleEncoder::new();
+    let mut decoder = CapsuleDecoder::new();
+
+    let capsule = Capsule::WtStream {
+        stream_id: 4,
+        data: vec![],
+        fin: true,
+    };
+    encoder.encode(&capsule);
+
+    decoder.feed(encoder.buffer());
+    let decoded = decoder
+        .decode()
+        .expect("decode should succeed")
+        .expect("capsule should exist");
+    assert_eq!(capsule, decoded);
+}
+
+/// fin=false を複数送った後に fin=true を送るシーケンスが正しく encode/decode される
+#[test]
+fn test_wt_stream_sequence_non_fin_then_fin() {
+    let mut encoder = CapsuleEncoder::new();
+    let mut decoder = CapsuleDecoder::new();
+
+    // 非終端 capsule を 3 個送った後に終端 capsule を送る
+    let capsules = vec![
+        Capsule::WtStream {
+            stream_id: 4,
+            data: b"chunk1".to_vec(),
+            fin: false,
+        },
+        Capsule::WtStream {
+            stream_id: 4,
+            data: b"chunk2".to_vec(),
+            fin: false,
+        },
+        Capsule::WtStream {
+            stream_id: 4,
+            data: b"chunk3".to_vec(),
+            fin: false,
+        },
+        Capsule::WtStream {
+            stream_id: 4,
+            data: b"final".to_vec(),
+            fin: true,
+        },
+    ];
+
+    for capsule in &capsules {
+        encoder.encode(capsule);
+    }
+
+    decoder.feed(encoder.buffer());
+    for expected in &capsules {
+        let decoded = decoder
+            .decode()
+            .expect("decode should succeed")
+            .expect("capsule should exist");
+        assert_eq!(expected, &decoded);
+    }
+    assert!(decoder.decode().expect("decode should succeed").is_none());
+}
+
+/// decode 側で 0x190B4D3B 受信時に fin=true になることを直接検証する
+#[test]
+fn test_decode_wt_stream_fin_from_raw_bytes() {
+    let mut decoder = CapsuleDecoder::new();
+
+    // capsule type = 0x190B4D3B (varint: [0x99, 0x0B, 0x4D, 0x3B])
+    // capsule length = 1 (stream_id=0 の varint 1 バイト)
+    // payload = stream_id=0 (varint: [0x00])
+    let raw: &[u8] = &[0x99, 0x0B, 0x4D, 0x3B, 0x01, 0x00];
+    decoder.feed(raw);
+    let decoded = decoder
+        .decode()
+        .expect("decode should succeed")
+        .expect("capsule should exist");
+    assert_eq!(
+        decoded,
+        Capsule::WtStream {
+            stream_id: 0,
+            data: vec![],
+            fin: true,
+        },
+        "0x190B4D3B は fin=true でデコードされなければならない"
+    );
+}
+
+/// decode 側で 0x190B4D3C 受信時に fin=false になることを直接検証する
+#[test]
+fn test_decode_wt_stream_non_fin_from_raw_bytes() {
+    let mut decoder = CapsuleDecoder::new();
+
+    // capsule type = 0x190B4D3C (varint: [0x99, 0x0B, 0x4D, 0x3C])
+    // capsule length = 1 (stream_id=0 の varint 1 バイト)
+    // payload = stream_id=0 (varint: [0x00])
+    let raw: &[u8] = &[0x99, 0x0B, 0x4D, 0x3C, 0x01, 0x00];
+    decoder.feed(raw);
+    let decoded = decoder
+        .decode()
+        .expect("decode should succeed")
+        .expect("capsule should exist");
+    assert_eq!(
+        decoded,
+        Capsule::WtStream {
+            stream_id: 0,
+            data: vec![],
+            fin: false,
+        },
+        "0x190B4D3C は fin=false でデコードされなければならない"
+    );
+}
+
 #[test]
 fn test_encode_decode_datagram() {
     let mut encoder = CapsuleEncoder::new();
