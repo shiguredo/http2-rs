@@ -30,11 +30,16 @@ pub mod capsule_type {
     /// WT_STOP_SENDING (draft-ietf-webtrans-http2-14 Section 6.3)
     pub const WT_STOP_SENDING: u64 = 0x190B4D3A;
 
-    /// WT_STREAM (FIN=0) (draft-ietf-webtrans-http2-14 Section 6.4)
-    pub const WT_STREAM: u64 = 0x190B4D3B;
+    /// WT_STREAM (FIN=0, 非終端) (draft-ietf-webtrans-http2-15 Section 6.4)
+    ///
+    /// draft-15 では LSB=FIN bit。0x190B4D3C の LSB=0 → FIN=0 (非終端)。
+    /// 任意個の 0x190B4D3C capsule の後に終端 0x190B4D3B capsule が続く。
+    pub const WT_STREAM: u64 = 0x190B4D3C;
 
-    /// WT_STREAM (FIN=1) (draft-ietf-webtrans-http2-14 Section 6.4)
-    pub const WT_STREAM_FIN: u64 = 0x190B4D3C;
+    /// WT_STREAM (FIN=1, 終端) (draft-ietf-webtrans-http2-15 Section 6.4)
+    ///
+    /// draft-15 では LSB=FIN bit。0x190B4D3B の LSB=1 → FIN=1 (終端)。
+    pub const WT_STREAM_FIN: u64 = 0x190B4D3B;
 
     /// WT_MAX_DATA (draft-ietf-webtrans-http2-14 Section 6.5)
     pub const WT_MAX_DATA: u64 = 0x190B4D3D;
