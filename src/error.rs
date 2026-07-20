@@ -42,29 +42,32 @@ pub enum ErrorCode {
     /// HTTP/1.1 使用要求
     Http11Required,
 
-    // === WebTransport エラーコード (draft-ietf-webtrans-http2-14) ===
-    /// WEBTRANSPORT_ERROR
+    // === WebTransport エラーコード (draft-ietf-webtrans-http2-15) ===
+    /// WT_ERROR
     ///
-    /// draft-ietf-webtrans-http2-14 Section 3.4: 汎用 WebTransport エラー。
+    /// draft-ietf-webtrans-http2-15 Section 3.4: 汎用 WebTransport エラー。
     /// より具体的なエラーコードがない場合に使用する。
     ///
-    /// 注: この値は暫定値。IANA 登録後に更新される可能性がある。
-    WebtransportError,
-
-    /// WEBTRANSPORT_STREAM_STATE_ERROR
+    /// 注: `webtransport::WtError` 構造体とは別物。こちらは HTTP/2 エラーコードの
+    /// IANA 登録名 (draft-ietf-webtrans-http2-15 Section 11.3)。
     ///
-    /// draft-ietf-webtrans-http2-14 Section 3.4: ストリーム関連の capsule が
+    /// 注: この値は暫定値。IANA 登録後に更新される可能性がある。
+    WtError,
+
+    /// WT_STREAM_STATE_ERROR
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 3.4: ストリーム関連の capsule が
     /// 無効な状態のストリームを指定した。
     ///
     /// 注: この値は暫定値。IANA 登録後に更新される可能性がある。
-    WebtransportStreamStateError,
+    WtStreamStateError,
 
-    /// WEBTRANSPORT_FLOW_CONTROL_ERROR
+    /// WT_FLOW_CONTROL_ERROR
     ///
-    /// draft-ietf-webtrans-http2-14 Section 11.3: フロー制御エラーが発生した。
+    /// draft-ietf-webtrans-http2-15 Section 11.3: フロー制御エラーが発生した。
     ///
     /// 注: この値は暫定値。IANA 登録後に更新される可能性がある。
-    WebtransportFlowControlError,
+    WtFlowControlError,
 
     /// 未知のエラーコード (RFC 9113 Section 7)
     ///
@@ -94,9 +97,9 @@ impl ErrorCode {
             0x0b => Self::EnhanceYourCalm,
             0x0c => Self::InadequateSecurity,
             0x0d => Self::Http11Required,
-            0x100 => Self::WebtransportError,
-            0x101 => Self::WebtransportStreamStateError,
-            0x102 => Self::WebtransportFlowControlError,
+            0x100 => Self::WtError,
+            0x101 => Self::WtStreamStateError,
+            0x102 => Self::WtFlowControlError,
             _ => Self::Unknown(value),
         }
     }
@@ -119,9 +122,9 @@ impl ErrorCode {
             Self::EnhanceYourCalm => 0x0b,
             Self::InadequateSecurity => 0x0c,
             Self::Http11Required => 0x0d,
-            Self::WebtransportError => 0x100,
-            Self::WebtransportStreamStateError => 0x101,
-            Self::WebtransportFlowControlError => 0x102,
+            Self::WtError => 0x100,
+            Self::WtStreamStateError => 0x101,
+            Self::WtFlowControlError => 0x102,
             Self::Unknown(code) => code,
         }
     }
@@ -144,9 +147,9 @@ impl std::fmt::Display for ErrorCode {
             Self::EnhanceYourCalm => write!(f, "ENHANCE_YOUR_CALM"),
             Self::InadequateSecurity => write!(f, "INADEQUATE_SECURITY"),
             Self::Http11Required => write!(f, "HTTP_1_1_REQUIRED"),
-            Self::WebtransportError => write!(f, "WEBTRANSPORT_ERROR"),
-            Self::WebtransportStreamStateError => write!(f, "WEBTRANSPORT_STREAM_STATE_ERROR"),
-            Self::WebtransportFlowControlError => write!(f, "WEBTRANSPORT_FLOW_CONTROL_ERROR"),
+            Self::WtError => write!(f, "WT_ERROR"),
+            Self::WtStreamStateError => write!(f, "WT_STREAM_STATE_ERROR"),
+            Self::WtFlowControlError => write!(f, "WT_FLOW_CONTROL_ERROR"),
             Self::Unknown(code) => write!(f, "UNKNOWN(0x{code:x})"),
         }
     }

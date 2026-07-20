@@ -389,7 +389,7 @@ impl WtStream {
     /// 送信上限を更新する
     ///
     /// draft-ietf-webtrans-http2-14 Section 6.6:
-    /// 値が減少した場合は WEBTRANSPORT_FLOW_CONTROL_ERROR セッションエラーを返す。
+    /// 値が減少した場合は WT_FLOW_CONTROL_ERROR セッションエラーを返す。
     ///
     /// 注: draft-ietf-webtrans-http2-14 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
     pub fn update_send_max(&mut self, maximum: u64) -> WtResult<()> {

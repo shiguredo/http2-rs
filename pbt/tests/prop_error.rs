@@ -31,9 +31,9 @@ fn error_code_strategy() -> impl Strategy<Value = ErrorCode> {
         Just(ErrorCode::EnhanceYourCalm),
         Just(ErrorCode::InadequateSecurity),
         Just(ErrorCode::Http11Required),
-        Just(ErrorCode::WebtransportError),
-        Just(ErrorCode::WebtransportStreamStateError),
-        Just(ErrorCode::WebtransportFlowControlError),
+        Just(ErrorCode::WtError),
+        Just(ErrorCode::WtStreamStateError),
+        Just(ErrorCode::WtFlowControlError),
         unknown_error_code_value().prop_map(ErrorCode::Unknown),
     ]
 }

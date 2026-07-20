@@ -8,6 +8,8 @@
 
 ## develop
 
+- [CHANGE] `ErrorCode` の WebTransport エラーコードバリアントを `WtError` / `WtStreamStateError` / `WtFlowControlError` にリネームし、Display を `WT_ERROR` / `WT_STREAM_STATE_ERROR` / `WT_FLOW_CONTROL_ERROR` に変更する (draft-ietf-webtrans-http2-15 Section 3.4 / Section 11.3)
+  - @voluntas
 - [CHANGE] WT_RESET_STREAM の Reliable Size 検証を受信バイトとの一致必須 (MUST equal) に変更し、過小・過大いずれの不一致もセッションエラーにする (draft-ietf-webtrans-http2-15 Section 6.2)
   - @voluntas
 - [CHANGE] WT_STREAM Capsule の FIN 極性を draft-15 に合わせ、非終端を 0x190B4D3C・終端を 0x190B4D3B に変更する (draft-ietf-webtrans-http2-15 Section 6.4)
