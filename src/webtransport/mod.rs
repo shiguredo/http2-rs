@@ -652,11 +652,13 @@ impl WtSession {
                         "WT_RESET_STREAM received for stream not in valid state",
                     ));
                 }
-                // draft-ietf-webtrans-http2-14 Section 6.2: Reliable Size 検証
-                // reliable_size が既に受信したオフセットより小さい場合はセッションエラー
-                if reliable_size < stream.recv_offset() {
+                // draft-ietf-webtrans-http2-15 Section 6.2: Reliable Size 検証
+                // HTTP/2 上は順序保証があるため Reliable Size は送信済み総量と
+                // 一致しなければならない (MUST equal)。過小は既達データと矛盾、
+                // 過大は後続バイトを約束するが到着し得ない → いずれもセッションエラー
+                if reliable_size != stream.recv_offset() {
                     return Err(WtError::stream_state_error(format!(
-                        "WT_RESET_STREAM reliable_size {} is less than recv_offset {}",
+                        "WT_RESET_STREAM reliable_size {} does not match recv_offset {}",
                         reliable_size,
                         stream.recv_offset()
                     )));

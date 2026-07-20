@@ -416,3 +416,179 @@ fn wt_reset_stream_unknown_stream_id_errors() {
     );
     assert!(err.reason.contains("unknown stream"));
 }
+
+// draft-ietf-webtrans-http2-15 Section 6.2: Reliable Size は送信済み総量と
+// 一致しなければならない (MUST equal)。過小・過大いずれもセッションエラー。
+
+/// reliable_size == recv_offset で WT_RESET_STREAM が正常に処理される
+#[test]
+fn wt_reset_stream_reliable_size_exact_match() {
+    let mut session = WtSession::server(WtConfig::default());
+    session.initiate().expect("initiate should succeed");
+
+    // クライアント起点の bidi ストリーム (id=0) から 5 バイト受信
+    let peer_id: WtStreamId = wt_stream_id::first(true, true);
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: peer_id,
+        data: b"hello".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed should succeed");
+    session.process().expect("process should succeed");
+
+    // reliable_size == recv_offset (5) → 正常
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtResetStream {
+        stream_id: peer_id,
+        error_code: 0,
+        reliable_size: 5,
+    });
+    session.feed(&encoder.take()).expect("feed should succeed");
+    session
+        .process()
+        .expect("reliable_size == recv_offset should succeed");
+
+    // StreamReset イベントが発火している
+    let mut got_reset = false;
+    while let Some(ev) = session.poll_event() {
+        if let WtEvent::StreamReset { stream_id, .. } = ev
+            && stream_id == peer_id
+        {
+            got_reset = true;
+        }
+    }
+    assert!(got_reset, "StreamReset event expected");
+}
+
+/// reliable_size == 0 && recv_offset == 0 で WT_RESET_STREAM が正常に処理される
+#[test]
+fn wt_reset_stream_reliable_size_zero_match() {
+    let mut session = WtSession::server(WtConfig::default());
+    session.initiate().expect("initiate should succeed");
+
+    // クライアント起点の bidi ストリーム (id=0) をデータなしで開く
+    let peer_id: WtStreamId = wt_stream_id::first(true, true);
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: peer_id,
+        data: vec![],
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed should succeed");
+    session.process().expect("process should succeed");
+
+    // reliable_size == recv_offset (0) → 正常
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtResetStream {
+        stream_id: peer_id,
+        error_code: 0,
+        reliable_size: 0,
+    });
+    session.feed(&encoder.take()).expect("feed should succeed");
+    session
+        .process()
+        .expect("reliable_size == 0 == recv_offset should succeed");
+}
+
+/// reliable_size > recv_offset (過大) でセッションエラーになる
+#[test]
+fn wt_reset_stream_reliable_size_too_large_errors() {
+    let mut session = WtSession::server(WtConfig::default());
+    session.initiate().expect("initiate should succeed");
+
+    // クライアント起点の bidi ストリーム (id=0) から 5 バイト受信
+    let peer_id: WtStreamId = wt_stream_id::first(true, true);
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: peer_id,
+        data: b"hello".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed should succeed");
+    session.process().expect("process should succeed");
+
+    // reliable_size = 6 > recv_offset = 5 → エラー
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtResetStream {
+        stream_id: peer_id,
+        error_code: 0,
+        reliable_size: 6,
+    });
+    session.feed(&encoder.take()).expect("feed should succeed");
+    let err = session.process().unwrap_err();
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason.contains("does not match"));
+}
+
+/// reliable_size < recv_offset (過小) でセッションエラーになる
+#[test]
+fn wt_reset_stream_reliable_size_too_small_errors() {
+    let mut session = WtSession::server(WtConfig::default());
+    session.initiate().expect("initiate should succeed");
+
+    // クライアント起点の bidi ストリーム (id=0) から 5 バイト受信
+    let peer_id: WtStreamId = wt_stream_id::first(true, true);
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: peer_id,
+        data: b"hello".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed should succeed");
+    session.process().expect("process should succeed");
+
+    // reliable_size = 4 < recv_offset = 5 → エラー
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtResetStream {
+        stream_id: peer_id,
+        error_code: 0,
+        reliable_size: 4,
+    });
+    session.feed(&encoder.take()).expect("feed should succeed");
+    let err = session.process().unwrap_err();
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason.contains("does not match"));
+}
+
+/// 送信側が常に send_offset と一致する Reliable Size を送ることを確認する
+#[test]
+fn wt_reset_stream_send_uses_send_offset() {
+    let mut session = WtSession::client(WtConfig::default());
+    session.initiate().expect("initiate should succeed");
+
+    // bidi ストリームを開いて 10 バイト送信
+    let stream_id = session.open_bidi_stream().expect("open should succeed");
+    session
+        .send_stream_data(stream_id, b"0123456789", false)
+        .expect("send should succeed");
+
+    // WT_STREAM の出力を消費する
+    let _ = session.poll_output().expect("output expected");
+
+    // WT_RESET_STREAM を送信
+    session
+        .reset_stream(stream_id, 42)
+        .expect("reset should succeed");
+
+    let out = session.poll_output().expect("output expected");
+    let capsule = decode_single_capsule(&out);
+    match capsule {
+        Capsule::WtResetStream {
+            reliable_size,
+            error_code,
+            ..
+        } => {
+            // send_offset == 10 と一致する
+            assert_eq!(reliable_size, 10, "reliable_size must equal send_offset");
+            assert_eq!(error_code, 42);
+        }
+        other => panic!("expected WtResetStream, got {other:?}"),
+    }
+}

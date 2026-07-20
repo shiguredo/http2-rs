@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-07-20
+- Completed: 2026-07-20
 - Polished: 2026-07-20
 - Model: Grok 4.5
 - Branch: feature/change-wt-reset-reliable-size-exact
@@ -70,3 +71,9 @@ if reliable_size < stream.recv_offset() {
 - `refs/draft-ietf-webtrans-http2-14.txt` Section 6.2（旧: 過小のみ session error、超過データ破棄許容）
 - `src/webtransport/mod.rs` — `reliable_size < stream.recv_offset()` 付近
 - `src/webtransport/mod.rs` — 送信側 `reliable_size = stream.send_offset()`
+
+## 解決方法
+
+`src/webtransport/mod.rs` の WT_RESET_STREAM 受信時 Reliable Size 検証を `reliable_size < stream.recv_offset()` から `reliable_size != stream.recv_offset()` に変更した。コメントとエラーメッセージも draft-15 の MUST equal セマンティクスに合わせて書き換えた。
+
+`tests/test_webtransport/integration.rs` にテスト 5 件を追加した: reliable_size == recv_offset (正常)、reliable_size == 0 && recv_offset == 0 (正常)、reliable_size > recv_offset (過大、エラー)、reliable_size < recv_offset (過小、エラー)、送信側が send_offset と一致する Reliable Size を送る回帰テスト。
