@@ -2,7 +2,7 @@
 //!
 //! セッションレベルおよびストリームレベルのフロー制御を管理する。
 //!
-//! 注: 本モジュールは draft-ietf-webtrans-http2-14 に基づく実装であり、
+//! 注: 本モジュールは draft-ietf-webtrans-http2-15 に基づく実装であり、
 //! draft の改訂や RFC 化に伴い仕様が変更される可能性がある。
 
 use crate::webtransport::error::{WtError, WtResult};
@@ -123,7 +123,7 @@ impl WtFlowControl {
     /// 送信を消費する
     pub fn consume_send(&mut self, size: u64) -> WtResult<()> {
         let new_offset = self.send_offset.saturating_add(size);
-        // draft-ietf-webtrans-http2-14 Section 6.5: 送信総量は受信者が広告した値を超えてはならない (MUST NOT)
+        // draft-ietf-webtrans-http2-15 Section 6.5: 送信総量は受信者が広告した値を超えてはならない (MUST NOT)
         if new_offset > self.send_max {
             return Err(WtError::flow_control_error("send window exhausted"));
         }
@@ -134,7 +134,7 @@ impl WtFlowControl {
     /// 受信を消費する
     pub fn consume_recv(&mut self, size: u64) -> WtResult<()> {
         let new_offset = self.recv_offset.saturating_add(size);
-        // draft-ietf-webtrans-http2-14 Section 6.5: 上限を超える受信は
+        // draft-ietf-webtrans-http2-15 Section 6.5: 上限を超える受信は
         // WT_FLOW_CONTROL_ERROR のセッションエラー (MUST)
         if new_offset > self.recv_max {
             return Err(WtError::flow_control_error("recv window exceeded"));
@@ -145,10 +145,10 @@ impl WtFlowControl {
 
     /// 送信上限を更新する (WT_MAX_DATA 受信時)
     ///
-    /// draft-ietf-webtrans-http2-14 Section 6.5:
+    /// draft-ietf-webtrans-http2-15 Section 6.5:
     /// 値が減少した場合は WT_FLOW_CONTROL_ERROR セッションエラーを返す。
     ///
-    /// 注: draft-ietf-webtrans-http2-14 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
+    /// 注: draft-ietf-webtrans-http2-15 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
     pub fn update_send_max(&mut self, maximum: u64) -> WtResult<()> {
         if maximum < self.send_max {
             return Err(WtError::flow_control_error("WT_MAX_DATA value decreased"));
@@ -189,9 +189,9 @@ impl WtFlowControl {
     ///
     /// RFC 9000 Section 4.6: stream_id < (max_streams * 4 + first_stream_id_of_type)
     /// のストリームのみ開設可能。順序外の stream ID は下位 ID も全て開いた扱いになる (RFC 9000 Section 2.1)。
-    /// draft-ietf-webtrans-http2-14 Section 5.2 は QUIC のストリーム ID セマンティクスを継承する。
+    /// draft-ietf-webtrans-http2-15 Section 5.2 は QUIC のストリーム ID セマンティクスを継承する。
     ///
-    /// 注: draft-ietf-webtrans-http2-14 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
+    /// 注: draft-ietf-webtrans-http2-15 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
     #[must_use]
     pub fn can_accept_stream(&self, stream_id: u64) -> bool {
         let bidirectional = stream_id & 0x02 == 0;

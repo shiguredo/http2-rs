@@ -1,6 +1,6 @@
 //! `WtInit` パーサーと `WtConfig::apply_init` マージ規則の単体テスト
 //!
-//! draft-ietf-webtrans-http2-14 Section 4.3.2 (L519-L541) と RFC 8941
+//! draft-ietf-webtrans-http2-15 Section 4.3.2 (L519-L541) と RFC 8941
 //! Section 4.2 (Parsing Structured Fields) の動作を境界値・型不一致を含めて検証する。
 //! 加えて、`apply_init` 後の `WtConfig` が `WtSession` の初期最大データ量に
 //! 反映されることを Sans I/O 層で確認する。
@@ -27,7 +27,7 @@ fn test_parse_ignores_unknown_keys() {
     assert_eq!(init.br, None);
 }
 
-/// known キーに付随するパラメータも無視されること (draft-ietf-webtrans-http2-14 Section 4.3.2 の MUST。パラメータの定義は RFC 8941 §3.1.2)
+/// known キーに付随するパラメータも無視されること (draft-ietf-webtrans-http2-15 Section 4.3.2 の MUST。パラメータの定義は RFC 8941 §3.1.2)
 #[test]
 fn test_parse_ignores_parameters_on_known_key() {
     let init = WtInit::parse(b"u=100;foo=bar").expect("パラメータは無視されるはず");
@@ -103,7 +103,7 @@ fn test_parse_rejects_token_value_on_known_key() {
 
 /// known キーの値が Decimal (`1.5`) だった場合は拒否されること
 ///
-/// RFC 8941 §3.3.2 で定義される Decimal は draft-ietf-webtrans-http2-14
+/// RFC 8941 §3.3.2 で定義される Decimal は draft-ietf-webtrans-http2-15
 /// Section 4.3.2 L530-L537 が要求する Integer 型ではないので拒否する。
 #[test]
 fn test_parse_rejects_decimal_value_on_known_key() {

@@ -1,6 +1,6 @@
 //! WebTransport-Init ヘッダーフィールドのパーサー
 //!
-//! draft-ietf-webtrans-http2-14 Section 4.3.2 (L519-L541) に定義されている
+//! draft-ietf-webtrans-http2-15 Section 4.3.2 (L519-L541) に定義されている
 //! `WebTransport-Init` HTTP ヘッダーフィールドをパースする。
 //! 実体は RFC 8941 (Structured Field Values for HTTP) Dictionary。
 //!
@@ -18,7 +18,7 @@ use crate::webtransport::error::WtError;
 
 /// WebTransport-Init ヘッダーフィールドの値
 ///
-/// draft-ietf-webtrans-http2-14 Section 4.3.2 (L527-L537) で定義された
+/// draft-ietf-webtrans-http2-15 Section 4.3.2 (L527-L537) で定義された
 /// 3 つの Integer キーを optional に保持する。
 ///
 /// `None` はキーがヘッダーに含まれていなかったことを示し、

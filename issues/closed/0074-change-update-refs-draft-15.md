@@ -2,6 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-11
+- Completed: 2026-07-21
 - Polished: 2026-06-12
 - Model: deepseek-v4-pro
 - Branch: feature/change-update-refs-draft-15
@@ -155,10 +156,18 @@ grep -rln "draft-ietf-webtrans-http2-14" \
 - `cargo clippy --workspace --all-targets -- -D warnings` が通過する
 - `cargo check --manifest-path fuzz/Cargo.toml` が通過する
 
+## 解決方法
+
+IETF Datatracker で `draft-ietf-webtrans-http2` の最新版が rev 15 であることを確認した。`refs/draft-ietf-webtrans-http2-15.txt` は既に配置済みだったため、旧 `refs/draft-ietf-webtrans-http2-14.txt` を削除して draft-15 を正本にした。
+
+ソース・テスト・examples・README・`issues/0073` 内の `draft-ietf-webtrans-http2-14` を `draft-ietf-webtrans-http2-15` に機械置換した。仕様変更に伴う実コード修正は本 issue のスコープ外とし、0081–0085 で既に対応済みであることを確認した。
+
+`CHANGES.md` の `## develop` / `### misc` に `[UPDATE]` エントリを追加した。`skills/shiguredo-http2/SKILL.md` は既に draft-15 表記のため変更していない。`0065` / `0066` / `0070` / `CHANGES.md` 過去履歴 / `issues/closed/` は歴史的事実として置換していない。
+
 ## 参照
 
 - `~/.claude/skills/update-refs/SKILL.md` — refs/ 配下を IETF Datatracker から最新版に更新するスキル
-- `refs/draft-ietf-webtrans-http2-14.txt` — 差し替え対象
+- `refs/draft-ietf-webtrans-http2-14.txt` — 差し替え対象（削除済み）
 - `skills/shiguredo-http2/SKILL.md:15,170,222,414,487,496` — draft-15 を参照しているスキル文書
 - `src/webtransport/mod.rs:1` — モジュール冒頭 doc コメント (draft-14 言及)
 - `src/webtransport/capsule.rs:1` — Capsule 仕様の draft-14 言及

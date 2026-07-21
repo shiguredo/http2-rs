@@ -1,6 +1,6 @@
 use shiguredo_http2::webtransport::stream::{RecvState, SendState, WtStream, stream_id};
 
-// draft-ietf-webtrans-http2-14 Section 5.2: クライアント起点は偶数、サーバー起点は奇数、下位から 2 ビット目が単方向/双方向を示す (RFC 9000 Section 2.1 と同セマンティクス)。
+// draft-ietf-webtrans-http2-15 Section 5.2: クライアント起点は偶数、サーバー起点は奇数、下位から 2 ビット目が単方向/双方向を示す (RFC 9000 Section 2.1 と同セマンティクス)。
 #[test]
 fn test_stream_id_client_bidi() {
     let id = stream_id::first(true, true);
@@ -120,6 +120,6 @@ fn test_update_send_max() {
         .expect("operation should succeed");
     assert_eq!(stream.send_available(), 131072);
 
-    // draft-ietf-webtrans-http2-14 Section 6.6: 減少はエラー
+    // draft-ietf-webtrans-http2-15 Section 6.6: 減少はエラー
     assert!(stream.update_send_max(32768).is_err());
 }

@@ -13,7 +13,7 @@
 ## 優先度根拠
 
 - `shiguredo_http2` クレートは未リリースの状態で develop ブランチで開発中。RFC 違反挙動 (RFC 9297 が許容している非最小エンコーディングを拒否する) を残したままリリースすると、相互運用性問題を抱えたまま外部に出ることになる
-- WebTransport over HTTP/2 (draft-ietf-webtrans-http2-14) は RFC 9297 Capsule Protocol を採用しており、他実装 (例: nghttp3, aioquic 系) が RFC 9297 に従って非最小エンコーディングで Capsule Type / Capsule Length を送信した場合に、本実装はそれを正常な入力として拒否してしまう
+- WebTransport over HTTP/2 (draft-ietf-webtrans-http2-15) は RFC 9297 Capsule Protocol を採用しており、他実装 (例: nghttp3, aioquic 系) が RFC 9297 に従って非最小エンコーディングで Capsule Type / Capsule Length を送信した場合に、本実装はそれを正常な入力として拒否してしまう
 - 「Premature Optimization is the Root of All Evil」(CLAUDE.md) の方針上、根拠の薄い「独自方針」「厳格化」は採用しない
 - 修正コストは低い (検査ブロック 11 行 + doc コメント数行の削除、既存テスト 1 件の挙動反転)
 
@@ -126,7 +126,7 @@ if encoded_len(value) != len {
 - `refs/rfc9297.txt:124-127` — RFC 9297 Section 1.1: 「Integer values do not need to be encoded on the minimum number of bytes necessary.」
 - `refs/rfc9000.txt:4886-4888` — RFC 9000 Section 16: varint エンコーディング全体の規定 (最小バイト数の要求なし)
 - `refs/rfc9000.txt:3987-3998` — RFC 9000 Section 12.4: QUIC Frame Type のみ最小エンコーディング MUST (Capsule Type には適用されない)
-- `refs/draft-ietf-webtrans-http2-14.txt` Section 5 — WebTransport over HTTP/2 が Capsule Protocol (RFC 9297) を使用することを規定
+- `refs/draft-ietf-webtrans-http2-15.txt` Section 5 — WebTransport over HTTP/2 が Capsule Protocol (RFC 9297) を使用することを規定
 - `src/webtransport/varint.rs:139-202` — 修正対象の doc コメントと検査ブロック
 - `src/webtransport/varint.rs:1-11` — モジュール冒頭 doc コメント (修正対象)
 - `src/webtransport/capsule.rs` — `varint::decode` の呼び出し元 (Capsule Type / Length / 各種 WT_* フィールド、変更不要)

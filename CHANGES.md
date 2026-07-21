@@ -161,6 +161,8 @@
 
 ### misc
 
+- [UPDATE] WebTransport over HTTP/2 の参照 draft を draft-14 から最新版 (draft-15) に更新し、ソースコメントの draft 番号表記を一斉に書き換える (issue 0074)
+  - @voluntas
 - [UPDATE] pbt/tests/ から非プロパティテスト 50 件を削除し、うち 33 件を tests/test_*.rs に単体テストとして再実装、加えて C 区分の網羅補強 7 本を tests/test_validation.rs に追加する (issue 0067)
   - @voluntas
 - [UPDATE] `nghttp2-sys` のビルド依存を cmake から shiguredo_cmake に切り替える
