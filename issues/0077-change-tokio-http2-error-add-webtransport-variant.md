@@ -2,9 +2,10 @@
 
 - Priority: Medium
 - Created: 2026-06-12
+- Completed: 2026-07-21
 - Polished: {Polished}
 - Model: Opus 4.7
-- Branch: feature/change-tokio-http2-error-add-webtransport-variant
+- Branch: feature/change-wt-draft15-remaining
 
 ## 目的
 
@@ -94,7 +95,10 @@ WebTransport(shiguredo_http2::webtransport::WtError),
 
 ## 解決方法
 
-issue 0068 マージ後、`crates/tokio-http2/src/error.rs` と `crates/tokio-http2/src/webtransport.rs` を上記設計方針に従って修正する。詳細な対応手順は `/polish-issue` で磨き上げる際に確定する。
+- `crates/tokio-http2/src/error.rs` に `Error::WebTransport(WtError)` を追加し、`Display` / `source()` / `From<WtError>` を実装した。`wt_err` を削除し driver 内を `Error::from` に置換した。
+- セッション終了系の `WtErrorKind` (`StreamStateError` / `FlowControlError` / `SessionStateError`) を受信したとき、CONNECT ストリームへ `RST_STREAM` (`WT_STREAM_STATE_ERROR` / `WT_FLOW_CONTROL_ERROR` / `WT_ERROR`) を送ってから `Error::WebTransport` を返すようにした。
+- `tokio_http2::WtError` を re-export した。`CHANGES.md` に `[CHANGE]` を追記した。
+- draft-15 残り対応と同じブランチ `feature/change-wt-draft15-remaining` で実装した。
 
 ## 参照
 
