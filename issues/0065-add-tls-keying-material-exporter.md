@@ -2,9 +2,10 @@
 
 - Priority: Medium
 - Created: 2026-06-08
+- Completed: 2026-07-21
 - Polished: 2026-06-09
 - Model: deepseek-v4-pro
-- Branch: feature/add-tls-keying-material-exporter
+- Branch: feature/change-wt-draft15-remaining
 
 ## 目的
 
@@ -122,132 +123,10 @@ Sans I/O 層 `shiguredo_http2::webtransport::WtSession` には CONNECT ストリ
 
 ## 解決方法
 
-### 1. Sans I/O 層: `serialize_exporter_context`
-
-`src/webtransport/exporter.rs` (新規):
-
-```rust
-use crate::webtransport::error::WtError;
-
-/// WebTransport Exporter Context (draft-ietf-webtrans-http2-14 §5.3 L696-L702) をシリアライズする
-pub fn serialize_exporter_context(
-    session_id: u64,
-    app_label: &[u8],
-    app_context: &[u8],
-) -> Result<Vec<u8>, WtError> {
-    if app_label.len() > 255 {
-        return Err(WtError::invalid_input("exporter label exceeds 255 bytes"));
-    }
-    if app_context.len() > 255 {
-        return Err(WtError::invalid_input(
-            "exporter context exceeds 255 bytes",
-        ));
-    }
-    let mut out = Vec::with_capacity(8 + 1 + app_label.len() + 1 + app_context.len());
-    out.extend_from_slice(&session_id.to_be_bytes());
-    out.push(app_label.len() as u8); // チェック済みのため as u8 は安全
-    out.extend_from_slice(app_label);
-    out.push(app_context.len() as u8);
-    out.extend_from_slice(app_context);
-    Ok(out)
-}
-```
-
-`src/webtransport/mod.rs` に以下を追加:
-
-```rust
-pub mod exporter;
-pub use exporter::serialize_exporter_context;
-```
-
-### 2. tokio-http2 層: DriverCmd と handle_cmd
-
-`crates/tokio-http2/src/webtransport.rs` の `DriverCmd` enum (L587-L622) に追加:
-
-```rust
-ExportKeyingMaterial {
-    app_label: Vec<u8>,
-    app_context: Vec<u8>,
-    length: usize,
-    ack: oneshot::Sender<Result<Vec<u8>>>,
-},
-```
-
-`DriverState::handle_cmd` (L675-L785) に追加 (既存の `DriverCmd::Drain` の隣):
-
-```rust
-DriverCmd::ExportKeyingMaterial { app_label, app_context, length, ack } => {
-    let res = (|| -> Result<Vec<u8>> {
-        if length == 0 {
-            return Err(Error::InvalidArgument(
-                "export length must be greater than zero".into(),
-            ));
-        }
-        let session_id = u64::from(self.connect_stream_id.as_u32());
-        let ctx = serialize_exporter_context(session_id, &app_label, &app_context)
-            .map_err(wt_err)?;
-        let output = vec![0u8; length];
-        let output = self
-            .conn
-            .with_tls(move |tls| {
-                tls.export_keying_material(output, b"EXPORTER-WebTransport", Some(&ctx))
-            })
-            .map_err(|e| Error::Tls(Box::new(e)))?;
-        Ok(output)
-    })();
-    let _ = ack.send(res);
-}
-```
-
-`Error::Tls` を選ぶ理由: `rustls::Error` (`HandshakeNotComplete` 等) は I/O ではないため、既存の `Error::Tls(Box<dyn std::error::Error + Send + Sync>)` (`error.rs` L14) が意味論的に正確。
-
-`rustls::ConnectionCommon::export_keying_material<T: AsMut<[u8]>>(&self, output: T, label: &[u8], context: Option<&[u8]>) -> Result<T, rustls::Error>` は `output` をムーブで受け取り、成功時に `output` を返す API。上記コードは `output: Vec<u8>` を `with_tls` のクロージャ (`move` キャプチャ) に渡し、`tls.export_keying_material(output, ...)` で `T = Vec<u8>` として呼び出す。`Result<Vec<u8>, rustls::Error>` が `with_tls` の戻り値として閉包外に返り、`?` で `Vec<u8>` を取り出して `Ok(output)` で返す。借用ではなく所有権移動で書くことで、`&mut Vec<u8>` のライフタイムを跨ぐ複雑さを避ける。
-
-export 自体は HKDF-Expand-Label を 1 回回すだけでマイクロ秒オーダーのため、driver タスク内で同期実行しても tokio の他タスクをブロックしない (`spawn_blocking` 不要)。
-
-### 3. 公開 API: WtServerSession / WtSessionHandle
-
-`WtServerSession` (L223-L320) に追加:
-
-```rust
-impl WtServerSession {
-    pub async fn export_keying_material(
-        &self,
-        app_label: &[u8],
-        app_context: &[u8],
-        length: usize,
-    ) -> Result<Vec<u8>> {
-        let (ack, rx) = oneshot::channel();
-        self.cmd_tx
-            .send(DriverCmd::ExportKeyingMaterial {
-                app_label: app_label.to_vec(),
-                app_context: app_context.to_vec(),
-                length,
-                ack,
-            })
-            .map_err(|_| Error::ConnectionClosed)?;
-        rx.await.map_err(|_| Error::ConnectionClosed)?
-    }
-}
-```
-
-`WtSessionHandle` (L351-L404) も同じシグネチャを `self.cmd_tx` 経由で実装する (内容は上記と完全に同じ。`&self` / `&mut self` の違いも無し)。
-
-### 4. テスト戦略
-
-- **Sans I/O 単体テスト** (`tests/test_webtransport/exporter.rs` 等、AGENTS.md 規約に従いテストログは日本語):
-  - 出力サイズ・先頭 8 バイト big-endian・長さフィールド一致
-  - 空 label と空 context の境界 (どちらも長さ 0 で書き込めるか)
-  - 255 バイトちょうどの label / context が成功
-  - 256 バイトの label / context で `WtError::invalid_input`
-- **tokio-http2 統合テスト** (`crates/tokio-http2/tests/test_webtransport.rs`、既存 `test_tls()` / `server_limits()` helper を再利用):
-  - TLS 1.3 接続上で `export_keying_material(b"label", b"ctx", 32)` が 32 バイト返すこと
-  - 同じセッション・同じ引数で 2 回呼んで同一バイト列が返ること (冪等性)
-  - 同じセッションで `app_label` を `b"a"` / `b"b"` と変えると異なる鍵素材が返ること
-  - 同じセッションで `app_context` を `b"x"` / `b"y"` と変えると異なる鍵素材が返ること
-  - `length == 0` で `Error::InvalidArgument` が返ること
-
-  注: `WtServerRequest::accept()` (`webtransport.rs` L108) は `ServerConnection` をムーブして driver タスクに渡す設計のため、1 接続 = 1 WebTransport セッションとなる。同一 TCP/TLS 接続上で複数 session_id を立てるテストは現アーキテクチャでは作れないため、`session_id` の context 組み込み検証は Sans I/O 単体テスト (異なる session_id でバイト列が異なる) で行う。
+- `src/webtransport/exporter.rs` を新規追加し、`serialize_exporter_context` を実装した (session_id 8 バイト BE + label/context 各 u8 長、255 超過は `invalid_input`)。`Vec::new` + `extend` で事前割当しない。
+- `WtServerSession` / `WtSessionHandle` に `export_keying_material` を追加し、driver の `DriverCmd::ExportKeyingMaterial` 経由で `serialize_exporter_context` → `rustls` の `export_keying_material` (`EXPORTER-WebTransport`) を実行する。`length == 0` は `InvalidArgument`。
+- Sans I/O 単体テスト (`tests/test_webtransport/exporter.rs`) と tokio-http2 統合テスト (冪等・label 差分・length=0) を追加した。
+- draft-15 残り対応と同じブランチ `feature/change-wt-draft15-remaining` で実装した。
 
 ## 参照仕様
 
