@@ -3,13 +3,13 @@
 - Priority: Medium
 - Created: 2026-06-08
 - Completed: 2026-07-21
-- Polished: 2026-06-09
+- Polished: 2026-07-21
 - Model: deepseek-v4-pro
 - Branch: feature/change-wt-draft15-remaining
 
 ## 目的
 
-draft-ietf-webtrans-http2-14 Section 5.3 (L683-L708) に定義されている TLS Keying Material Exporter を実装し、WebTransport セッションごとに `EXPORTER-WebTransport` ラベルとセッション固有の Exporter Context で独立した鍵素材を導出できるようにする。
+draft-ietf-webtrans-http2-15 Section 5.3 (L739-L763) に定義されている TLS Keying Material Exporter を実装し、WebTransport セッションごとに `EXPORTER-WebTransport` ラベルとセッション固有の Exporter Context で独立した鍵素材を導出できるようにする。
 
 ## 優先度根拠
 
@@ -17,7 +17,7 @@ draft-ietf-webtrans-http2-14 Section 5.3 (L683-L708) に定義されている TL
 
 ## 現状
 
-draft-ietf-webtrans-http2-14 Section 5.3 (L683-L708):
+draft-ietf-webtrans-http2-15 Section 5.3 (L739-L763):
 
 > WebTransport over HTTP/2 supports the use of TLS keying material exporters Section 7.5 of [TLS]. Since the underlying HTTP/2 connection could be shared by multiple WebTransport sessions, WebTransport defines a mechanism for deriving a TLS exporter that separates keying material for different sessions. If the application requests an exporter for a given WebTransport session with a specified label and context, the resulting exporter SHALL be a TLS exporter as defined in Section 7.5 of [TLS] with the label set to "EXPORTER-WebTransport" and the context set to the serialization of the "WebTransport Exporter Context" struct as defined below.
 
@@ -31,7 +31,7 @@ WebTransport Exporter Context {
 }
 ```
 
-L706-L708 (Context omission):
+L761-L763 (Context omission):
 
 > A TLS exporter API might permit the context field to be omitted. In this case, as with TLS 1.3, the WebTransport Application-Supplied Exporter Context becomes zero-length if omitted.
 
@@ -42,63 +42,68 @@ L706-L708 (Context omission):
 - `(8..)` / `(..)` = 可変長コンテンツ。直前の 8 bit Length フィールドで長さを表現するため最大 255 バイト
 - ネットワークバイト順 (big-endian) でシリアライズする
 
-Session ID は HTTP/2 Stream ID (RFC 9113 Section 5.1.1、unsigned 31-bit integer、`refs/rfc9113.txt` L902-L905) を `u64` 拡張して 64-bit big-endian で書き込む。
+Session ID は HTTP/2 Stream ID (RFC 9113 Section 5.1.1: "Streams are identified by an unsigned 31-bit integer."、`refs/rfc9113.txt` L902-L905) を `u64` 拡張して 64-bit big-endian で書き込む。
 
 現在の実装: `grep -rn "export_keying_material\|EXPORTER-WebTransport" src/ crates/` でヒットなし、完全な未実装。
 
 ## 本 issue で扱う
 
-- Sans I/O 層: `WebTransport Exporter Context` のシリアライズ関数 `serialize_exporter_context(session_id: u64, app_label: &[u8], app_context: &[u8]) -> Result<Vec<u8>, WtError>` を `src/webtransport/exporter.rs` (新規) に追加し、`src/webtransport/mod.rs` から `pub mod exporter;` で公開する
+- Sans I/O 層: `WebTransport Exporter Context` のシリアライズ関数 `serialize_exporter_context(session_id: u64, app_label: &[u8], app_context: &[u8]) -> WtResult<Vec<u8>>` を `src/webtransport/exporter.rs` (新規) に追加し、`src/webtransport/mod.rs` から `pub mod exporter;` で公開する
 - tokio-http2 層:
   - `DriverCmd::ExportKeyingMaterial` を追加
   - `DriverState::handle_cmd` に `ExportKeyingMaterial` 処理を追加 (Sans I/O 層でシリアライズ → `ServerConnection::with_tls` 経由で `rustls::ServerConnection::export_keying_material` を呼ぶ)
-  - `WtServerSession::export_keying_material(&self, app_label: &[u8], app_context: &[u8], length: usize) -> Result<Vec<u8>>` を追加
-  - `WtSessionHandle::export_keying_material` を同じシグネチャで追加 (driver 側で `connect_stream_id` から session_id を導出するため、handle 側で session_id を持つ必要はない)
+  - `WtServerSession::export_keying_material(&mut self, app_label: &[u8], app_context: &[u8], length: usize) -> Result<Vec<u8>>` を追加
+  - `WtSessionHandle::export_keying_material(&self, app_label: &[u8], app_context: &[u8], length: usize) -> Result<Vec<u8>>` を追加 (driver 側で `connect_stream_id` から session_id を導出するため、handle 側で session_id を持つ必要はない)
 
 ## 本 issue のスコープ外
 
 - **クライアント側 export API**: 現状 `crates/tokio-http2/src/client.rs` に WebTransport クライアント API が無いためサーバー側のみ対応する
-- **`Error` バリアントの新規追加**: rustls の export 失敗は既存の `Error::Tls(Box<dyn ...>)` (`error.rs` L14) を再利用する
-- **`refs/rfc8446.txt` 収録**: TLS 1.3 仕様本体への参照は本 issue では `Section 7.5 (Exporters)` の慣行を参照するだけで、実装は rustls の API に委ねる。`refs/` 収録は `update-refs` 対象として別途扱う
+- **`Error` バリアントの新規追加**: rustls の export 失敗は既存の `Error::Tls(Box<dyn ...>)` (`error.rs`) を再利用する
 - **TLS 1.2 + EMS での export**: 0063 で TLS 1.3 強制が確定するため、TLS 1.2 経路は accept 時に弾かれる。本 issue で扱う必要はない
 
 ## 設計判断
 
 ### 1. シリアライズ関数は Sans I/O 層 (`src/webtransport/exporter.rs` 新規) に配置する
 
-I/O 非依存の純粋なバイト列構築関数なので Sans I/O 層に置く。エラー型は既存 `WtError::invalid_input(reason)` (`error.rs` L102-L106) で長さ制約違反を表現する。戻り値は `Vec<u8>` (所有データ) で、`Bytes` 化はプロジェクト全体の no_std 化 (検討中) と合わせて将来再検討する。本 issue では `WtConfig` 等の既存 Sans I/O API が `Vec<u8>` を扱う流儀に合わせる。
+I/O 非依存の純粋なバイト列構築関数なので Sans I/O 層に置く。エラー型は既存 `WtError::invalid_input(reason)` で長さ制約違反を表現する。戻り値は `Vec<u8>` (所有データ) で、`Bytes` 化はプロジェクト全体の no_std 化 (検討中) と合わせて将来再検討する。本 issue では `WtConfig` 等の既存 Sans I/O API が `Vec<u8>` を扱う流儀に合わせる。
 
 ### 2. `app_label` / `app_context` の長さ制約
 
-Length フィールドが 8 bit (= u8) なので、コンテンツは最大 255 バイト。`app_label.len() > 255` または `app_context.len() > 255` のいずれかが成立したら `WtError::invalid_input` でエラーを返す。`app_context` の暗黙的切り詰めは行わない (鍵素材分岐の意味が壊れて対向と不一致になるため。issues/closed の `WT_CLOSE_SESSION reason` 切り詰めエラー化 (0061) と同じ方針)。
+Length フィールドが 8 bit (= u8) なので、コンテンツは最大 255 バイト。`app_label.len() > 255` または `app_context.len() > 255` のいずれかが成立したら `WtError::invalid_input` でエラーを返す。`app_context` の暗黙的切り詰めは行わない。切り詰めると鍵素材の分岐意味が壊れて対向と不一致になるため、エラーで呼び出し側に明示的に失敗を通知する。
 
 ### 3. `length == 0` の扱い
 
-`rustls::ServerConnection::export_keying_material` は出力バッファが空の場合エラーを返す (`rustls-0.23` `conn.rs` 該当行で "fails if `output.len()` is zero" と規定)。本 API では `length == 0` を Sans I/O 層に到達する前に `WtError::invalid_input` で弾く。これにより rustls エラーへの依存を最小化する。
+`rustls::ServerConnection::export_keying_material` は出力バッファが空の場合エラーを返す (`rustls-0.23` `conn.rs` 該当行で "fails if `output.len()` is zero" と規定)。本 API では `length == 0` を tokio-http2 層の `DriverState::handle_cmd` 内で `Error::InvalidArgument` として弾く。これにより rustls エラーへの依存を最小化する。
 
 ### 4. 巨大 `length` の扱い
 
-`rustls::ConnectionCommon::export_keying_material` は HKDF-Expand-Label で任意長 (実用上は数 KiB が上限) を生成できる。本 issue では DoS 対策の上限を設けず、rustls API の挙動に委ねる (アプリケーション層が `length` を選ぶ責任を持つ)。
+`rustls::ConnectionCommon::export_keying_material` は HKDF-Expand-Label で任意長を生成できる。本 issue では DoS 対策の上限を設けず、rustls API の挙動に委ねる (アプリケーション層が `length` を選ぶ責任を持つ)。ただし `vec![0u8; length]` は `length` が巨大な場合にアロケーション失敗でプロセスが abort する可能性があるため、呼び出し側は実用的な範囲 (数 KiB 以下) で `length` を指定すること。
 
 ### 5. Session ID は driver タスク内の `DriverState.connect_stream_id` から導出する
 
-Sans I/O 層 `shiguredo_http2::webtransport::WtSession` には CONNECT ストリーム ID を保持するフィールドが無い。tokio-http2 層の `DriverState` (`webtransport.rs` L630-L645) が `connect_stream_id: StreamId` を保持しているため、`u64::from(self.connect_stream_id.as_u32())` で 64-bit 化する (`WtServerSession::session_id()` (`webtransport.rs` L180) と同じ変換)。Sans I/O 層に HTTP/2 stream ID を持ち込まないことでアーキテクチャ責務を保つ。
+Sans I/O 層 `shiguredo_http2::webtransport::WtSession` には CONNECT ストリーム ID を保持するフィールドが無い。tokio-http2 層の `DriverState` が `connect_stream_id: StreamId` を保持しているため、`u64::from(self.connect_stream_id.as_u32())` で 64-bit 化する (`WtServerRequest::accept()` 内の `session_id` 導出と同じ変換)。Sans I/O 層に HTTP/2 stream ID を持ち込まないことでアーキテクチャ責務を保つ。
 
 ### 6. `WtSessionHandle` 側の重複実装
 
-`WtServerSession` (L223-L230) と `WtSessionHandle` (L351-L353) は両者とも `cmd_tx: mpsc::UnboundedSender<DriverCmd>` のみ参照するため、`export_keying_material` の実装は両側で同一になる。既存の `open_bidi` / `open_uni` / `send_datagram` も同じ重複パターンを踏襲しており、本 issue もこの流儀に従う。
+`WtServerSession` と `WtSessionHandle` は両者とも `cmd_tx: mpsc::UnboundedSender<DriverCmd>` のみ参照するため、`export_keying_material` の実装は両側で同一になる。既存の `open_bidi` / `open_uni` / `send_datagram` も同じ重複パターンを踏襲しており、本 issue もこの流儀に従う。
+
+レシーバ型について: `WtServerSession` の既存メソッド (`open_bidi` / `open_uni` / `send_datagram` / `drain`) は全て `&mut self` を取るため、`export_keying_material` も `&mut self` に揃える。`WtSessionHandle` は既存メソッドが全て `&self` のため `&self` を維持する。`UnboundedSender::send` は `&self` で呼べるが、API の一貫性を優先する。
 
 ### 7. `accept()` フローへの追加なし
 
-`export_keying_material` は実行時 API なので、`accept()` 内処理 (0063 設計判断 5 で確定した「TLS → Origin → 0064 → :status=200 → 0066」) には何も追加しない。本 issue は driver タスクと公開 API のみを変更する。
+`export_keying_material` は実行時 API なので、`accept()` 内処理 (TLS → Origin → WebTransport-Init → :status=200) には何も追加しない。本 issue は driver タスクと公開 API のみを変更する。
 
 ### 8. `ServerConnection::with_tls` は 0063 で導入済みのものを再利用する
 
-`with_tls<F, R>(&self, f: F) -> R where F: FnOnce(&rustls::ServerConnection) -> R` は 0063 解決方法 1 (`server.rs`) で `pub(crate)` として追加される。本 issue で新規追加はしない。
+`with_tls<F, R>(&self, f: F) -> R where F: FnOnce(&rustls::ServerConnection) -> R` は 0063 で `server.rs` に `pub(crate)` として追加済み。本 issue で新規追加はしない。
+
+## 後方互換
+
+全て加算的変更 (新規モジュール、新規メソッド、private enum への新規バリアント) であり破壊的変更はない。`DriverCmd` は private enum のため新規バリアント追加も外部に影響しない。
 
 ## 完了条件
 
-- `src/webtransport/exporter.rs` (新規) に `pub fn serialize_exporter_context(session_id: u64, app_label: &[u8], app_context: &[u8]) -> Result<Vec<u8>, WtError>` が追加されていること
+- `src/webtransport/exporter.rs` (新規) に `pub fn serialize_exporter_context(session_id: u64, app_label: &[u8], app_context: &[u8]) -> WtResult<Vec<u8>>` が追加されていること
 - `src/webtransport/mod.rs` に `pub mod exporter;` と `pub use exporter::serialize_exporter_context;` が追加され、`shiguredo_http2::webtransport::serialize_exporter_context` で参照可能なこと
 - `serialize_exporter_context` が以下を満たすこと:
   - `session_id` を 8 バイト big-endian で書き込む
@@ -107,19 +112,20 @@ Sans I/O 層 `shiguredo_http2::webtransport::WtSession` には CONNECT ストリ
   - 出力サイズが `8 + 1 + app_label.len() + 1 + app_context.len()` と一致する
 - `DriverCmd::ExportKeyingMaterial { app_label: Vec<u8>, app_context: Vec<u8>, length: usize, ack: oneshot::Sender<Result<Vec<u8>>> }` が追加されていること (`Result` は `crate::error::Result` = tokio-http2 層の `Error`、`WtResult` ではない)
 - `DriverState::handle_cmd` が `ExportKeyingMaterial` を処理し、`length == 0` を `Error::InvalidArgument` で弾いてから `serialize_exporter_context` を呼び、`ServerConnection::with_tls(|tls| tls.export_keying_material(...))` で TLS exporter を実行すること
-- `WtServerSession::export_keying_material(&self, app_label: &[u8], app_context: &[u8], length: usize) -> Result<Vec<u8>>` が追加されていること
+- `WtServerSession::export_keying_material(&mut self, app_label: &[u8], app_context: &[u8], length: usize) -> Result<Vec<u8>>` が追加されていること
 - `WtSessionHandle::export_keying_material(&self, app_label: &[u8], app_context: &[u8], length: usize) -> Result<Vec<u8>>` が追加されていること
+- `tests/test_webtransport/main.rs` に `mod exporter;` がアルファベット順で追加されていること
 - 単体テストで以下が検証されていること:
   - `serialize_exporter_context` の正常系 (空 label / 空 context / 255 バイト境界)
   - `serialize_exporter_context` の `app_label.len() == 256` で `WtError::invalid_input`
   - `serialize_exporter_context` の `app_context.len() == 256` で `WtError::invalid_input`
+  - Sans I/O 単体テストで `serialize_exporter_context` に異なる `session_id` を渡すと異なるバイト列になること (`session_id` が context に組み込まれていることの検証。アーキテクチャ制約により 1 接続 = 1 WebTransport セッションのため、統合テストでの複数 session_id 比較は不可)
   - 統合テストで `length == 0` を `Error::InvalidArgument` で弾くこと
   - 統合テストで TLS 1.3 接続上の `export_keying_material(b"label", b"ctx", 32)` が 32 バイト返すこと
   - 同一セッション・同一引数で **冪等** に同じ鍵素材が返ること
   - 同一セッションで `app_label` を変えると異なる鍵素材が返ること (例: `b"a"` と `b"b"`)
   - 同一セッションで `app_context` を変えると異なる鍵素材が返ること (例: `b"x"` と `b"y"`)
-  - Sans I/O 単体テストで `serialize_exporter_context` に異なる `session_id` を渡すと異なるバイト列になること (`session_id` が context に組み込まれていることの検証)
-- CHANGES.md `## develop` に `[ADD]` エントリを追加し、`WtServerSession::export_keying_material` / `WtSessionHandle::export_keying_material` / Sans I/O 層 `serialize_exporter_context` の追加を記載すること
+- CHANGES.md `## develop` に `[ADD]` エントリを追加し、draft-ietf-webtrans-http2-15 Section 5.3 準拠の `WtServerSession::export_keying_material` / `WtSessionHandle::export_keying_material` / Sans I/O 層 `serialize_exporter_context` の追加を記載すること
 
 ## 解決方法
 
@@ -130,11 +136,11 @@ Sans I/O 層 `shiguredo_http2::webtransport::WtSession` には CONNECT ストリ
 
 ## 参照仕様
 
-- draft-ietf-webtrans-http2-14 Section 5.3 (Use of Keying Material Exporters), L683-L708
-- RFC 9113 Section 5.1.1 (Stream Identifiers), L902-L905 — 31-bit Stream ID の根拠
-- RFC 8446 Section 7.5 (Exporters) — TLS 1.3 の TLS-Exporter 関数定義 (`refs/rfc8446.txt` 未収録、本 issue では rustls の API に委ねる)
+- draft-ietf-webtrans-http2-15 Section 5.3 (Use of Keying Material Exporters), L739-L763
+- RFC 9113 Section 5.1.1 (Stream Identifiers), L902-L905 — "Streams are identified by an unsigned 31-bit integer." の根拠
+- RFC 8446 Section 7.5 (Exporters) — TLS 1.3 の TLS-Exporter 関数定義 (実装は rustls の API に委ねる)
 
 ## 依存関係
 
-- 前提: 0063 (TLS バージョン要件チェック) — `ServerConnection::with_tls` は 0063 で導入される
-- 実装順序: 0063 → 0065
+- 前提: 0063 (TLS バージョン要件チェック、closed) — `ServerConnection::with_tls` は導入済み
+- 実装順序: 0063 (完了) → 0065
