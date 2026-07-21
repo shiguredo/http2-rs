@@ -8,6 +8,14 @@
 
 ## develop
 
+- [CHANGE] `WtServerRequest::accept()` に `selected_protocol` 引数を追加し、`:scheme` が `https` でない場合は `RST_STREAM(PROTOCOL_ERROR)` で拒否するように変更する (draft-ietf-webtrans-http2-15 Section 3.2 / Section 3.3)
+  - @voluntas
+- [CHANGE] `tokio_http2::Error` に `WebTransport(WtError)` バリアントを追加し、`wt_err` 経由の `InvalidArgument` 変換を廃止する
+  - @voluntas
+- [ADD] `WtServerSession::export_keying_material` / `WtSessionHandle::export_keying_material` と Sans I/O の `serialize_exporter_context` / `WtAvailableProtocols` / `serialize_wt_protocol` を追加する (draft-ietf-webtrans-http2-15 Section 5.3 / Section 3.3)
+  - @voluntas
+- [ADD] `WtConfig::overlay_settings` を追加し、`accept()` で自広告 SETTINGS を自動適用する (draft-ietf-webtrans-http2-15 Section 4.3.1)
+  - @voluntas
 - [CHANGE] `WtSession::close()` の reason が 1024 バイト超過時にエラーを返す代わりに UTF-8 境界で切り詰めて送るように変更する。`WtServerRequest::accept()` の Origin 検証をヘッダー存在時のみに行い、欠落時は検証スキップに変更する。WT_MAX_STREAMS / WT_STREAMS_BLOCKED の Maximum Streams に 2^60 上限を追加する (draft-ietf-webtrans-http2-15 Section 3.2 / Section 6.7 / Section 6.10 / Section 6.12)
   - @voluntas
 - [CHANGE] `ErrorCode` の WebTransport エラーコードバリアントを `WtError` / `WtStreamStateError` / `WtFlowControlError` にリネームし、Display を `WT_ERROR` / `WT_STREAM_STATE_ERROR` / `WT_FLOW_CONTROL_ERROR` に変更する (draft-ietf-webtrans-http2-15 Section 3.4 / Section 11.3)

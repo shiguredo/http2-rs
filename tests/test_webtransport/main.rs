@@ -1,7 +1,9 @@
 mod capsule;
+mod exporter;
 mod flow_control;
 mod init;
 mod integration;
+mod protocols;
 mod root;
 mod stream;
 mod varint;

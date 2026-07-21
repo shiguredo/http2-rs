@@ -17,7 +17,8 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use shiguredo_http2::webtransport::{
-    WtConfig, WtEvent, WtInit, WtSession, WtSessionState, WtStreamId,
+    WtAvailableProtocols, WtConfig, WtErrorKind, WtEvent, WtInit, WtSession, WtSessionState,
+    WtStreamId, serialize_exporter_context, serialize_wt_protocol,
     stream::stream_id as wt_stream_id,
 };
 use shiguredo_http2::{ErrorCode, Event, HeaderField, StreamId};
@@ -104,6 +105,18 @@ impl WtServerRequest {
         self.header(b"webtransport-init")
     }
 
+    /// `WT-Available-Protocols` ヘッダー値を取得する
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 3.3 / draft-ietf-webtrans-http3
+    /// Application Protocol Negotiation。HTTP/2 では field name は小文字なので
+    /// `wt-available-protocols` で照合する。
+    ///
+    /// 既知の制限: 同名ヘッダーが複数あった場合は最初の 1 個のみを返す。
+    #[must_use]
+    pub fn wt_available_protocols(&self) -> Option<&[u8]> {
+        self.header(b"wt-available-protocols")
+    }
+
     fn header(&self, name: &[u8]) -> Option<&[u8]> {
         self.headers
             .iter()
@@ -116,14 +129,21 @@ impl WtServerRequest {
     /// `:status=200` レスポンスを送信し、`WtSession` を生成して
     /// 双方向エコーやストリーム受信が可能な状態にする。
     ///
-    /// `allowed_origin` に `Some` を指定すると、リクエストの Origin ヘッダーを
-    /// 検証する (draft-ietf-webtrans-http2-15 Section 3.2 MUST)。
-    /// Origin が一致しないか存在しない場合は 403 を返す。
-    /// `None` を指定すると検証をスキップする (非 Web context 向け)。
+    /// `allowed_origin` に `Some` を指定すると、リクエストに Origin ヘッダーが
+    /// ある場合に検証する (draft-ietf-webtrans-http2-15 Section 3.2 MUST)。
+    /// Origin が一致しない場合は 403 を返す。Origin が欠落している場合は
+    /// 検証をスキップする。`None` を指定すると検証をスキップする
+    /// (非 Web context 向け)。
+    ///
+    /// `selected_protocol` に `Some` を指定すると、リクエストの
+    /// `WT-Available-Protocols` に含まれる値であることを検証し、
+    /// レスポンスに `wt-protocol` (RFC 8941 sf-string) を付与する
+    /// (draft-ietf-webtrans-http2-15 Section 3.3)。
     pub async fn accept(
         mut self,
         mut config: WtConfig,
         allowed_origin: Option<&[u8]>,
+        selected_protocol: Option<&[u8]>,
     ) -> Result<WtServerSession> {
         // draft-ietf-webtrans-http2-15 Section 7 (L1425-L1438):
         // WebTransport over HTTP/2 は TLS 1.3 か、TLS 1.2 + extended master secret を要求する。
@@ -145,11 +165,24 @@ impl WtServerRequest {
         }
 
         // draft-ietf-webtrans-http2-15 Section 3.2:
-        // Origin ヘッダーがある場合に MUST verify。失敗は SHOULD 403。
-        // 欠落時の必須検証は書かれていない (draft-14 の無条件 MUST verify から変更)。
-        // self の部分ムーブ前に &self 借用が必要な値 (origin / webtransport-init) を取得する。
+        // `:scheme` は `https` でなければならない (MUST)。case-insensitive。
+        // 違反は stream error of type PROTOCOL_ERROR。
+        let scheme_ok = self
+            .scheme()
+            .is_some_and(|s| s.eq_ignore_ascii_case(b"https"));
+        if !scheme_ok {
+            self.conn
+                .reset_stream(self.stream_id, ErrorCode::ProtocolError)
+                .await?;
+            return Err(Error::InvalidArgument(
+                "WebTransport requires :scheme=https".into(),
+            ));
+        }
+
+        // self の部分ムーブ前に &self 借用が必要な値を取得する。
         let origin = self.origin().map(|o| o.to_vec());
         let init_bytes = self.webtransport_init().map(|v| v.to_vec());
+        let available_bytes = self.wt_available_protocols().map(|v| v.to_vec());
 
         let Self {
             mut conn,
@@ -157,8 +190,10 @@ impl WtServerRequest {
             ..
         } = self;
 
+        // draft-ietf-webtrans-http2-15 Section 3.2:
+        // Origin ヘッダーがある場合に MUST verify。失敗は SHOULD 403。
+        // 欠落時の必須検証は書かれていない (draft-14 の無条件 MUST verify から変更)。
         if let Some(allowed) = allowed_origin {
-            // draft-ietf-webtrans-http2-15 Section 3.2:
             // Origin ヘッダーがある場合のみ照合。欠落時は検証スキップ (accept 継続可)。
             if let Some(actual) = origin {
                 // RFC 6454 Section 7: Origin = scheme "://" host [ ":" port ]
@@ -175,6 +210,10 @@ impl WtServerRequest {
             }
         }
 
+        // draft-ietf-webtrans-http2-15 Section 4.3.1:
+        // セッション確立時は ACK 済みの自広告 SETTINGS 初期値を適用する。
+        config.overlay_settings(conn.local_settings());
+
         // draft-ietf-webtrans-http2-15 Section 4.3 (L480-L483) / Section 4.3.2 (L525-L540):
         // WebTransport-Init が存在する場合は RFC 8941 Dictionary としてパースし、
         // SETTINGS 値と max マージする。パース失敗・型不一致・値範囲外は MUST 4xx 拒否。
@@ -184,24 +223,56 @@ impl WtServerRequest {
                 Err(e) => {
                     let response = vec![HeaderField::from_static(b":status", b"400")];
                     conn.send_response(stream_id, response, true).await?;
-                    return Err(Error::InvalidArgument(format!(
-                        "WebTransport-Init parse error: {e}"
-                    )));
+                    return Err(Error::from(e));
                 }
+            }
+        }
+
+        // draft-ietf-webtrans-http2-15 Section 3.3 / draft-ietf-webtrans-http3:
+        // WT-Available-Protocols は RFC 8941 List of String。
+        // パース失敗は仕様上 ignore (= ヘッダー不在扱い)。
+        let available = available_bytes
+            .as_deref()
+            .and_then(|bytes| WtAvailableProtocols::parse(bytes).ok());
+
+        if let Some(protocol_bytes) = selected_protocol {
+            // ASCII printable 検証 (sf-string の値域)
+            for &b in protocol_bytes {
+                if !(0x20..=0x7E).contains(&b) {
+                    return Err(Error::InvalidArgument(
+                        "selected_protocol contains non-printable byte".into(),
+                    ));
+                }
+            }
+            // クライアントリスト含有検証 (仕様 MUST)。失敗時はレスポンスを送らない。
+            let listed = available
+                .as_ref()
+                .map(|av| av.protocols.iter().any(|p| p.as_bytes() == protocol_bytes))
+                .unwrap_or(false);
+            if !listed {
+                return Err(Error::InvalidArgument(
+                    "selected_protocol is not listed in WT-Available-Protocols".into(),
+                ));
             }
         }
 
         // draft-ietf-webtrans-http2-15 Section 3.2:
         // WebTransport セッション確立時はサーバーが 2xx ステータスを返し、
         // END_STREAM は立てない (Capsule Protocol で通信を継続する)。
-        let response = vec![HeaderField::from_static(b":status", b"200")];
+        let mut response = vec![HeaderField::from_static(b":status", b"200")];
+        if let Some(protocol_bytes) = selected_protocol {
+            let serialized = serialize_wt_protocol(protocol_bytes).map_err(Error::from)?;
+            response.push(
+                HeaderField::new(b"wt-protocol", &serialized).map_err(|e| {
+                    Error::InvalidArgument(format!("build wt-protocol header: {e}"))
+                })?,
+            );
+        }
         conn.send_response(stream_id, response, false).await?;
 
         // WtSession を作成して Active 状態にする
         let mut wt_session = WtSession::server(config);
-        wt_session
-            .initiate()
-            .map_err(|e| Error::InvalidArgument(format!("failed to initiate WT session: {e}")))?;
+        wt_session.initiate()?;
 
         // Actor channels
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -209,6 +280,7 @@ impl WtServerRequest {
         let (uni_tx, uni_rx) = mpsc::unbounded_channel();
         let (datagram_tx, datagram_rx) = mpsc::unbounded_channel();
 
+        let selected_protocol_owned = selected_protocol.map(|p| p.to_vec());
         let driver_cmd_tx = cmd_tx.clone();
         let driver = tokio::spawn(async move {
             let mut state = DriverState {
@@ -230,6 +302,7 @@ impl WtServerRequest {
 
         Ok(WtServerSession {
             session_id: u64::from(stream_id.as_u32()),
+            selected_protocol: selected_protocol_owned,
             cmd_tx,
             bidi_rx,
             uni_rx,
@@ -274,6 +347,7 @@ impl WtServerRequest {
 /// driver が自然に終了する。
 pub struct WtServerSession {
     session_id: u64,
+    selected_protocol: Option<Vec<u8>>,
     cmd_tx: mpsc::UnboundedSender<DriverCmd>,
     bidi_rx: mpsc::UnboundedReceiver<WtBidiStream>,
     uni_rx: mpsc::UnboundedReceiver<WtUniRecvStream>,
@@ -288,12 +362,21 @@ impl WtServerSession {
         self.session_id
     }
 
+    /// 選択したサブプロトコルを取得する
+    ///
+    /// `accept(..., selected_protocol: Some(_))` で受理した場合にその値を返す。
+    #[must_use]
+    pub fn selected_protocol(&self) -> Option<&[u8]> {
+        self.selected_protocol.as_deref()
+    }
+
     /// セッションを分解して bidi_rx / uni_rx / datagram_rx / handle を取り出す
     ///
     /// `tokio::select!` で並列に bidi / uni / datagram を扱いたい場合に使用する。
     pub fn into_parts(mut self) -> WtSessionParts {
         WtSessionParts {
             session_id: self.session_id,
+            selected_protocol: self.selected_protocol.take(),
             bidi_rx: std::mem::replace(&mut self.bidi_rx, mpsc::unbounded_channel().1),
             uni_rx: std::mem::replace(&mut self.uni_rx, mpsc::unbounded_channel().1),
             datagram_rx: std::mem::replace(&mut self.datagram_rx, mpsc::unbounded_channel().1),
@@ -346,6 +429,29 @@ impl WtServerSession {
         rx.await.map_err(|_| Error::ConnectionClosed)?
     }
 
+    /// TLS Keying Material Exporter で鍵素材を導出する
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 5.3:
+    /// ラベルは `EXPORTER-WebTransport`、コンテキストは
+    /// `serialize_exporter_context(session_id, app_label, app_context)` の結果。
+    pub async fn export_keying_material(
+        &self,
+        app_label: &[u8],
+        app_context: &[u8],
+        length: usize,
+    ) -> Result<Vec<u8>> {
+        let (ack, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(DriverCmd::ExportKeyingMaterial {
+                app_label: app_label.to_vec(),
+                app_context: app_context.to_vec(),
+                length,
+                ack,
+            })
+            .map_err(|_| Error::ConnectionClosed)?;
+        rx.await.map_err(|_| Error::ConnectionClosed)?
+    }
+
     /// セッションを `WT_CLOSE_SESSION` で終了する
     pub async fn close(mut self, error_code: u32, reason: &str) -> Result<()> {
         let (ack, rx) = oneshot::channel();
@@ -383,6 +489,8 @@ impl Drop for WtServerSession {
 pub struct WtSessionParts {
     /// セッション ID
     pub session_id: u64,
+    /// 選択したサブプロトコル (`accept` で指定した場合)
+    pub selected_protocol: Option<Vec<u8>>,
     /// 対向からの双方向ストリーム到着チャネル
     pub bidi_rx: mpsc::UnboundedReceiver<WtBidiStream>,
     /// 対向からの単方向ストリーム到着チャネル
@@ -428,6 +536,27 @@ impl WtSessionHandle {
         let (ack, rx) = oneshot::channel();
         self.cmd_tx
             .send(DriverCmd::SendDatagram { data, ack })
+            .map_err(|_| Error::ConnectionClosed)?;
+        rx.await.map_err(|_| Error::ConnectionClosed)?
+    }
+
+    /// TLS Keying Material Exporter で鍵素材を導出する
+    ///
+    /// 詳細は [`WtServerSession::export_keying_material`] を参照。
+    pub async fn export_keying_material(
+        &self,
+        app_label: &[u8],
+        app_context: &[u8],
+        length: usize,
+    ) -> Result<Vec<u8>> {
+        let (ack, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(DriverCmd::ExportKeyingMaterial {
+                app_label: app_label.to_vec(),
+                app_context: app_context.to_vec(),
+                length,
+                ack,
+            })
             .map_err(|_| Error::ConnectionClosed)?;
         rx.await.map_err(|_| Error::ConnectionClosed)?
     }
@@ -671,6 +800,12 @@ enum DriverCmd {
     Drain {
         ack: oneshot::Sender<Result<()>>,
     },
+    ExportKeyingMaterial {
+        app_label: Vec<u8>,
+        app_context: Vec<u8>,
+        length: usize,
+        ack: oneshot::Sender<Result<Vec<u8>>>,
+    },
 }
 
 /// Stream チャネルに流すメッセージ
@@ -735,7 +870,7 @@ impl DriverState {
                 let res = self
                     .wt_session
                     .send_stream_data(stream_id, &data, fin)
-                    .map_err(wt_err);
+                    .map_err(Error::from);
                 if res.is_ok() {
                     self.flush_wt_output().await?;
                 }
@@ -754,7 +889,7 @@ impl DriverState {
                             recv_finished: false,
                         })
                     }
-                    Err(e) => Err(wt_err(e)),
+                    Err(e) => Err(Error::from(e)),
                 };
                 let _ = ack.send(res);
             }
@@ -767,12 +902,12 @@ impl DriverState {
                             cmd_tx: self.cmd_tx.clone(),
                         })
                     }
-                    Err(e) => Err(wt_err(e)),
+                    Err(e) => Err(Error::from(e)),
                 };
                 let _ = ack.send(res);
             }
             DriverCmd::SendDatagram { data, ack } => {
-                let res = self.wt_session.send_datagram(&data).map_err(wt_err);
+                let res = self.wt_session.send_datagram(&data).map_err(Error::from);
                 if res.is_ok() {
                     self.flush_wt_output().await?;
                 }
@@ -786,7 +921,7 @@ impl DriverState {
                 let res = self
                     .wt_session
                     .reset_stream(stream_id, error_code)
-                    .map_err(wt_err);
+                    .map_err(Error::from);
                 if res.is_ok() {
                     self.flush_wt_output().await?;
                 }
@@ -800,7 +935,7 @@ impl DriverState {
                 let res = self
                     .wt_session
                     .stop_sending(stream_id, error_code)
-                    .map_err(wt_err);
+                    .map_err(Error::from);
                 if res.is_ok() {
                     self.flush_wt_output().await?;
                 }
@@ -811,7 +946,10 @@ impl DriverState {
                 reason,
                 ack,
             } => {
-                let res = self.wt_session.close(error_code, &reason).map_err(wt_err);
+                let res = self
+                    .wt_session
+                    .close(error_code, &reason)
+                    .map_err(Error::from);
                 if res.is_ok() {
                     self.flush_wt_output().await?;
                     // draft-ietf-webtrans-http2-15 Section 6.12 (L1360-L1361):
@@ -826,10 +964,36 @@ impl DriverState {
                 return Ok(false);
             }
             DriverCmd::Drain { ack } => {
-                let res = self.wt_session.drain().map_err(wt_err);
+                let res = self.wt_session.drain().map_err(Error::from);
                 if res.is_ok() {
                     self.flush_wt_output().await?;
                 }
+                let _ = ack.send(res);
+            }
+            DriverCmd::ExportKeyingMaterial {
+                app_label,
+                app_context,
+                length,
+                ack,
+            } => {
+                let res = (|| -> Result<Vec<u8>> {
+                    if length == 0 {
+                        return Err(Error::InvalidArgument(
+                            "export length must be greater than zero".into(),
+                        ));
+                    }
+                    let session_id = u64::from(self.connect_stream_id.as_u32());
+                    let ctx = serialize_exporter_context(session_id, &app_label, &app_context)
+                        .map_err(Error::from)?;
+                    let output = vec![0u8; length];
+                    let output = self
+                        .conn
+                        .with_tls(move |tls| {
+                            tls.export_keying_material(output, b"EXPORTER-WebTransport", Some(&ctx))
+                        })
+                        .map_err(|e| Error::Tls(Box::new(e)))?;
+                    Ok(output)
+                })();
                 let _ = ack.send(res);
             }
         }
@@ -850,11 +1014,15 @@ impl DriverState {
                 let data_len_u32 =
                     u32::try_from(data.len()).expect("DATA payload fits in u32 per RFC 9113");
 
-                self.wt_session.feed(&data).map_err(wt_err)?;
-                self.wt_session.process().map_err(wt_err)?;
+                if let Err(e) = self.wt_session.feed(&data) {
+                    return Err(self.abort_session_with_wt_error(e).await);
+                }
+                if let Err(e) = self.wt_session.process() {
+                    return Err(self.abort_session_with_wt_error(e).await);
+                }
 
                 while let Some(wt_ev) = self.wt_session.poll_event() {
-                    self.dispatch_wt_event(wt_ev)?;
+                    self.dispatch_wt_event(wt_ev).await?;
                 }
 
                 // draft-ietf-webtrans-http2-15 Section 6.12 (L1364-L1365):
@@ -873,9 +1041,15 @@ impl DriverState {
                 }
 
                 // draft-ietf-webtrans-http2-15 Section 6: 受信時にフロー制御を更新する
-                self.maybe_grow_session_window()?;
-                self.maybe_grow_max_streams(true)?;
-                self.maybe_grow_max_streams(false)?;
+                if let Err(e) = self.maybe_grow_session_window() {
+                    return Err(self.abort_session_with_wt_error(e).await);
+                }
+                if let Err(e) = self.maybe_grow_max_streams(true) {
+                    return Err(self.abort_session_with_wt_error(e).await);
+                }
+                if let Err(e) = self.maybe_grow_max_streams(false) {
+                    return Err(self.abort_session_with_wt_error(e).await);
+                }
 
                 if data_len_u32 > 0 {
                     // RFC 9113 Section 6.9: 接続レベルの WINDOW_UPDATE は他ストリームの
@@ -911,17 +1085,33 @@ impl DriverState {
         Ok(())
     }
 
+    /// セッション終了系の `WtError` なら CONNECT に RST_STREAM を送ってから返す
+    async fn abort_session_with_wt_error(
+        &mut self,
+        e: shiguredo_http2::webtransport::WtError,
+    ) -> Error {
+        if let Some(code) = wt_http2_error_code(e.kind) {
+            let _ = self.conn.reset_stream(self.connect_stream_id, code).await;
+        }
+        Error::from(e)
+    }
+
     /// セッションレベルの受信ウィンドウを必要に応じて拡張する
-    fn maybe_grow_session_window(&mut self) -> Result<()> {
+    fn maybe_grow_session_window(
+        &mut self,
+    ) -> std::result::Result<(), shiguredo_http2::webtransport::WtError> {
         let initial = self.wt_session.config().initial_max_data;
         if self.wt_session.flow_control().should_send_max_data(initial) {
-            self.wt_session.grow_recv_window(initial).map_err(wt_err)?;
+            self.wt_session.grow_recv_window(initial)?;
         }
         Ok(())
     }
 
     /// ストリームレベルの受信ウィンドウを必要に応じて拡張する
-    fn maybe_grow_stream_window(&mut self, stream_id: WtStreamId) -> Result<()> {
+    fn maybe_grow_stream_window(
+        &mut self,
+        stream_id: WtStreamId,
+    ) -> std::result::Result<(), shiguredo_http2::webtransport::WtError> {
         let (bidirectional, recv_available) = match self.wt_session.stream(stream_id) {
             Some(s) => (s.is_bidirectional(), s.recv_available()),
             None => return Ok(()),
@@ -933,14 +1123,16 @@ impl DriverState {
         };
         if recv_available < initial / 2 {
             self.wt_session
-                .grow_stream_recv_window(stream_id, initial)
-                .map_err(wt_err)?;
+                .grow_stream_recv_window(stream_id, initial)?;
         }
         Ok(())
     }
 
     /// ストリーム数上限を必要に応じて拡張する
-    fn maybe_grow_max_streams(&mut self, bidirectional: bool) -> Result<()> {
+    fn maybe_grow_max_streams(
+        &mut self,
+        bidirectional: bool,
+    ) -> std::result::Result<(), shiguredo_http2::webtransport::WtError> {
         let initial = if bidirectional {
             self.wt_session.config().initial_max_streams_bidi
         } else {
@@ -955,9 +1147,7 @@ impl DriverState {
             self.peer_closed_uni_count
         };
         if closed * 2 >= initial {
-            self.wt_session
-                .grow_max_streams(closed, bidirectional)
-                .map_err(wt_err)?;
+            self.wt_session.grow_max_streams(closed, bidirectional)?;
             if bidirectional {
                 self.peer_closed_bidi_count = 0;
             } else {
@@ -967,7 +1157,7 @@ impl DriverState {
         Ok(())
     }
 
-    fn dispatch_wt_event(&mut self, ev: WtEvent) -> Result<()> {
+    async fn dispatch_wt_event(&mut self, ev: WtEvent) -> Result<()> {
         match ev {
             WtEvent::StreamOpened {
                 stream_id,
@@ -1000,7 +1190,9 @@ impl DriverState {
                     let _ = ch.send(StreamPacket::Data { data, fin });
                 }
                 // ストリームレベルのフロー制御を更新する
-                self.maybe_grow_stream_window(stream_id)?;
+                if let Err(e) = self.maybe_grow_stream_window(stream_id) {
+                    return Err(self.abort_session_with_wt_error(e).await);
+                }
                 if fin {
                     self.stream_channels.remove(&stream_id);
                     self.account_peer_stream_closed(stream_id);
@@ -1051,8 +1243,17 @@ impl DriverState {
     }
 }
 
-fn wt_err(e: shiguredo_http2::webtransport::WtError) -> Error {
-    Error::InvalidArgument(format!("webtransport: {e}"))
+/// セッション終了系 `WtErrorKind` を HTTP/2 エラーコードへ対応付ける
+///
+/// draft-ietf-webtrans-http2-15 Section 3.4 / Section 11.3:
+/// セッションエラーは CONNECT ストリームの RST_STREAM で伝える。
+fn wt_http2_error_code(kind: WtErrorKind) -> Option<ErrorCode> {
+    match kind {
+        WtErrorKind::StreamStateError => Some(ErrorCode::WtStreamStateError),
+        WtErrorKind::FlowControlError => Some(ErrorCode::WtFlowControlError),
+        WtErrorKind::SessionStateError => Some(ErrorCode::WtError),
+        _ => None,
+    }
 }
 
 /// TLS バージョンをエラー文字列に埋め込むための説明文字列に変換する

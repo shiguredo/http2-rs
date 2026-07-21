@@ -21,8 +21,10 @@
 
 pub mod capsule;
 pub mod error;
+pub mod exporter;
 pub mod flow_control;
 pub mod init;
+pub mod protocols;
 pub mod stream;
 pub mod varint;
 
@@ -33,8 +35,10 @@ use crate::webtransport::capsule::MAX_CLOSE_REASON_LEN;
 
 pub use capsule::{Capsule, CapsuleDecoder, CapsuleEncoder, capsule_type};
 pub use error::{WtError, WtErrorKind, WtResult};
+pub use exporter::serialize_exporter_context;
 pub use flow_control::WtFlowControl;
 pub use init::WtInit;
+pub use protocols::{WtAvailableProtocols, serialize_wt_protocol};
 pub use stream::{RecvState, SendState, WtStream, WtStreamId};
 pub use varint::{MAX_VALUE, decode as varint_decode, encode as varint_encode, encoded_len};
 
@@ -151,6 +155,33 @@ impl WtConfig {
         if let Some(br) = init.br {
             self.initial_max_stream_data_bidi_local =
                 self.initial_max_stream_data_bidi_local.max(br);
+        }
+    }
+
+    /// HTTP/2 SETTINGS 由来の初期フロー制御値を上書き適用する
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 4.3.1:
+    /// セッション確立時は ACK 済み SETTINGS の初期値を使う。
+    /// `Some` のパラメータのみ上書きし、`None` (未広告) は既存値を維持する。
+    /// Init ヘッダーとの max マージは [`Self::apply_init`] で別途行う。
+    pub fn overlay_settings(&mut self, settings: &crate::settings::Settings) {
+        if let Some(v) = settings.wt_initial_max_data() {
+            self.initial_max_data = u64::from(v);
+        }
+        if let Some(v) = settings.wt_initial_max_stream_data_uni() {
+            self.initial_max_stream_data_uni = u64::from(v);
+        }
+        if let Some(v) = settings.wt_initial_max_stream_data_bidi_local() {
+            self.initial_max_stream_data_bidi_local = u64::from(v);
+        }
+        if let Some(v) = settings.wt_initial_max_stream_data_bidi_remote() {
+            self.initial_max_stream_data_bidi_remote = u64::from(v);
+        }
+        if let Some(v) = settings.wt_initial_max_streams_bidi() {
+            self.initial_max_streams_bidi = u64::from(v);
+        }
+        if let Some(v) = settings.wt_initial_max_streams_uni() {
+            self.initial_max_streams_uni = u64::from(v);
         }
     }
 }
@@ -530,7 +561,22 @@ impl WtSession {
     /// ストリームレベルのフロー制御上限を増やす `WT_MAX_STREAM_DATA` を送信する
     ///
     /// draft-ietf-webtrans-http2-15 Section 6.6: 指定ストリームの受信可能バイト数を通知する。
+    ///
+    /// 同一ストリームに対して既に `WT_STOP_SENDING` を送信済みの場合は
+    /// `stream_state_error` を返す (Section 6.6 の MUST)。
     pub fn send_max_stream_data(&mut self, stream_id: WtStreamId, maximum: u64) -> WtResult<()> {
+        let stream = self
+            .streams
+            .get(&stream_id)
+            .ok_or_else(|| WtError::invalid_stream_id("stream not found"))?;
+        // draft-ietf-webtrans-http2-15 Section 6.6:
+        // WT_STOP_SENDING 送信後に WT_MAX_STREAM_DATA を送ってはならない (MUST NOT)
+        if stream.stop_sending_sent() {
+            return Err(WtError::stream_state_error(
+                "cannot send WT_MAX_STREAM_DATA: WT_STOP_SENDING already sent",
+            ));
+        }
+
         let capsule = Capsule::WtMaxStreamData { stream_id, maximum };
         self.capsule_encoder.encode(&capsule);
         self.output_buffer.extend(self.capsule_encoder.take());
@@ -583,6 +629,9 @@ impl WtSession {
     }
 
     /// ストリーム受信ウィンドウを拡張し、`WT_MAX_STREAM_DATA` を自動送信する
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 6.6:
+    /// `WT_STOP_SENDING` 送信済みのストリームでは `stream_state_error` を返す。
     pub fn grow_stream_recv_window(
         &mut self,
         stream_id: WtStreamId,
@@ -592,6 +641,14 @@ impl WtSession {
             .streams
             .get_mut(&stream_id)
             .ok_or_else(|| WtError::invalid_stream_id("stream not found"))?;
+        // draft-ietf-webtrans-http2-15 Section 6.6:
+        // WT_STOP_SENDING 送信後に WT_MAX_STREAM_DATA を送ってはならない (MUST NOT)
+        // recv_max を更新する前に拒否し、ローカル状態の不整合を避ける
+        if stream.stop_sending_sent() {
+            return Err(WtError::stream_state_error(
+                "cannot grow stream recv window: WT_STOP_SENDING already sent",
+            ));
+        }
         let new_max = stream.recv_max().saturating_add(increment);
         stream.update_recv_max(new_max);
         self.send_max_stream_data(stream_id, new_max)

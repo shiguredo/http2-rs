@@ -138,7 +138,7 @@ async fn test_wt_bidi_echo() {
 
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
         let mut session = req
-            .accept(WtConfig::default(), None)
+            .accept(WtConfig::default(), None, None)
             .await
             .expect("wt accept");
 
@@ -336,7 +336,7 @@ async fn test_wt_uni_echo() {
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
         let mut session = req
-            .accept(WtConfig::default(), None)
+            .accept(WtConfig::default(), None, None)
             .await
             .expect("wt accept");
         let mut uni_recv = session.accept_uni().await.expect("uni recv");
@@ -413,7 +413,7 @@ async fn test_wt_datagram_echo() {
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
         let mut session = req
-            .accept(WtConfig::default(), None)
+            .accept(WtConfig::default(), None, None)
             .await
             .expect("wt accept");
         let data = session.recv_datagram().await.expect("datagram");
@@ -478,7 +478,7 @@ async fn test_wt_close() {
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
         let session = req
-            .accept(WtConfig::default(), None)
+            .accept(WtConfig::default(), None, None)
             .await
             .expect("wt accept");
         session.close(99, "shutdown").await.expect("close");
@@ -536,7 +536,7 @@ async fn test_wt_drain() {
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
         let mut session = req
-            .accept(WtConfig::default(), None)
+            .accept(WtConfig::default(), None, None)
             .await
             .expect("wt accept");
         session.drain().await.expect("drain");
@@ -598,7 +598,7 @@ async fn test_wt_close_sends_end_stream() {
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
         let session = req
-            .accept(WtConfig::default(), None)
+            .accept(WtConfig::default(), None, None)
             .await
             .expect("wt accept");
         session.close(0, "done").await.expect("close");
@@ -668,7 +668,7 @@ async fn test_wt_close_received_sends_end_stream() {
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
         let _session = req
-            .accept(WtConfig::default(), None)
+            .accept(WtConfig::default(), None, None)
             .await
             .expect("wt accept");
         // ドライバーが WT_CLOSE_SESSION を処理し END_STREAM を返信するのを待つ
@@ -747,7 +747,7 @@ async fn test_wt_close_same_frame_end_stream() {
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
         let _session = req
-            .accept(WtConfig::default(), None)
+            .accept(WtConfig::default(), None, None)
             .await
             .expect("wt accept");
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -840,7 +840,7 @@ async fn test_wt_origin_allowed() {
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
         let _session = req
-            .accept(WtConfig::default(), Some(b"https://example.com"))
+            .accept(WtConfig::default(), Some(b"https://example.com"), None)
             .await
             .expect("wt accept");
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -904,7 +904,7 @@ async fn test_wt_origin_rejected() {
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
         match req
-            .accept(WtConfig::default(), Some(b"https://example.com"))
+            .accept(WtConfig::default(), Some(b"https://example.com"), None)
             .await
         {
             Ok(_) => panic!("expected origin rejection but succeeded"),
@@ -976,7 +976,7 @@ async fn test_wt_tls13_accept() {
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
         // TLS 1.3 がネゴシエートされているため accept() は成功する想定
         let _session = req
-            .accept(WtConfig::default(), None)
+            .accept(WtConfig::default(), None, None)
             .await
             .expect("TLS 1.3 では accept() が成功すべき");
         // driver タスクが少なくとも 1 回 select! を回す程度の余地を確保してから drop で終了
@@ -1012,7 +1012,7 @@ async fn test_wt_tls12_rejected() {
         // TLS 1.2 がネゴシエートされているため accept() は TLS 要件未達で失敗する。
         // ただし RST_STREAM 送信 (reset_stream の内部 ?) で I/O エラーが先に伝搬する
         // 可能性もあるため、その経路も許容する。
-        match req.accept(WtConfig::default(), None).await {
+        match req.accept(WtConfig::default(), None, None).await {
             Ok(_) => panic!("TLS 1.2 で accept() が成功してしまった"),
             Err(err) => {
                 let msg = format!("{err}");
@@ -1104,7 +1104,7 @@ async fn test_wt_origin_missing_accepted() {
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
         // Origin 欠落時は検証スキップ → accept 成功
-        req.accept(WtConfig::default(), Some(b"https://example.com"))
+        req.accept(WtConfig::default(), Some(b"https://example.com"), None)
             .await
             .expect("missing origin should be accepted (verification skipped)");
     });
@@ -1158,7 +1158,7 @@ async fn test_wt_init_accept_with_large_value() {
         );
         // SETTINGS 由来のデフォルトより大きい値を送っているのでパース成功する
         let _session = req
-            .accept(WtConfig::default(), None)
+            .accept(WtConfig::default(), None, None)
             .await
             .expect("WebTransport-Init パース成功なら accept() は成功すべき");
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1203,7 +1203,7 @@ async fn test_wt_init_accept_with_small_value() {
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
         let _session = req
-            .accept(WtConfig::default(), None)
+            .accept(WtConfig::default(), None, None)
             .await
             .expect("小さい値でも accept() は成功すべき (max マージで無視されるだけ)");
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1248,12 +1248,14 @@ async fn test_wt_init_rejected_on_invalid_value() {
         let mut conn = server.accept().await.expect("接続受け入れに失敗");
         let (stream_id, headers) = await_connect_headers(&mut conn).await;
         let req = WtServerRequest::from_connection(conn, stream_id, headers);
-        match req.accept(WtConfig::default(), None).await {
+        match req.accept(WtConfig::default(), None, None).await {
             Ok(_) => panic!("負値の WebTransport-Init で accept() が成功してしまった"),
-            Err(err) => assert!(
-                format!("{err}").contains("WebTransport-Init parse error"),
-                "WebTransport-Init パースエラーが期待だが、実際は {err}"
-            ),
+            Err(err) => {
+                assert!(
+                    matches!(err, tokio_http2::Error::WebTransport(_)),
+                    "WebTransport-Init パース失敗は Error::WebTransport が期待だが、実際は {err}"
+                );
+            }
         }
     });
 
@@ -1312,4 +1314,302 @@ async fn test_wt_init_rejected_on_invalid_value() {
 
     server_task.await.expect("サーバータスクの join に失敗");
     assert!(got_400, ":status=400 を受信しなかった");
+}
+
+/// `wt-available-protocols` つきの CONNECT 要求ヘッダー
+fn connect_request_with_protocols(protocols: &str) -> Vec<HeaderField> {
+    let mut h = connect_request();
+    h.push(HeaderField::new("wt-available-protocols", protocols).expect("valid"));
+    h
+}
+
+/// `:scheme` を差し替えた CONNECT 要求ヘッダー
+fn connect_request_with_scheme(scheme: &str) -> Vec<HeaderField> {
+    let mut h = connect_request();
+    for field in &mut h {
+        if field.name() == b":scheme" {
+            *field = HeaderField::new(":scheme", scheme).expect("valid scheme");
+            return h;
+        }
+    }
+    panic!(":scheme ヘッダーが見つからない");
+}
+
+/// draft-ietf-webtrans-http2-15 Section 3.3:
+/// `selected_protocol = Some(b"echo")` かつ `wt-available-protocols: "echo"` なら
+/// 受理され、レスポンスに `wt-protocol` (sf-string) が付く。
+#[tokio::test]
+async fn test_wt_selected_protocol_accepted() {
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("バインドに失敗");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続受け入れに失敗");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        assert_eq!(
+            req.wt_available_protocols(),
+            Some(br#""echo""# as &[u8]),
+            "wt-available-protocols が取得できること"
+        );
+        let session = req
+            .accept(WtConfig::default(), None, Some(b"echo"))
+            .await
+            .expect("リスト内の selected_protocol なら accept は成功すべき");
+        assert_eq!(
+            session.selected_protocol(),
+            Some(b"echo" as &[u8]),
+            "selected_protocol が保持されること"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗");
+    loop {
+        let ev = client
+            .next_event()
+            .await
+            .expect("クライアント next_event に失敗");
+        if matches!(ev, Event::SettingsReceived { ack: false }) {
+            break;
+        }
+    }
+    let connect_stream = client
+        .send_request(connect_request_with_protocols(r#""echo""#), false)
+        .await
+        .expect("CONNECT 送信に失敗");
+
+    let mut got_wt_protocol = false;
+    let recv = async {
+        loop {
+            let ev = client
+                .next_event()
+                .await
+                .expect("クライアントイベント取得に失敗");
+            if let Event::HeadersReceived {
+                stream_id, headers, ..
+            } = ev
+                && stream_id == connect_stream
+            {
+                let status = headers
+                    .iter()
+                    .find(|h| h.name() == b":status")
+                    .expect("status ヘッダーが必要")
+                    .value();
+                assert_eq!(status, b"200", "期待: 200");
+                let wt_protocol = headers
+                    .iter()
+                    .find(|h| h.name() == b"wt-protocol")
+                    .expect("wt-protocol ヘッダーが必要")
+                    .value();
+                assert_eq!(
+                    wt_protocol, br#""echo""#,
+                    "wt-protocol は sf-string \"echo\" であること"
+                );
+                got_wt_protocol = true;
+                break;
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), recv)
+        .await
+        .expect("タイムアウト");
+
+    server_task.await.expect("サーバータスクの join に失敗");
+    assert!(got_wt_protocol, "wt-protocol を受信しなかった");
+}
+
+/// draft-ietf-webtrans-http2-15 Section 3.3:
+/// `selected_protocol` が `WT-Available-Protocols` に含まれない場合は
+/// `Error::InvalidArgument` を返し、レスポンスは送らない。
+#[tokio::test]
+async fn test_wt_selected_protocol_not_listed() {
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("バインドに失敗");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続受け入れに失敗");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        match req.accept(WtConfig::default(), None, Some(b"raw")).await {
+            Ok(_) => panic!("リスト外の selected_protocol で accept が成功してしまった"),
+            Err(err) => {
+                assert!(
+                    matches!(err, tokio_http2::Error::InvalidArgument(_)),
+                    "リスト外は InvalidArgument が期待だが、実際は {err}"
+                );
+            }
+        }
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗");
+    loop {
+        let ev = client
+            .next_event()
+            .await
+            .expect("クライアント next_event に失敗");
+        if matches!(ev, Event::SettingsReceived { ack: false }) {
+            break;
+        }
+    }
+    let _connect_stream = client
+        .send_request(connect_request_with_protocols(r#""echo""#), false)
+        .await
+        .expect("CONNECT 送信に失敗");
+
+    server_task.await.expect("サーバータスクの join に失敗");
+}
+
+/// draft-ietf-webtrans-http2-15 Section 5.3:
+/// `export_keying_material` が指定長の鍵素材を返し、冪等であり、label 変更で異なる。
+#[tokio::test]
+async fn test_wt_export_keying_material() {
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("バインドに失敗");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続受け入れに失敗");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let session = req
+            .accept(WtConfig::default(), None, None)
+            .await
+            .expect("accept は成功すべき");
+
+        let a = session
+            .export_keying_material(b"label", b"ctx", 32)
+            .await
+            .expect("export は成功すべき");
+        assert_eq!(a.len(), 32, "length=32 なら 32 バイト返すこと");
+
+        let b = session
+            .export_keying_material(b"label", b"ctx", 32)
+            .await
+            .expect("2 回目の export も成功すべき");
+        assert_eq!(a, b, "同一引数なら冪等であること");
+
+        let c = session
+            .export_keying_material(b"other", b"ctx", 32)
+            .await
+            .expect("label 変更後の export も成功すべき");
+        assert_ne!(a, c, "label が異なれば鍵素材も異なること");
+
+        match session.export_keying_material(b"label", b"ctx", 0).await {
+            Ok(_) => panic!("length=0 で export が成功してしまった"),
+            Err(err) => {
+                assert!(
+                    matches!(err, tokio_http2::Error::InvalidArgument(_)),
+                    "length=0 は InvalidArgument が期待だが、実際は {err}"
+                );
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗");
+    let _connect_stream = perform_connect(&mut client).await;
+    server_task.await.expect("サーバータスクの join に失敗");
+}
+
+/// draft-ietf-webtrans-http2-15 Section 3.2:
+/// `:scheme` が `http` の CONNECT は `accept()` が失敗する。
+#[tokio::test]
+async fn test_wt_scheme_http_rejected() {
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("バインドに失敗");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続受け入れに失敗");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        assert_eq!(req.scheme(), Some(b"http" as &[u8]));
+        match req.accept(WtConfig::default(), None, None).await {
+            Ok(_) => panic!(":scheme=http で accept が成功してしまった"),
+            Err(err) => {
+                assert!(
+                    matches!(err, tokio_http2::Error::InvalidArgument(_)),
+                    ":scheme=http は InvalidArgument が期待だが、実際は {err}"
+                );
+            }
+        }
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗");
+    loop {
+        let ev = client
+            .next_event()
+            .await
+            .expect("クライアント next_event に失敗");
+        if matches!(ev, Event::SettingsReceived { ack: false }) {
+            break;
+        }
+    }
+    let connect_stream = client
+        .send_request(connect_request_with_scheme("http"), false)
+        .await
+        .expect("CONNECT 送信に失敗");
+
+    // クライアントは RST_STREAM(PROTOCOL_ERROR) を受信する
+    let mut got_reset = false;
+    let recv = async {
+        loop {
+            let ev = client
+                .next_event()
+                .await
+                .expect("クライアントイベント取得に失敗");
+            if let Event::StreamReset {
+                stream_id,
+                error_code,
+            } = ev
+                && stream_id == connect_stream
+            {
+                assert_eq!(error_code, ErrorCode::ProtocolError);
+                got_reset = true;
+                break;
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), recv)
+        .await
+        .expect("タイムアウト");
+
+    server_task.await.expect("サーバータスクの join に失敗");
+    assert!(got_reset, "RST_STREAM(PROTOCOL_ERROR) を受信しなかった");
 }

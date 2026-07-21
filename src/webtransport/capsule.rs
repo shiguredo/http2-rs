@@ -385,10 +385,12 @@ impl CapsuleDecoder {
                 let (error_code, len) = varint::decode(&payload[offset..])?;
                 offset += len;
                 // draft-ietf-webtrans-http2-15 Section 6.2:
-                // error_code は 0xffffffff 以下でなければならない
+                // error_code は 0xffffffff 以下でなければならない。
+                // 超過時は session error of type WT_ERROR として扱う (MUST)。
+                // Sans I/O では WT_ERROR 相当を SessionStateError で表現する。
                 if error_code > MAX_APPLICATION_ERROR_CODE {
-                    return Err(WtError::capsule_decode(
-                        "WT_RESET_STREAM error code exceeds 0xffffffff",
+                    return Err(WtError::session_state_error(
+                        "WT_RESET_STREAM error code exceeds 0xffffffff (session error WT_ERROR)",
                     ));
                 }
                 let (reliable_size, len) = varint::decode(&payload[offset..])?;
@@ -413,10 +415,12 @@ impl CapsuleDecoder {
                 let (error_code, len) = varint::decode(&payload[offset..])?;
                 offset += len;
                 // draft-ietf-webtrans-http2-15 Section 6.3:
-                // error_code は 0xffffffff 以下でなければならない
+                // error_code は 0xffffffff 以下でなければならない。
+                // 超過時は session error of type WT_ERROR として扱う (MUST)。
+                // Sans I/O では WT_ERROR 相当を SessionStateError で表現する。
                 if error_code > MAX_APPLICATION_ERROR_CODE {
-                    return Err(WtError::capsule_decode(
-                        "WT_STOP_SENDING error code exceeds 0xffffffff",
+                    return Err(WtError::session_state_error(
+                        "WT_STOP_SENDING error code exceeds 0xffffffff (session error WT_ERROR)",
                     ));
                 }
                 // RFC 9297 Section 3.3: 余剰バイトは不正

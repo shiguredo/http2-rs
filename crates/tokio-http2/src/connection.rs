@@ -3,7 +3,7 @@
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use shiguredo_http2::{
-    Connection as Http2Connection, ErrorCode, Event, HeaderField, Limits, Role, StreamId,
+    Connection as Http2Connection, ErrorCode, Event, HeaderField, Limits, Role, Settings, StreamId,
 };
 
 use crate::error::{Error, Result};
@@ -234,6 +234,18 @@ where
             // 受信
             self.recv().await?;
         }
+    }
+
+    /// ローカル SETTINGS への参照を取得する
+    #[must_use]
+    pub fn local_settings(&self) -> &Settings {
+        self.inner.local_settings()
+    }
+
+    /// リモート SETTINGS への参照を取得する
+    #[must_use]
+    pub fn remote_settings(&self) -> &Settings {
+        self.inner.remote_settings()
     }
 
     /// 内部のストリームへの参照を取得

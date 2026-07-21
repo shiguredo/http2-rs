@@ -45,6 +45,39 @@ fn grow_stream_recv_window_unknown_stream_errors() {
     );
 }
 
+/// `WT_STOP_SENDING` 送信後の `send_max_stream_data` / `grow_stream_recv_window` は
+/// `stream_state_error` になること (draft-ietf-webtrans-http2-15 Section 6.6)
+#[test]
+fn send_max_stream_data_after_stop_sending_errors() {
+    let mut session = WtSession::server(WtConfig::default());
+    session.initiate().expect("initiate should succeed");
+
+    let stream_id = session.open_bidi_stream().expect("open stream");
+    session
+        .stop_sending(stream_id, 0)
+        .expect("stop_sending should succeed");
+    // stop_sending の出力を捨てる
+    let _ = session.poll_output();
+
+    let err = session
+        .send_max_stream_data(stream_id, 1_000_000)
+        .expect_err("STOP_SENDING 後の MAX_STREAM_DATA は拒否されるはず");
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError,
+        "unexpected error kind: {err}"
+    );
+
+    let err = session
+        .grow_stream_recv_window(stream_id, 1024)
+        .expect_err("STOP_SENDING 後の grow も拒否されるはず");
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError,
+        "unexpected error kind: {err}"
+    );
+}
+
 /// `grow_max_streams(bidi=true)` が `WT_MAX_STREAMS (bidirectional)` を出力する
 #[test]
 fn grow_max_streams_bidi_emits_capsule() {

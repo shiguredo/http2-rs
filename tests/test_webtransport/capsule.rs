@@ -522,3 +522,74 @@ fn test_decode_wt_streams_blocked() {
         .expect("feed should succeed");
     assert_eq!(capsule, decoded);
 }
+
+/// Application Protocol Error Code が 0xffffffff を超える WT_RESET_STREAM は
+/// セッションエラー (WT_ERROR 相当 = SessionStateError) になること
+///
+/// draft-ietf-webtrans-http2-15 Section 6.2
+#[test]
+fn test_wt_reset_stream_error_code_exceeds_u32_is_session_error() {
+    use shiguredo_http2::webtransport::{WtErrorKind, capsule_type, varint_encode};
+
+    // Type + Length + Stream ID(0) + Error Code(0x1_0000_0000) + Reliable Size(0)
+    let mut payload = Vec::new();
+    let mut buf = [0u8; 8];
+    let n = varint_encode(0, &mut buf).expect("encode stream_id");
+    payload.extend_from_slice(&buf[..n]);
+    let n = varint_encode(0x1_0000_0000, &mut buf).expect("encode error_code");
+    payload.extend_from_slice(&buf[..n]);
+    let n = varint_encode(0, &mut buf).expect("encode reliable_size");
+    payload.extend_from_slice(&buf[..n]);
+
+    let mut wire = Vec::new();
+    let n = varint_encode(capsule_type::WT_RESET_STREAM, &mut buf).expect("encode type");
+    wire.extend_from_slice(&buf[..n]);
+    let n = varint_encode(payload.len() as u64, &mut buf).expect("encode length");
+    wire.extend_from_slice(&buf[..n]);
+    wire.extend_from_slice(&payload);
+
+    let mut decoder = CapsuleDecoder::new();
+    decoder.feed(&wire);
+    let err = decoder
+        .decode()
+        .expect_err("0xffffffff 超過の error_code はエラーになるはず");
+    assert_eq!(
+        err.kind,
+        WtErrorKind::SessionStateError,
+        "WT_ERROR 相当として SessionStateError であること、実際: {err}"
+    );
+}
+
+/// Application Protocol Error Code が 0xffffffff を超える WT_STOP_SENDING は
+/// セッションエラー (WT_ERROR 相当 = SessionStateError) になること
+///
+/// draft-ietf-webtrans-http2-15 Section 6.3
+#[test]
+fn test_wt_stop_sending_error_code_exceeds_u32_is_session_error() {
+    use shiguredo_http2::webtransport::{WtErrorKind, capsule_type, varint_encode};
+
+    let mut payload = Vec::new();
+    let mut buf = [0u8; 8];
+    let n = varint_encode(0, &mut buf).expect("encode stream_id");
+    payload.extend_from_slice(&buf[..n]);
+    let n = varint_encode(0x1_0000_0000, &mut buf).expect("encode error_code");
+    payload.extend_from_slice(&buf[..n]);
+
+    let mut wire = Vec::new();
+    let n = varint_encode(capsule_type::WT_STOP_SENDING, &mut buf).expect("encode type");
+    wire.extend_from_slice(&buf[..n]);
+    let n = varint_encode(payload.len() as u64, &mut buf).expect("encode length");
+    wire.extend_from_slice(&buf[..n]);
+    wire.extend_from_slice(&payload);
+
+    let mut decoder = CapsuleDecoder::new();
+    decoder.feed(&wire);
+    let err = decoder
+        .decode()
+        .expect_err("0xffffffff 超過の error_code はエラーになるはず");
+    assert_eq!(
+        err.kind,
+        WtErrorKind::SessionStateError,
+        "WT_ERROR 相当として SessionStateError であること、実際: {err}"
+    );
+}

@@ -156,8 +156,9 @@ loop {
             if is_webtransport {
                 let request = WtServerRequest::from_connection(conn, stream_id, headers);
                 // 第 2 引数は Origin 検証用 (draft-ietf-webtrans-http2-15 Section 3.2)。
-                // None で Origin 検証をスキップする。Web context では Some(b"https://...") を指定する
-                let mut session = request.accept(WtConfig::default(), None).await?;
+                // None で Origin 検証をスキップする。Web context では Some(b"https://...") を指定する。
+                // 第 3 引数は選択サブプロトコル (Section 3.3)。交渉しない場合は None。
+                let mut session = request.accept(WtConfig::default(), None, None).await?;
 
                 // 双方向ストリームを受け入れる
                 while let Some(mut bidi) = session.accept_bidi().await {

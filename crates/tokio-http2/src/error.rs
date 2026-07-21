@@ -3,6 +3,8 @@
 use std::fmt;
 use std::io;
 
+use shiguredo_http2::webtransport::WtError;
+
 /// エラー型
 #[derive(Debug)]
 pub enum Error {
@@ -12,6 +14,8 @@ pub enum Error {
     Protocol(shiguredo_http2::Error),
     /// TLS エラー
     Tls(Box<dyn std::error::Error + Send + Sync>),
+    /// WebTransport セッション / Capsule 処理エラー
+    WebTransport(WtError),
     /// 接続がクローズされた
     ConnectionClosed,
     /// 無効な引数
@@ -24,6 +28,7 @@ impl fmt::Display for Error {
             Error::Io(e) => write!(f, "I/O error: {}", e),
             Error::Protocol(e) => write!(f, "protocol error: {}", e),
             Error::Tls(e) => write!(f, "TLS error: {}", e),
+            Error::WebTransport(e) => write!(f, "webtransport error: {}", e),
             Error::ConnectionClosed => write!(f, "connection closed"),
             Error::InvalidArgument(e) => write!(f, "invalid argument: {}", e),
         }
@@ -36,6 +41,7 @@ impl std::error::Error for Error {
             Error::Io(e) => Some(e),
             Error::Protocol(e) => Some(e),
             Error::Tls(e) => Some(e.as_ref()),
+            Error::WebTransport(e) => Some(e),
             _ => None,
         }
     }
@@ -50,6 +56,12 @@ impl From<io::Error> for Error {
 impl From<shiguredo_http2::Error> for Error {
     fn from(e: shiguredo_http2::Error) -> Self {
         Error::Protocol(e)
+    }
+}
+
+impl From<WtError> for Error {
+    fn from(e: WtError) -> Self {
+        Error::WebTransport(e)
     }
 }
 

@@ -175,6 +175,18 @@ impl ServerConnection {
         self.conn.send_goaway(ErrorCode::NoError, vec![]).await
     }
 
+    /// ローカル SETTINGS への参照を取得する
+    #[must_use]
+    pub fn local_settings(&self) -> &shiguredo_http2::Settings {
+        self.conn.local_settings()
+    }
+
+    /// リモート SETTINGS への参照を取得する
+    #[must_use]
+    pub fn remote_settings(&self) -> &shiguredo_http2::Settings {
+        self.conn.remote_settings()
+    }
+
     /// 内部の `rustls::ServerConnection` を参照する閉包を実行する
     ///
     /// `Server::accept()` で TLS ハンドシェイクが完了している前提。
