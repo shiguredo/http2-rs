@@ -123,7 +123,7 @@ fn test_close_emits_wt_close_session_capsule() {
 }
 
 /// reason が 1024 バイトの境界値までは正常に close() できることを確認する。
-/// (draft-ietf-webtrans-http2-14 Section 6.12: メッセージ長は 1024 バイトを超えてはならない (MUST NOT))
+/// (draft-ietf-webtrans-http2-15 Section 6.12: メッセージ長は 1024 バイトを超えてはならない (MUST NOT))
 #[test]
 fn test_close_reason_max_length_ok() {
     let mut session = WtSession::client(WtConfig::default());
@@ -203,7 +203,7 @@ fn test_close_reason_truncation_utf8_boundary() {
     }
 }
 
-/// draft-ietf-webtrans-http2-14 Section 6.2 / 6.3: `reset_stream` / `stop_sending` の
+/// draft-ietf-webtrans-http2-15 Section 6.2 / 6.3: `reset_stream` / `stop_sending` の
 /// 重複送信はエラーになる。
 #[test]
 fn test_duplicate_operations_are_errors() {

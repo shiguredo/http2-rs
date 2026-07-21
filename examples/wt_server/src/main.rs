@@ -1,4 +1,4 @@
-//! WebTransport over HTTP/2 エコーサーバーサンプル (draft-ietf-webtrans-http2-14)
+//! WebTransport over HTTP/2 エコーサーバーサンプル (draft-ietf-webtrans-http2-15)
 //!
 //! tokio-http2 の `WtServerRequest` / `WtServerSession` を使ったお手本実装。
 //! bidi / uni ストリームと WT DATAGRAM capsule をそのままエコーする。

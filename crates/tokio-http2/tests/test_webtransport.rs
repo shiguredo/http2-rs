@@ -95,7 +95,7 @@ fn server_limits() -> Limits {
         .expect("valid server limits")
 }
 
-/// draft-ietf-webtrans-http2-14: クライアント → サーバー bidi ストリームへの送信をサーバーがエコーし、
+/// draft-ietf-webtrans-http2-15: クライアント → サーバー bidi ストリームへの送信をサーバーがエコーし、
 /// クライアントで同じデータを受信できることを確認する。
 #[tokio::test]
 async fn test_wt_bidi_echo() {
@@ -579,7 +579,7 @@ async fn test_wt_drain() {
 /// サーバーが close() を呼んだ後、クライアントが CONNECT ストリーム上で
 /// END_STREAM を受信することを確認する。
 ///
-/// draft-ietf-webtrans-http2-14 Section 6.12 (L1360-L1361) の MUST 要件:
+/// draft-ietf-webtrans-http2-15 Section 6.12 (L1360-L1361) の MUST 要件:
 /// WT_CLOSE_SESSION 送信後は END_STREAM で half-close しなければならない。
 #[tokio::test]
 async fn test_wt_close_sends_end_stream() {
@@ -649,7 +649,7 @@ async fn test_wt_close_sends_end_stream() {
 /// クライアントが WT_CLOSE_SESSION + END_STREAM を送信した後、
 /// サーバーが END_STREAM を返信することを確認する。
 ///
-/// draft-ietf-webtrans-http2-14 Section 6.12 (L1364-L1365):
+/// draft-ietf-webtrans-http2-15 Section 6.12 (L1364-L1365):
 /// WT_CLOSE_SESSION の受信者は END_STREAM で応答しなければならない (MUST)。
 #[tokio::test]
 async fn test_wt_close_received_sends_end_stream() {
@@ -955,7 +955,7 @@ async fn test_wt_origin_rejected() {
     server_task.await.expect("server join");
 }
 
-/// draft-ietf-webtrans-http2-14 Section 7 (L1425-L1438):
+/// draft-ietf-webtrans-http2-15 Section 7 (L1425-L1438):
 /// TLS 1.3 で WebTransport セッションを要求した場合は `accept()` が成功する。
 /// (既存テストでも TLS 1.3 経路は通っているが、リグレッション防止のため明示テストを置く)
 #[tokio::test]
@@ -990,7 +990,7 @@ async fn test_wt_tls13_accept() {
     server_task.await.expect("サーバータスクの join に失敗");
 }
 
-/// draft-ietf-webtrans-http2-14 Section 7 (L1425-L1438) + RFC 9113 Section 8.1.1 (L2463-L2465):
+/// draft-ietf-webtrans-http2-15 Section 7 (L1425-L1438) + RFC 9113 Section 8.1.1 (L2463-L2465):
 /// TLS 1.2 で WebTransport セッションを要求した場合は malformed として扱い、
 /// CONNECT ストリームに `RST_STREAM(PROTOCOL_ERROR)` を送出して拒否する。
 #[tokio::test]
@@ -1127,7 +1127,7 @@ async fn test_wt_origin_missing_accepted() {
     server_task.await.expect("server join");
 }
 
-/// draft-ietf-webtrans-http2-14 Section 4.3 (L480-L483):
+/// draft-ietf-webtrans-http2-15 Section 4.3 (L480-L483):
 /// WebTransport-Init で SETTINGS より大きい値を送ると `accept()` が成功し、
 /// セッションが確立できる (パースが成功する経路の確認)。
 #[tokio::test]
@@ -1229,7 +1229,7 @@ async fn test_wt_init_accept_with_small_value() {
     server_task.await.expect("サーバータスクの join に失敗");
 }
 
-/// draft-ietf-webtrans-http2-14 Section 4.3.2 (L525-L540):
+/// draft-ietf-webtrans-http2-15 Section 4.3.2 (L525-L540):
 /// WebTransport-Init のパース失敗 (負値) で `:status=400` レスポンスが返り、
 /// CONNECT ストリームが END_STREAM で閉じられる。
 #[tokio::test]

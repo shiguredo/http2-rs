@@ -178,7 +178,7 @@ impl ServerConnection {
     /// 内部の `rustls::ServerConnection` を参照する閉包を実行する
     ///
     /// `Server::accept()` で TLS ハンドシェイクが完了している前提。
-    /// WebTransport の TLS バージョン検査 (draft-ietf-webtrans-http2-14 Section 7) や
+    /// WebTransport の TLS バージョン検査 (draft-ietf-webtrans-http2-15 Section 7) や
     /// TLS Keying Material Exporter といった TLS 直接アクセスが必要な処理から呼ぶ。
     pub(crate) fn with_tls<F, R>(&self, f: F) -> R
     where

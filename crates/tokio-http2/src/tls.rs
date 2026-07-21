@@ -78,7 +78,7 @@ impl TlsClientConfig {
 
     /// TLS 1.2 限定で証明書検証を無効化した設定を作成（テスト専用）
     ///
-    /// WebTransport の TLS 要件 (draft-ietf-webtrans-http2-14 Section 7: TLS 1.3 か
+    /// WebTransport の TLS 要件 (draft-ietf-webtrans-http2-15 Section 7: TLS 1.3 か
     /// TLS 1.2 + extended master secret) を満たさない接続パターンを再現するための
     /// 専用ヘルパー。本番では絶対に呼ばない。本番用途では `with_platform_verifier`
     /// か `with_custom_ca` を使う。`#[doc(hidden)]` で公開ドキュメントから除外する。

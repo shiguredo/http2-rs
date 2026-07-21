@@ -74,7 +74,7 @@ fn grow_max_streams_bidi_emits_capsule() {
 }
 
 /// ピア側から受信した `WT_MAX_DATA` が減少値ならセッションエラー
-/// (draft-ietf-webtrans-http2-14 Section 6.5: 減少値の受信時は WT_FLOW_CONTROL_ERROR でセッションを閉じなければならない (MUST))
+/// (draft-ietf-webtrans-http2-15 Section 6.5: 減少値の受信時は WT_FLOW_CONTROL_ERROR でセッションを閉じなければならない (MUST))
 #[test]
 fn received_wt_max_data_decrease_errors() {
     // initial_max_data = 1024 のセッションに対し、500 という減少値を送り込む
@@ -106,7 +106,7 @@ fn send_after_close_errors() {
     let bidi_id = session.open_bidi_stream().expect("initiate should succeed");
     session.close(0, "bye").expect("open stream should succeed");
 
-    // draft-ietf-webtrans-http2-14 Section 6.12: WT_CLOSE_SESSION 送信後は END_STREAM で half-close するため送信不可
+    // draft-ietf-webtrans-http2-15 Section 6.12: WT_CLOSE_SESSION 送信後は END_STREAM で half-close するため送信不可
     let err = session.send_stream_data(bidi_id, b"x", false).unwrap_err();
     assert_eq!(
         err.kind,
@@ -121,7 +121,7 @@ fn send_after_close_errors() {
 }
 
 /// `open_bidi_stream` がローカルのストリーム上限で `flow_control_error`
-/// (draft-ietf-webtrans-http2-14 Section 6.7: 現在のストリーム上限を超えてストリームを開いてはならない (MUST NOT))
+/// (draft-ietf-webtrans-http2-15 Section 6.7: 現在のストリーム上限を超えてストリームを開いてはならない (MUST NOT))
 #[test]
 fn open_bidi_stream_over_limit_errors() {
     let config = WtConfig {
@@ -205,7 +205,7 @@ fn getters_return_expected_state() {
 
 /// Ready 状態のストリームに WT_STOP_SENDING を受信すると
 /// WT_RESET_STREAM が自動応答されることを確認する。
-/// (draft-ietf-webtrans-http2-14 Section 6.3: 受信者はストリームが Ready または Send 状態の場合、同一エラーコードの WT_RESET_STREAM で応答する)
+/// (draft-ietf-webtrans-http2-15 Section 6.3: 受信者はストリームが Ready または Send 状態の場合、同一エラーコードの WT_RESET_STREAM で応答する)
 #[test]
 fn stop_sending_triggers_auto_reset_ready_state() {
     // サーバー側のピア (client) が開いた bidi ストリーム (id=0) に対して
@@ -248,7 +248,7 @@ fn stop_sending_triggers_auto_reset_ready_state() {
 
 /// Send 状態のストリームに WT_STOP_SENDING を受信すると
 /// WT_RESET_STREAM が自動応答されることを確認する。
-/// (draft-ietf-webtrans-http2-14 Section 6.3: 受信者はストリームが Ready または Send 状態の場合、同一エラーコードの WT_RESET_STREAM で応答する)
+/// (draft-ietf-webtrans-http2-15 Section 6.3: 受信者はストリームが Ready または Send 状態の場合、同一エラーコードの WT_RESET_STREAM で応答する)
 #[test]
 fn stop_sending_triggers_auto_reset_send_state() {
     let mut session = WtSession::client(WtConfig::default());
@@ -291,7 +291,7 @@ fn stop_sending_triggers_auto_reset_send_state() {
 
 /// DataSent 状態のストリームでは WT_STOP_SENDING 受信時に
 /// WT_RESET_STREAM が生成されないことを確認する。
-/// (draft-ietf-webtrans-http2-14 Section 6.3: 受信者はストリームが Ready または Send 状態の場合、同一エラーコードの WT_RESET_STREAM で応答する)
+/// (draft-ietf-webtrans-http2-15 Section 6.3: 受信者はストリームが Ready または Send 状態の場合、同一エラーコードの WT_RESET_STREAM で応答する)
 #[test]
 fn stop_sending_no_auto_reset_data_sent_state() {
     let mut session = WtSession::client(WtConfig::default());
@@ -359,7 +359,7 @@ fn stop_sending_unknown_stream_emits_event() {
 }
 
 /// 重複 WT_STOP_SENDING 受信は stream_state_error になることを確認する。
-/// (draft-ietf-webtrans-http2-14 Section 6.3: 2 回目の WT_STOP_SENDING 受信時は WT_STREAM_STATE_ERROR のストリームエラーを送らなければならない (MUST))
+/// (draft-ietf-webtrans-http2-15 Section 6.3: 2 回目の WT_STOP_SENDING 受信時は WT_STREAM_STATE_ERROR のストリームエラーを送らなければならない (MUST))
 #[test]
 fn stop_sending_duplicate_errors() {
     let mut session = WtSession::client(WtConfig::default());
@@ -395,7 +395,7 @@ fn stop_sending_duplicate_errors() {
 }
 
 /// 未登録ストリームへの WT_RESET_STREAM が stream_state_error を返すことを確認する。
-/// (draft-ietf-webtrans-http2-14 Section 6.2: 有効な状態にないストリームへの WT_RESET_STREAM 受信時は WT_STREAM_STATE_ERROR のストリームエラーを送らなければならない (MUST))
+/// (draft-ietf-webtrans-http2-15 Section 6.2: 有効な状態にないストリームへの WT_RESET_STREAM 受信時は WT_STREAM_STATE_ERROR のストリームエラーを送らなければならない (MUST))
 #[test]
 fn wt_reset_stream_unknown_stream_id_errors() {
     let mut session = WtSession::server(WtConfig::default());

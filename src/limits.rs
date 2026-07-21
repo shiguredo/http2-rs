@@ -246,7 +246,7 @@ impl LimitsBuilder {
         self
     }
 
-    /// WebTransport 初期設定を一括設定する (draft-ietf-webtrans-http2-14 Section 11.2)
+    /// WebTransport 初期設定を一括設定する (draft-ietf-webtrans-http2-15 Section 11.2)
     #[must_use]
     pub const fn webtransport(
         mut self,

@@ -71,32 +71,32 @@ pub enum Setting {
     WtEnabled(bool),
     /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61) (draft-ietf-webtrans-http2-15 Section 11.2)
     ///
-    /// 注: この識別子と値は draft-ietf-webtrans-http2-14 由来の暫定値であり、
+    /// 注: この識別子と値は draft-ietf-webtrans-http2-15 由来の暫定値であり、
     /// IANA 登録後に変更される可能性がある。
     WtInitialMaxData(u32),
-    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62) (draft-ietf-webtrans-http2-14 Section 11.2)
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62) (draft-ietf-webtrans-http2-15 Section 11.2)
     ///
-    /// 注: この識別子と値は draft-ietf-webtrans-http2-14 由来の暫定値であり、
+    /// 注: この識別子と値は draft-ietf-webtrans-http2-15 由来の暫定値であり、
     /// IANA 登録後に変更される可能性がある。
     WtInitialMaxStreamDataUni(u32),
-    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63) (draft-ietf-webtrans-http2-14 Section 11.2)
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63) (draft-ietf-webtrans-http2-15 Section 11.2)
     ///
-    /// 注: この識別子と値は draft-ietf-webtrans-http2-14 由来の暫定値であり、
+    /// 注: この識別子と値は draft-ietf-webtrans-http2-15 由来の暫定値であり、
     /// IANA 登録後に変更される可能性がある。
     WtInitialMaxStreamDataBidiLocal(u32),
-    /// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64) (draft-ietf-webtrans-http2-14 Section 11.2)
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64) (draft-ietf-webtrans-http2-15 Section 11.2)
     ///
-    /// 注: この識別子と値は draft-ietf-webtrans-http2-14 由来の暫定値であり、
+    /// 注: この識別子と値は draft-ietf-webtrans-http2-15 由来の暫定値であり、
     /// IANA 登録後に変更される可能性がある。
     WtInitialMaxStreamsUni(u32),
-    /// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65) (draft-ietf-webtrans-http2-14 Section 11.2)
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65) (draft-ietf-webtrans-http2-15 Section 11.2)
     ///
-    /// 注: この識別子と値は draft-ietf-webtrans-http2-14 由来の暫定値であり、
+    /// 注: この識別子と値は draft-ietf-webtrans-http2-15 由来の暫定値であり、
     /// IANA 登録後に変更される可能性がある。
     WtInitialMaxStreamsBidi(u32),
-    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66) (draft-ietf-webtrans-http2-14 Section 11.2)
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66) (draft-ietf-webtrans-http2-15 Section 11.2)
     ///
-    /// 注: この識別子と値は draft-ietf-webtrans-http2-14 由来の暫定値であり、
+    /// 注: この識別子と値は draft-ietf-webtrans-http2-15 由来の暫定値であり、
     /// IANA 登録後に変更される可能性がある。
     WtInitialMaxStreamDataBidiRemote(u32),
     /// 未知の SETTINGS パラメータ (RFC 9113 §6.5.2: MUST ignore)

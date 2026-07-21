@@ -1,6 +1,6 @@
 //! WebTransport over HTTP/2 サーバー API
 //!
-//! draft-ietf-webtrans-http2-14 に基づく WebTransport サーバー実装。
+//! draft-ietf-webtrans-http2-15 に基づく WebTransport サーバー実装。
 //! Extended CONNECT (`:protocol=webtransport`) で確立されたセッション上で、
 //! Capsule Protocol によって bidi / uni ストリームと DATAGRAM を多重化する。
 //!
@@ -92,7 +92,7 @@ impl WtServerRequest {
 
     /// `WebTransport-Init` ヘッダー値 (RFC 8941 Dictionary バイト列) を取得する
     ///
-    /// draft-ietf-webtrans-http2-14 Section 4.3.2 (L519-L541) で規定される
+    /// draft-ietf-webtrans-http2-15 Section 4.3.2 (L519-L541) で規定される
     /// 初期フロー制御値のヘッダー。HTTP/2 では field name は小文字なので
     /// `webtransport-init` (lowercase) で照合する。
     ///
@@ -117,7 +117,7 @@ impl WtServerRequest {
     /// 双方向エコーやストリーム受信が可能な状態にする。
     ///
     /// `allowed_origin` に `Some` を指定すると、リクエストの Origin ヘッダーを
-    /// 検証する (draft-ietf-webtrans-http2-14 Section 3.2 MUST)。
+    /// 検証する (draft-ietf-webtrans-http2-15 Section 3.2 MUST)。
     /// Origin が一致しないか存在しない場合は 403 を返す。
     /// `None` を指定すると検証をスキップする (非 Web context 向け)。
     pub async fn accept(
@@ -125,7 +125,7 @@ impl WtServerRequest {
         mut config: WtConfig,
         allowed_origin: Option<&[u8]>,
     ) -> Result<WtServerSession> {
-        // draft-ietf-webtrans-http2-14 Section 7 (L1425-L1438):
+        // draft-ietf-webtrans-http2-15 Section 7 (L1425-L1438):
         // WebTransport over HTTP/2 は TLS 1.3 か、TLS 1.2 + extended master secret を要求する。
         // rustls 0.23 は extended master secret のネゴシエーション状態を外部公開していないため、
         // 動的判定不可。安全側に倒して TLS 1.3 のみを許可する (仕様より厳しい)。
@@ -175,7 +175,7 @@ impl WtServerRequest {
             }
         }
 
-        // draft-ietf-webtrans-http2-14 Section 4.3 (L480-L483) / Section 4.3.2 (L525-L540):
+        // draft-ietf-webtrans-http2-15 Section 4.3 (L480-L483) / Section 4.3.2 (L525-L540):
         // WebTransport-Init が存在する場合は RFC 8941 Dictionary としてパースし、
         // SETTINGS 値と max マージする。パース失敗・型不一致・値範囲外は MUST 4xx 拒否。
         if let Some(bytes) = init_bytes {
@@ -191,7 +191,7 @@ impl WtServerRequest {
             }
         }
 
-        // draft-ietf-webtrans-http2-14 Section 3.2:
+        // draft-ietf-webtrans-http2-15 Section 3.2:
         // WebTransport セッション確立時はサーバーが 2xx ステータスを返し、
         // END_STREAM は立てない (Capsule Protocol で通信を継続する)。
         let response = vec![HeaderField::from_static(b":status", b"200")];
@@ -814,7 +814,7 @@ impl DriverState {
                 let res = self.wt_session.close(error_code, &reason).map_err(wt_err);
                 if res.is_ok() {
                     self.flush_wt_output().await?;
-                    // draft-ietf-webtrans-http2-14 Section 6.12 (L1360-L1361):
+                    // draft-ietf-webtrans-http2-15 Section 6.12 (L1360-L1361):
                     // WT_CLOSE_SESSION 送信後は MUST half-close the stream。
                     // RFC 9113 Section 6.9.1: 空 DATA + END_STREAM はフロー制御ウィンドウ空きなしでも送信可能。
                     self.conn
@@ -857,7 +857,7 @@ impl DriverState {
                     self.dispatch_wt_event(wt_ev)?;
                 }
 
-                // draft-ietf-webtrans-http2-14 Section 6.12 (L1364-L1365):
+                // draft-ietf-webtrans-http2-15 Section 6.12 (L1364-L1365):
                 // WT_CLOSE_SESSION 受信時は MUST close the stream with END_STREAM。
                 // end_stream=true と WT_CLOSE_SESSION が同一 DATA フレームに
                 // 含まれている場合でも、先に END_STREAM を返信する必要があるため
@@ -872,7 +872,7 @@ impl DriverState {
                     return Err(Error::ConnectionClosed);
                 }
 
-                // draft-ietf-webtrans-http2-14 Section 6: 受信時にフロー制御を更新する
+                // draft-ietf-webtrans-http2-15 Section 6: 受信時にフロー制御を更新する
                 self.maybe_grow_session_window()?;
                 self.maybe_grow_max_streams(true)?;
                 self.maybe_grow_max_streams(false)?;

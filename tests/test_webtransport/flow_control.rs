@@ -57,7 +57,7 @@ fn test_update_send_max() {
 fn test_update_send_max_decrease_error() {
     let mut fc = WtFlowControl::new(65536, 100, 50);
 
-    // draft-ietf-webtrans-http2-14 Section 6.5: 減少はエラー
+    // draft-ietf-webtrans-http2-15 Section 6.5: 減少はエラー
     assert!(fc.update_send_max(32768).is_err());
 }
 
@@ -94,7 +94,7 @@ fn test_update_max_streams() {
 fn test_update_max_streams_decrease_error() {
     let mut fc = WtFlowControl::new(65536, 100, 50);
 
-    // draft-ietf-webtrans-http2-14 Section 6.7: 減少はエラー
+    // draft-ietf-webtrans-http2-15 Section 6.7: 減少はエラー
     assert!(fc.update_max_streams(50, true).is_err());
     assert!(fc.update_max_streams(25, false).is_err());
 }
