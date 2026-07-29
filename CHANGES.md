@@ -8,6 +8,8 @@
 
 ## develop
 
+- [CHANGE] 最小サポート Rust バージョン (MSRV) を 1.88 から 1.93 に引き上げる
+  - @voluntas
 - [CHANGE] `WtServerRequest::accept()` に `selected_protocol` 引数を追加し、`:scheme` が `https` でない場合は `RST_STREAM(PROTOCOL_ERROR)` で拒否するように変更する (draft-ietf-webtrans-http2-15 Section 3.2 / Section 3.3)
   - @voluntas
 - [CHANGE] `tokio_http2::Error` に `WebTransport(WtError)` バリアントを追加し、`wt_err` 経由の `InvalidArgument` 変換を廃止する

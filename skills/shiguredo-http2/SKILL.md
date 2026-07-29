@@ -22,7 +22,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 - crate 名: `shiguredo_http2`
 - バージョン: 2026.1.0-canary.6
 - Rust Edition: 2024
-- 最小 Rust バージョン: 1.88
+- 最小 Rust バージョン: 1.93
 - ライセンス: Apache-2.0
 
 ## クレート構成
