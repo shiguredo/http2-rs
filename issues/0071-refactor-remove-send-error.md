@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-11
-- Polished: 2026-06-11
+- Polished: 2026-07-31
 - Model: deepseek-v4-pro
 - Branch: feature/refactor-remove-send-error
 
@@ -25,13 +25,13 @@
 //! この型は未統合。統合は送信 API のリファクタリング時に行う。
 ```
 
-`src/lib.rs:32` にモジュール宣言:
+`src/lib.rs` の `pub mod send_error;` にモジュール宣言:
 
 ```rust
 pub mod send_error;
 ```
 
-`src/lib.rs:54` に再エクスポート:
+`src/lib.rs` の `pub use send_error::SendError;` に再エクスポート:
 
 ```rust
 pub use send_error::SendError;
@@ -45,7 +45,7 @@ pub use send_error::SendError;
 
 ## CHANGES.md の扱い
 
-`CHANGES.md:73` の既存 `[ADD]` エントリ:
+`CHANGES.md` の `## develop` セクションにある既存 `[ADD]` エントリ:
 
 ```
 - [ADD] 構築時検査用の公開エラー型 (`HeaderFieldError`, `FrameError`, `StreamIdError`, `SettingError`, `LimitsError`, `SendError`, `DecodeError`) と補助型 ... を追加する (issues 0024-0032)
@@ -64,7 +64,7 @@ pub use send_error::SendError;
 
 ## 他 issue との関係
 
-本 issue は `src/send_error.rs` / `src/lib.rs:32,54` / `tests/test_send_error.rs` / `CHANGES.md:73` / `skills/shiguredo-http2/SKILL.md:471` のみを変更し、`src/error.rs` / `src/webtransport/error.rs` / `crates/*` には触れない。
+本 issue は `src/send_error.rs` / `src/lib.rs` のモジュール宣言と再エクスポート / `tests/test_send_error.rs` / `CHANGES.md` の既存 `[ADD]` エントリ / `skills/shiguredo-http2/SKILL.md` の `SendError` 説明行のみを変更し、`src/error.rs` / `src/webtransport/error.rs` / `crates/*` には触れない。
 
 - 0068 (`bug-fix-wt-error-design`) — `WtError` の Display/Debug 修正、無関係
 - 0069 (`bug-fix-nghttp2-send-set-user-data`) — `shiguredo_nghttp2::Session::send()` 修正、無関係
@@ -83,19 +83,19 @@ pub use send_error::SendError;
 
 ### 編集するファイル
 
-- `src/lib.rs:32` — `pub mod send_error;` を削除
-- `src/lib.rs:54` — `pub use send_error::SendError;` を削除
-- `CHANGES.md:73` — 既存 `[ADD]` エントリの括弧内列挙から `SendError` を除去
-- `skills/shiguredo-http2/SKILL.md:471` — `SendError` の説明行 (`- \`SendError\`: 送信側 API のエラー...`) を削除
+- `src/lib.rs` — `pub mod send_error;` を削除
+- `src/lib.rs` — `pub use send_error::SendError;` を削除
+- `CHANGES.md` — 既存 `[ADD]` エントリの括弧内列挙から `SendError` を除去
+- `skills/shiguredo-http2/SKILL.md` — `SendError` の説明行 (`- \`SendError\`: 送信側 API のエラー...`) を削除
 
 ## 対応手順
 
 1. 作業ブランチ `feature/refactor-remove-send-error` を作成する
 2. `src/send_error.rs` を削除する
 3. `tests/test_send_error.rs` を削除する
-4. `src/lib.rs` から `pub mod send_error;` と `pub use send_error::SendError;` を削除する。行番号は本 issue 作成時点で前者が line 32、後者が line 54。先に line 32 を削除すると後続の行番号がシフトするため、エディタの行番号ジャンプではなく文字列で完全一致削除する。両方を削除しないと、ファイル不在エラー (`E0583: file not found for module 'send_error'`) でビルドが失敗する
-5. `CHANGES.md:73` の既存 `[ADD]` エントリの括弧内列挙から `SendError` を除去する (`HeaderFieldError`, `FrameError`, `StreamIdError`, `SettingError`, `LimitsError`, `DecodeError` の 6 種に縮める)。新規 `[CHANGE]` エントリは追加しない (develop 内で打ち消し合うため)
-6. `skills/shiguredo-http2/SKILL.md:471` の `SendError` 説明行を削除する
+4. `src/lib.rs` から `pub mod send_error;` と `pub use send_error::SendError;` を削除する。先にモジュール宣言を削除すると後続の行番号がシフトするため、エディタの行番号ジャンプではなく文字列で完全一致削除する。両方を削除しないと、ファイル不在エラー (`E0583: file not found for module 'send_error'`) でビルドが失敗する
+5. `CHANGES.md` の `## develop` セクションにある既存 `[ADD]` エントリの括弧内列挙から `SendError` を除去する (`HeaderFieldError`, `FrameError`, `StreamIdError`, `SettingError`, `LimitsError`, `DecodeError` の 6 種に縮める)。新規 `[CHANGE]` エントリは追加しない (develop 内で打ち消し合うため)
+6. `skills/shiguredo-http2/SKILL.md` の `SendError` 説明行を削除する
 7. `cargo fmt --all -- --check` で整形違反がないことを確認する
 8. `cargo build --workspace` でビルドが成功することを確認する
 9. `cargo test --workspace` で全テスト通過を確認する
@@ -107,8 +107,8 @@ pub use send_error::SendError;
 - `src/send_error.rs` が削除されている
 - `tests/test_send_error.rs` が削除されている
 - `src/lib.rs` から `pub mod send_error;` と `pub use send_error::SendError;` が削除されている
-- `CHANGES.md:73` の既存 `[ADD]` エントリから `SendError` の言及が除去されている (新規 `[CHANGE]` エントリは追加しない)
-- `skills/shiguredo-http2/SKILL.md:471` の `SendError` 説明行が削除されている
+- `CHANGES.md` の既存 `[ADD]` エントリから `SendError` の言及が除去されている (新規 `[CHANGE]` エントリは追加しない)
+- `skills/shiguredo-http2/SKILL.md` の `SendError` 説明行が削除されている
 - `cargo fmt --all -- --check` が通過する
 - `cargo build --workspace` が成功する
 - `cargo test --workspace` が成功する
@@ -118,11 +118,10 @@ pub use send_error::SendError;
 ## 参照
 
 - `src/send_error.rs` — 削除対象ファイル
-- `src/lib.rs:32` — `pub mod send_error;` 削除対象
-- `src/lib.rs:54` — `pub use send_error::SendError;` 削除対象
+- `src/lib.rs` — `pub mod send_error;` / `pub use send_error::SendError;` 削除対象
 - `tests/test_send_error.rs` — 削除対象テストファイル
-- `CHANGES.md:73` — 既存 `[ADD]` エントリの編集対象
-- `skills/shiguredo-http2/SKILL.md:471` — `SendError` 説明行の削除対象
+- `CHANGES.md` — 既存 `[ADD]` エントリの編集対象
+- `skills/shiguredo-http2/SKILL.md` — `SendError` 説明行の削除対象
 - `issues/closed/0027-change-frame-construct-time-validation.md` — `SendError` 型定義の追加と「Connection::send_* への統合は別 issue 化」の判断元
 - `issues/closed/0029-change-split-error-types.md` — エラー型分割の経緯
 - `issues/closed/0019-chore-remove-dead-code.md` — 過去の未使用コード削除事例 (リリース済み API 削除のため `[CHANGE]` 区分)
