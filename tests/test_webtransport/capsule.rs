@@ -61,7 +61,7 @@ fn test_wt_stream_empty_data_with_fin() {
     };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("decode should succeed")
@@ -103,7 +103,7 @@ fn test_wt_stream_sequence_non_fin_then_fin() {
         encoder.encode(capsule);
     }
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     for expected in &capsules {
         let decoded = decoder
             .decode()
@@ -123,7 +123,7 @@ fn test_decode_wt_stream_fin_from_raw_bytes() {
     // capsule length = 1 (stream_id=0 の varint 1 バイト)
     // payload = stream_id=0 (varint: [0x00])
     let raw: &[u8] = &[0x99, 0x0B, 0x4D, 0x3B, 0x01, 0x00];
-    decoder.feed(raw);
+    decoder.feed(raw).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("decode should succeed")
@@ -148,7 +148,7 @@ fn test_decode_wt_stream_non_fin_from_raw_bytes() {
     // capsule length = 1 (stream_id=0 の varint 1 バイト)
     // payload = stream_id=0 (varint: [0x00])
     let raw: &[u8] = &[0x99, 0x0B, 0x4D, 0x3C, 0x01, 0x00];
-    decoder.feed(raw);
+    decoder.feed(raw).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("decode should succeed")
@@ -174,7 +174,7 @@ fn test_encode_decode_datagram() {
     };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -194,7 +194,7 @@ fn test_encode_decode_wt_stream() {
     };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -214,7 +214,7 @@ fn test_encode_decode_wt_stream_fin() {
     };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -234,7 +234,7 @@ fn test_encode_decode_wt_reset_stream() {
     };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -253,7 +253,7 @@ fn test_encode_decode_wt_stop_sending() {
     };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -269,7 +269,7 @@ fn test_encode_decode_wt_max_data() {
     let capsule = Capsule::WtMaxData { maximum: 1_000_000 };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -288,7 +288,7 @@ fn test_encode_decode_wt_max_stream_data() {
     };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -308,7 +308,7 @@ fn test_encode_decode_wt_max_streams() {
     };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -325,7 +325,7 @@ fn test_encode_decode_wt_max_streams() {
     };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -344,7 +344,7 @@ fn test_encode_decode_wt_close_session() {
     };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -360,7 +360,7 @@ fn test_encode_decode_wt_drain_session() {
     let capsule = Capsule::WtDrainSession;
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -376,7 +376,7 @@ fn test_encode_decode_padding() {
     let capsule = Capsule::Padding { length: 100 };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -389,13 +389,13 @@ fn test_decode_incomplete() {
     let mut decoder = CapsuleDecoder::new();
 
     // 不完全なデータ
-    decoder.feed(&[0x00]); // DATAGRAM type only
+    decoder.feed(&[0x00]).expect("feed should succeed"); // DATAGRAM type only
     assert!(decoder.decode().expect("feed should succeed").is_none());
 
     decoder.clear();
 
     // Type + Length のみ
-    decoder.feed(&[0x00, 0x05]); // DATAGRAM, length=5
+    decoder.feed(&[0x00, 0x05]).expect("feed should succeed"); // DATAGRAM, length=5
     assert!(decoder.decode().expect("feed should succeed").is_none());
 }
 
@@ -414,7 +414,7 @@ fn test_decode_multiple_capsules() {
     encoder.encode(&capsule1);
     encoder.encode(&capsule2);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
 
     let decoded1 = decoder
         .decode()
@@ -443,7 +443,7 @@ fn test_decode_unknown_capsule_type() {
     };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -459,7 +459,7 @@ fn test_decode_wt_data_blocked() {
     let capsule = Capsule::WtDataBlocked { maximum: 65536 };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -478,7 +478,7 @@ fn test_decode_wt_stream_data_blocked() {
     };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -498,7 +498,7 @@ fn test_decode_wt_streams_blocked() {
     };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -515,7 +515,7 @@ fn test_decode_wt_streams_blocked() {
     };
     encoder.encode(&capsule);
 
-    decoder.feed(encoder.buffer());
+    decoder.feed(encoder.buffer()).expect("feed should succeed");
     let decoded = decoder
         .decode()
         .expect("feed should succeed")
@@ -549,7 +549,7 @@ fn test_wt_reset_stream_error_code_exceeds_u32_is_session_error() {
     wire.extend_from_slice(&payload);
 
     let mut decoder = CapsuleDecoder::new();
-    decoder.feed(&wire);
+    decoder.feed(&wire).expect("feed should succeed");
     let err = decoder
         .decode()
         .expect_err("0xffffffff 超過の error_code はエラーになるはず");
@@ -583,7 +583,7 @@ fn test_wt_stop_sending_error_code_exceeds_u32_is_session_error() {
     wire.extend_from_slice(&payload);
 
     let mut decoder = CapsuleDecoder::new();
-    decoder.feed(&wire);
+    decoder.feed(&wire).expect("feed should succeed");
     let err = decoder
         .decode()
         .expect_err("0xffffffff 超過の error_code はエラーになるはず");
@@ -592,4 +592,37 @@ fn test_wt_stop_sending_error_code_exceeds_u32_is_session_error() {
         WtErrorKind::SessionStateError,
         "WT_ERROR 相当として SessionStateError であること、実際: {err}"
     );
+}
+
+/// バッファ上限超過時に feed がエラーを返すことを確認する
+#[test]
+fn test_feed_buffer_limit_exceeded() {
+    use shiguredo_http2::webtransport::WtErrorKind;
+
+    // 小さな上限を指定してデコーダーを生成
+    let mut decoder = CapsuleDecoder::with_max_buffer_size(10);
+
+    // 上限以内は成功
+    decoder.feed(&[0u8; 10]).expect("feed should succeed");
+
+    // 上限超過はエラー
+    let err = decoder.feed(&[0u8; 1]).unwrap_err();
+    assert_eq!(err.kind, WtErrorKind::InvalidInput);
+    assert!(err.reason.contains("buffer limit exceeded"));
+}
+
+/// デフォルトのバッファ上限 (16 MiB) が適用されることを確認する
+#[test]
+fn test_feed_default_buffer_limit() {
+    use shiguredo_http2::webtransport::WtErrorKind;
+
+    let mut decoder = CapsuleDecoder::new();
+
+    // 16 MiB 以内は成功
+    let data = vec![0u8; 16 * 1024 * 1024];
+    decoder.feed(&data).expect("feed should succeed");
+
+    // 1 バイトでも超過するとエラー
+    let err = decoder.feed(&[0u8; 1]).unwrap_err();
+    assert_eq!(err.kind, WtErrorKind::InvalidInput);
 }

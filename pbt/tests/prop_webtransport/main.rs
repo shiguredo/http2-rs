@@ -57,7 +57,7 @@ proptest! {
         let capsule = Capsule::Datagram { data: data.clone() };
         encoder.encode(&capsule);
 
-        decoder.feed(encoder.buffer());
+        decoder.feed(encoder.buffer()).expect("feed should succeed");
         let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
@@ -79,7 +79,7 @@ proptest! {
         };
         encoder.encode(&capsule);
 
-        decoder.feed(encoder.buffer());
+        decoder.feed(encoder.buffer()).expect("feed should succeed");
         let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
@@ -101,7 +101,7 @@ proptest! {
         };
         encoder.encode(&capsule);
 
-        decoder.feed(encoder.buffer());
+        decoder.feed(encoder.buffer()).expect("feed should succeed");
         let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
@@ -121,7 +121,7 @@ proptest! {
         };
         encoder.encode(&capsule);
 
-        decoder.feed(encoder.buffer());
+        decoder.feed(encoder.buffer()).expect("feed should succeed");
         let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
@@ -135,7 +135,7 @@ proptest! {
         let capsule = Capsule::WtMaxData { maximum };
         encoder.encode(&capsule);
 
-        decoder.feed(encoder.buffer());
+        decoder.feed(encoder.buffer()).expect("feed should succeed");
         let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
@@ -152,7 +152,7 @@ proptest! {
         let capsule = Capsule::WtMaxStreamData { stream_id, maximum };
         encoder.encode(&capsule);
 
-        decoder.feed(encoder.buffer());
+        decoder.feed(encoder.buffer()).expect("feed should succeed");
         let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
@@ -169,7 +169,7 @@ proptest! {
         let capsule = Capsule::WtMaxStreams { maximum, bidirectional };
         encoder.encode(&capsule);
 
-        decoder.feed(encoder.buffer());
+        decoder.feed(encoder.buffer()).expect("feed should succeed");
         let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
@@ -189,7 +189,7 @@ proptest! {
         };
         encoder.encode(&capsule);
 
-        decoder.feed(encoder.buffer());
+        decoder.feed(encoder.buffer()).expect("feed should succeed");
         let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
@@ -211,7 +211,7 @@ proptest! {
             capsules.push(capsule);
         }
 
-        decoder.feed(encoder.buffer());
+        decoder.feed(encoder.buffer()).expect("feed should succeed");
 
         for expected in &capsules {
             let decoded = decoder.decode().expect("decode should succeed").expect("decode should succeed");
@@ -237,7 +237,7 @@ proptest! {
         };
         encoder.encode(&capsule);
 
-        decoder.feed(encoder.buffer());
+        decoder.feed(encoder.buffer()).expect("feed should succeed");
         let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
@@ -251,7 +251,7 @@ proptest! {
         let capsule = Capsule::Padding { length };
         encoder.encode(&capsule);
 
-        decoder.feed(encoder.buffer());
+        decoder.feed(encoder.buffer()).expect("feed should succeed");
         let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
@@ -265,7 +265,7 @@ proptest! {
         let capsule = Capsule::WtDataBlocked { maximum };
         encoder.encode(&capsule);
 
-        decoder.feed(encoder.buffer());
+        decoder.feed(encoder.buffer()).expect("feed should succeed");
         let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
@@ -282,7 +282,7 @@ proptest! {
         let capsule = Capsule::WtStreamDataBlocked { stream_id, maximum };
         encoder.encode(&capsule);
 
-        decoder.feed(encoder.buffer());
+        decoder.feed(encoder.buffer()).expect("feed should succeed");
         let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
@@ -299,7 +299,7 @@ proptest! {
         let capsule = Capsule::WtStreamsBlocked { maximum, bidirectional };
         encoder.encode(&capsule);
 
-        decoder.feed(encoder.buffer());
+        decoder.feed(encoder.buffer()).expect("feed should succeed");
         let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
         prop_assert_eq!(capsule, decoded);
     }
@@ -338,7 +338,7 @@ proptest! {
 
         // WT_MAX_DATA は varint 1 つだけなので余剰バイトがあればエラー
         let mut decoder = CapsuleDecoder::new();
-        decoder.feed(&buf);
+        decoder.feed(&buf).expect("feed should succeed");
         prop_assert!(decoder.decode().is_err());
     }
 
@@ -666,7 +666,7 @@ proptest! {
 
         // デコード
         let mut decoder = CapsuleDecoder::new();
-        decoder.feed(&encoded1);
+        decoder.feed(&encoded1).expect("feed should succeed");
         let decoded = decoder.decode().expect("feed should succeed").expect("feed should succeed");
 
         // 再エンコード

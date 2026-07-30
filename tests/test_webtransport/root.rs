@@ -107,7 +107,7 @@ fn test_close_emits_wt_close_session_capsule() {
     let out = session.poll_output().expect("output expected");
 
     let mut decoder = CapsuleDecoder::new();
-    decoder.feed(&out);
+    decoder.feed(&out).expect("feed should succeed");
     let capsule = decoder
         .decode()
         .expect("feed should succeed")
@@ -151,7 +151,7 @@ fn test_close_reason_exceeds_max_length_truncated() {
     // 出力された capsule の reason が 1024 バイト以下であることを確認
     let out = session.poll_output().expect("output expected");
     let mut decoder = shiguredo_http2::webtransport::CapsuleDecoder::new();
-    decoder.feed(&out);
+    decoder.feed(&out).expect("feed should succeed");
     let capsule = decoder
         .decode()
         .expect("decode should succeed")
@@ -189,7 +189,7 @@ fn test_close_reason_truncation_utf8_boundary() {
 
     let out = session.poll_output().expect("output expected");
     let mut decoder = shiguredo_http2::webtransport::CapsuleDecoder::new();
-    decoder.feed(&out);
+    decoder.feed(&out).expect("feed should succeed");
     let capsule = decoder
         .decode()
         .expect("decode should succeed")
