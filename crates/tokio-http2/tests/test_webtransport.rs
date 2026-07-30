@@ -1540,7 +1540,7 @@ async fn test_wt_export_keying_material() {
 }
 
 /// draft-ietf-webtrans-http2-15 Section 3.2:
-/// `:scheme` が `http` の CONNECT は `accept()` が失敗する。
+/// `:scheme` が `http` の `:protocol=webtransport` CONNECT は Sans I/O 層で送信時に拒否される。
 #[tokio::test]
 async fn test_wt_scheme_http_rejected() {
     let tls = test_tls();
@@ -1553,20 +1553,11 @@ async fn test_wt_scheme_http_rejected() {
     .expect("バインドに失敗");
     let addr = server.local_addr();
 
+    // サーバーは接続を維持するだけ (クライアント側で送信が拒否されるため)
     let server_task = tokio::spawn(async move {
         let mut conn = server.accept().await.expect("接続受け入れに失敗");
-        let (stream_id, headers) = await_connect_headers(&mut conn).await;
-        let req = WtServerRequest::from_connection(conn, stream_id, headers);
-        assert_eq!(req.scheme(), Some(b"http" as &[u8]));
-        match req.accept(WtConfig::default(), None, None).await {
-            Ok(_) => panic!(":scheme=http で accept が成功してしまった"),
-            Err(err) => {
-                assert!(
-                    matches!(err, tokio_http2::Error::InvalidArgument(_)),
-                    ":scheme=http は InvalidArgument が期待だが、実際は {err}"
-                );
-            }
-        }
+        // クライアントの SETTINGS 交換を完了させる
+        while conn.next_event().await.is_ok() {}
     });
 
     let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
@@ -1581,35 +1572,14 @@ async fn test_wt_scheme_http_rejected() {
             break;
         }
     }
-    let connect_stream = client
+    // Sans I/O 層の検証で送信時に拒否される
+    let result = client
         .send_request(connect_request_with_scheme("http"), false)
-        .await
-        .expect("CONNECT 送信に失敗");
+        .await;
+    assert!(
+        result.is_err(),
+        ":protocol=webtransport + :scheme=http は送信時に拒否されるべき"
+    );
 
-    // クライアントは RST_STREAM(PROTOCOL_ERROR) を受信する
-    let mut got_reset = false;
-    let recv = async {
-        loop {
-            let ev = client
-                .next_event()
-                .await
-                .expect("クライアントイベント取得に失敗");
-            if let Event::StreamReset {
-                stream_id,
-                error_code,
-            } = ev
-                && stream_id == connect_stream
-            {
-                assert_eq!(error_code, ErrorCode::ProtocolError);
-                got_reset = true;
-                break;
-            }
-        }
-    };
-    tokio::time::timeout(Duration::from_secs(5), recv)
-        .await
-        .expect("タイムアウト");
-
-    server_task.await.expect("サーバータスクの join に失敗");
-    assert!(got_reset, "RST_STREAM(PROTOCOL_ERROR) を受信しなかった");
+    server_task.abort();
 }

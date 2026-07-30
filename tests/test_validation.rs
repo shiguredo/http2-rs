@@ -336,6 +336,54 @@ fn test_protocol_on_non_connect_rejected() {
     }
 }
 
+// draft-ietf-webtrans-http2-15 Section 3.2: :protocol=webtransport + :scheme=http は拒否される
+#[test]
+fn test_webtransport_scheme_http_rejected() {
+    let headers = vec![
+        h(":method", "CONNECT"),
+        h(":scheme", "http"),
+        h(":path", "/"),
+        h(":authority", "example.com:443"),
+        h(":protocol", "webtransport"),
+    ];
+    assert!(
+        validate_request_headers(&headers).is_err(),
+        ":protocol=webtransport + :scheme=http は拒否されるべき"
+    );
+}
+
+// draft-ietf-webtrans-http2-15 Section 3.2: :protocol=webtransport + :scheme=https は通過する
+#[test]
+fn test_webtransport_scheme_https_accepted() {
+    let headers = vec![
+        h(":method", "CONNECT"),
+        h(":scheme", "https"),
+        h(":path", "/"),
+        h(":authority", "example.com:443"),
+        h(":protocol", "webtransport"),
+    ];
+    assert!(
+        validate_request_headers(&headers).is_ok(),
+        ":protocol=webtransport + :scheme=https は通過すべき"
+    );
+}
+
+// RFC 3986 Section 3.1: scheme は case-insensitive。大文字 HTTPS も通過する
+#[test]
+fn test_webtransport_scheme_https_uppercase_accepted() {
+    let headers = vec![
+        h(":method", "CONNECT"),
+        h(":scheme", "HTTPS"),
+        h(":path", "/"),
+        h(":authority", "example.com:443"),
+        h(":protocol", "webtransport"),
+    ];
+    assert!(
+        validate_request_headers(&headers).is_ok(),
+        ":protocol=webtransport + :scheme=HTTPS (大文字) は通過すべき"
+    );
+}
+
 // RFC 9113 Section 8.5: CONNECT の :authority にポートがない場合は拒否される
 // (authority-form は host:port を要求する)。
 #[test]

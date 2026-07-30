@@ -80,6 +80,9 @@ pub enum ValidationError {
     MissingAuthority,
     /// `:status = 101` (Switching Protocols) は HTTP/2 では使えない (RFC 9113 §8.6)
     Status101NotSupported,
+    /// `:protocol=webtransport` 時に `:scheme` が `https` でない
+    /// (draft-ietf-webtrans-http2-15 Section 3.2)
+    WebTransportRequiresHttps,
 }
 
 impl std::fmt::Display for ValidationError {
@@ -142,6 +145,12 @@ impl std::fmt::Display for ValidationError {
             Self::Status101NotSupported => {
                 write!(f, ":status 101 is not supported over HTTP/2")
             }
+            Self::WebTransportRequiresHttps => {
+                write!(
+                    f,
+                    ":protocol=webtransport requires :scheme=https (draft-ietf-webtrans-http2-15 Section 3.2)"
+                )
+            }
         }
     }
 }
@@ -197,6 +206,7 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
     let mut seen_authority = false;
     let mut seen_path = false;
     let mut seen_protocol = false;
+    let mut protocol_value: Option<&[u8]> = None;
     let mut past_pseudo = false;
     let mut method: Option<&[u8]> = None;
     let mut scheme_value: Option<&[u8]> = None;
@@ -256,6 +266,7 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
                     )));
                 }
                 seen_protocol = true;
+                protocol_value = Some(header.value());
             } else if name == pseudo_headers::STATUS {
                 // :status はリクエストでは使用不可
                 return Err(malformed_error(ValidationError::DisallowedPseudoHeader(
@@ -332,6 +343,14 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
                 return Err(malformed_error(ValidationError::MissingPseudoHeader(
                     ":authority",
                 )));
+            }
+            // draft-ietf-webtrans-http2-15 Section 3.2:
+            // :protocol=webtransport の場合 :scheme は MUST https
+            // RFC 3986 Section 3.1: scheme は case-insensitive
+            if protocol_value == Some(b"webtransport")
+                && !scheme_value.is_some_and(|s| s.eq_ignore_ascii_case(b"https"))
+            {
+                return Err(malformed_error(ValidationError::WebTransportRequiresHttps));
             }
         } else {
             // 通常の CONNECT

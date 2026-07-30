@@ -259,6 +259,8 @@ proptest! {
     }
 
     /// 有効な Extended CONNECT リクエストは検証を通過する (RFC 8441)
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 3.2: :protocol=webtransport は :scheme=https が必須
     #[test]
     fn prop_valid_extended_connect_passes(
         scheme in http_scheme(),
@@ -269,6 +271,8 @@ proptest! {
             Just("websocket"),
         ],
     ) {
+        // draft-ietf-webtrans-http2-15 Section 3.2: webtransport は https 必須
+        prop_assume!(protocol != "webtransport" || scheme == "https");
         let headers = vec![
             HeaderField::new(":method", "CONNECT").expect("valid header field"),
             HeaderField::new(":scheme", scheme).expect("valid header field"),
