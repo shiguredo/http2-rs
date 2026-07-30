@@ -40,7 +40,7 @@ fn test_stream_id_server_uni() {
 
 #[test]
 fn test_stream_creation() {
-    let stream = WtStream::new(0, 65536, true);
+    let stream = WtStream::new(0, 65536, 65536, true);
     assert_eq!(stream.id(), 0);
     assert!(stream.is_bidirectional());
     assert_eq!(stream.send_state(), SendState::Ready);
@@ -51,7 +51,7 @@ fn test_stream_creation() {
 
 #[test]
 fn test_send_data() {
-    let mut stream = WtStream::new(0, 65536, true);
+    let mut stream = WtStream::new(0, 65536, 65536, true);
 
     stream
         .send_data(100, false)
@@ -70,7 +70,7 @@ fn test_send_data() {
 
 #[test]
 fn test_recv_data() {
-    let mut stream = WtStream::new(0, 65536, true);
+    let mut stream = WtStream::new(0, 65536, 65536, true);
 
     stream
         .recv_data(100, false)
@@ -88,7 +88,7 @@ fn test_recv_data() {
 
 #[test]
 fn test_send_reset() {
-    let mut stream = WtStream::new(0, 65536, true);
+    let mut stream = WtStream::new(0, 65536, 65536, true);
 
     stream
         .send_data(100, false)
@@ -100,7 +100,7 @@ fn test_send_reset() {
 
 #[test]
 fn test_recv_reset() {
-    let mut stream = WtStream::new(0, 65536, true);
+    let mut stream = WtStream::new(0, 65536, 65536, true);
 
     stream
         .recv_data(100, false)
@@ -112,7 +112,7 @@ fn test_recv_reset() {
 
 #[test]
 fn test_update_send_max() {
-    let mut stream = WtStream::new(0, 65536, true);
+    let mut stream = WtStream::new(0, 65536, 65536, true);
     assert_eq!(stream.send_available(), 65536);
 
     stream

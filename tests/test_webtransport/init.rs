@@ -236,7 +236,7 @@ fn test_parse_handles_leading_and_trailing_ows() {
     assert_eq!(init.bl, Some(200));
 }
 
-/// `apply_init` で更新された `u` 値が `WtSession::server(config)` 経由で
+/// `apply_init` で更新された `u` 値が `WtSession::server(config.clone(), config)` 経由で
 /// 単方向ストリームの初期最大データ量に反映されること
 #[test]
 fn test_apply_init_propagates_to_uni_stream_initial_max() {
@@ -248,7 +248,7 @@ fn test_apply_init_propagates_to_uni_stream_initial_max() {
         ..Default::default()
     });
     // サーバーセッションを構築し initiate してから自身で uni ストリームを開く
-    let mut session = WtSession::server(config);
+    let mut session = WtSession::server(config.clone(), config);
     session.initiate().expect("initiate");
     let stream_id = session.open_uni_stream().expect("open uni");
     let stream = session.stream(stream_id).expect("stream");
@@ -270,7 +270,7 @@ fn test_apply_init_propagates_to_bidi_local_stream_initial_max() {
         br: Some(updated),
         ..Default::default()
     });
-    let mut session = WtSession::server(config);
+    let mut session = WtSession::server(config.clone(), config);
     session.initiate().expect("initiate");
     let stream_id = session.open_bidi_stream().expect("open bidi");
     let stream = session.stream(stream_id).expect("stream");
@@ -291,7 +291,7 @@ fn test_apply_init_smaller_value_keeps_default_in_session() {
         u: Some(0),
         ..Default::default()
     });
-    let mut session = WtSession::server(config);
+    let mut session = WtSession::server(config.clone(), config);
     session.initiate().expect("initiate");
     let stream_id = session.open_uni_stream().expect("open uni");
     let stream = session.stream(stream_id).expect("stream");

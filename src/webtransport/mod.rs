@@ -193,8 +193,10 @@ impl WtConfig {
 pub struct WtSession {
     /// 接続の役割
     role: Role,
-    /// 設定
+    /// ローカル設定 (ローカルが広告したフロー制御値)
     config: WtConfig,
+    /// ピア設定 (ピアが広告したフロー制御値)
+    peer_config: WtConfig,
     /// セッション状態
     state: WtSessionState,
     /// ストリーム一覧
@@ -217,29 +219,39 @@ pub struct WtSession {
 
 impl WtSession {
     /// クライアントセッションを生成する
+    ///
+    /// `config` はローカルが広告するフロー制御値、`peer_config` はピアが広告したフロー制御値。
     #[must_use]
-    pub fn client(config: WtConfig) -> Self {
-        Self::new(Role::Client, config)
+    pub fn client(config: WtConfig, peer_config: WtConfig) -> Self {
+        Self::new(Role::Client, config, peer_config)
     }
 
     /// サーバーセッションを生成する
+    ///
+    /// `config` はローカルが広告するフロー制御値、`peer_config` はピアが広告したフロー制御値。
     #[must_use]
-    pub fn server(config: WtConfig) -> Self {
-        Self::new(Role::Server, config)
+    pub fn server(config: WtConfig, peer_config: WtConfig) -> Self {
+        Self::new(Role::Server, config, peer_config)
     }
 
     /// 新しいセッションを生成する
-    fn new(role: Role, config: WtConfig) -> Self {
+    fn new(role: Role, config: WtConfig, peer_config: WtConfig) -> Self {
         let is_client = role == Role::Client;
+        // send_max にはピアが広告した値、recv_max にはローカルが広告した値を使う
+        // (draft-ietf-webtrans-http2-15 Section 4.3.1)
         let flow_control = WtFlowControl::new(
+            peer_config.initial_max_data,
             config.initial_max_data,
             config.initial_max_streams_bidi,
+            peer_config.initial_max_streams_bidi,
             config.initial_max_streams_uni,
+            peer_config.initial_max_streams_uni,
         );
 
         Self {
             role,
             config,
+            peer_config,
             state: WtSessionState::Initial,
             streams: HashMap::new(),
             flow_control,
@@ -367,14 +379,21 @@ impl WtSession {
         };
 
         // draft-ietf-webtrans-http2-15 Section 11.2:
-        // BIDI_LOCAL はこの設定の送信者が開始した双方向ストリームの受信データに対する初期フロー制御上限
-        let initial_max_data = if bidirectional {
-            self.config.initial_max_stream_data_bidi_local
+        // ローカル開始ストリームの send_max はピアの BIDI_REMOTE / UNI (ピア視点で remote = ローカル開始)
+        // recv_max はローカルの BIDI_LOCAL / UNI (ローカルが開始したストリームの受信上限)
+        let (send_max, recv_max) = if bidirectional {
+            (
+                self.peer_config.initial_max_stream_data_bidi_remote,
+                self.config.initial_max_stream_data_bidi_local,
+            )
         } else {
-            self.config.initial_max_stream_data_uni
+            (
+                self.peer_config.initial_max_stream_data_uni,
+                self.config.initial_max_stream_data_uni,
+            )
         };
 
-        let stream = WtStream::new(stream_id, initial_max_data, bidirectional);
+        let stream = WtStream::new(stream_id, send_max, recv_max, bidirectional);
         self.streams.insert(stream_id, stream);
 
         // ストリーム数を更新
@@ -906,14 +925,21 @@ impl WtSession {
 
             let bidirectional = stream::stream_id::is_bidirectional(stream_id);
             // draft-ietf-webtrans-http2-15 Section 11.2:
-            // BIDI_REMOTE はこの設定の受信者が開始した双方向ストリームの受信データに対する初期フロー制御上限
-            let initial_max_data = if bidirectional {
-                self.config.initial_max_stream_data_bidi_remote
+            // ピア開始ストリームの send_max はピアの BIDI_LOCAL / UNI (ピア視点で local = ピア開始)
+            // recv_max はローカルの BIDI_REMOTE / UNI (ローカル視点で remote = ピア開始)
+            let (send_max, recv_max) = if bidirectional {
+                (
+                    self.peer_config.initial_max_stream_data_bidi_local,
+                    self.config.initial_max_stream_data_bidi_remote,
+                )
             } else {
-                self.config.initial_max_stream_data_uni
+                (
+                    self.peer_config.initial_max_stream_data_uni,
+                    self.config.initial_max_stream_data_uni,
+                )
             };
 
-            let stream = WtStream::new(stream_id, initial_max_data, bidirectional);
+            let stream = WtStream::new(stream_id, send_max, recv_max, bidirectional);
             self.streams.insert(stream_id, stream);
 
             self.events.push_back(WtEvent::StreamOpened {

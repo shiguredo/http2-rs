@@ -44,17 +44,27 @@ pub struct WtFlowControl {
 
 impl WtFlowControl {
     /// 新しいフロー制御を生成する
+    ///
+    /// `send_max` にはピアが広告した送信上限、`recv_max` にはローカルが広告した受信上限を渡す。
+    /// ストリーム数も local (ローカルが許可) / remote (ピアが許可) を別々に指定する。
     #[must_use]
-    pub fn new(initial_max_data: u64, max_streams_bidi: u64, max_streams_uni: u64) -> Self {
+    pub fn new(
+        send_max: u64,
+        recv_max: u64,
+        max_streams_bidi_local: u64,
+        max_streams_bidi_remote: u64,
+        max_streams_uni_local: u64,
+        max_streams_uni_remote: u64,
+    ) -> Self {
         Self {
-            send_max: initial_max_data,
+            send_max,
             send_offset: 0,
-            recv_max: initial_max_data,
+            recv_max,
             recv_offset: 0,
-            max_streams_bidi_local: max_streams_bidi,
-            max_streams_bidi_remote: max_streams_bidi,
-            max_streams_uni_local: max_streams_uni,
-            max_streams_uni_remote: max_streams_uni,
+            max_streams_bidi_local,
+            max_streams_bidi_remote,
+            max_streams_uni_local,
+            max_streams_uni_remote,
             opened_streams_bidi: 0,
             opened_streams_uni: 0,
         }
@@ -288,6 +298,6 @@ impl WtFlowControl {
 
 impl Default for WtFlowControl {
     fn default() -> Self {
-        Self::new(1_048_576, 100, 100)
+        Self::new(1_048_576, 1_048_576, 100, 100, 100, 100)
     }
 }

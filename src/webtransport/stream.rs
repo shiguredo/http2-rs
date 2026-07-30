@@ -234,8 +234,10 @@ pub struct WtStream {
 
 impl WtStream {
     /// 新しいストリームを生成する
+    ///
+    /// `send_max` にはピアが広告した送信上限、`recv_max` にはローカルが広告した受信上限を渡す。
     #[must_use]
-    pub fn new(id: WtStreamId, initial_max_data: u64, bidirectional: bool) -> Self {
+    pub fn new(id: WtStreamId, send_max: u64, recv_max: u64, bidirectional: bool) -> Self {
         Self {
             id,
             bidirectional,
@@ -243,8 +245,8 @@ impl WtStream {
             recv_state: RecvState::Recv,
             send_offset: 0,
             recv_offset: 0,
-            send_max: initial_max_data,
-            recv_max: initial_max_data,
+            send_max,
+            recv_max,
             stop_sending_sent: false,
             stop_sending_received: false,
             has_received_data: false,
