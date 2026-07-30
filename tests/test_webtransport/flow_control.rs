@@ -108,3 +108,25 @@ fn test_should_send_max_data() {
     fc.consume_recv(40000).expect("should succeed");
     assert!(fc.should_send_max_data(65536));
 }
+
+/// add_recv_max が varint MAX_VALUE を超えた場合にエラーを返すことを確認する
+#[test]
+fn test_add_recv_max_varint_overflow() {
+    use shiguredo_http2::webtransport::MAX_VALUE;
+
+    // MAX_VALUE ちょうどまで増加 → 成功
+    let mut fc = WtFlowControl::new(65536, 65536, 100, 100, 50, 50);
+    fc.add_recv_max(MAX_VALUE - 65536).expect("should succeed");
+    assert_eq!(fc.recv_max(), MAX_VALUE);
+
+    // これ以上増加 → エラー
+    assert!(fc.add_recv_max(1).is_err());
+}
+
+/// add_recv_max が saturating_add で u64::MAX に到達した場合もエラーを返すことを確認する
+#[test]
+fn test_add_recv_max_u64_max_overflow() {
+    let mut fc = WtFlowControl::new(u64::MAX, u64::MAX, 100, 100, 50, 50);
+    // u64::MAX + 1 は saturating_add で u64::MAX のまま → varint MAX_VALUE 超過でエラー
+    assert!(fc.add_recv_max(1).is_err());
+}

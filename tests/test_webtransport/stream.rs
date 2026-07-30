@@ -127,3 +127,20 @@ fn test_update_send_max() {
     // draft-ietf-webtrans-http2-15 Section 6.6: 減少はエラー
     assert!(stream.update_send_max(32768).is_err());
 }
+
+/// update_recv_max が varint MAX_VALUE を超えた場合にエラーを返すことを確認する
+#[test]
+fn test_update_recv_max_varint_overflow() {
+    use shiguredo_http2::webtransport::MAX_VALUE;
+
+    let mut stream = WtStream::new(0, 65536, 65536, true, true);
+
+    // MAX_VALUE ちょうど → 成功
+    stream
+        .update_recv_max(MAX_VALUE)
+        .expect("MAX_VALUE は成功すること");
+    assert_eq!(stream.recv_available(), MAX_VALUE);
+
+    // MAX_VALUE + 1 → エラー
+    assert!(stream.update_recv_max(MAX_VALUE + 1).is_err());
+}

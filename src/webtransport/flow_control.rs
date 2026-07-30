@@ -168,8 +168,16 @@ impl WtFlowControl {
     }
 
     /// 受信上限を増加する (WT_MAX_DATA 送信前に呼び出す)
+    ///
+    /// varint の最大値 (2^62 - 1) を超えた場合はエラーを返す。
     pub fn add_recv_max(&mut self, increment: u64) -> WtResult<()> {
         let new_max = self.recv_max.saturating_add(increment);
+        // varint エンコード可能な最大値を超えると WT_MAX_DATA のエンコードで panic するため
+        if new_max > super::varint::MAX_VALUE {
+            return Err(WtError::flow_control_error(
+                "recv_max exceeds varint maximum value",
+            ));
+        }
         self.recv_max = new_max;
         Ok(())
     }

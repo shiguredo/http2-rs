@@ -36,7 +36,10 @@ fuzz_target!(|input: FuzzInput| {
     // パニック安全性を検証する。
     let mut fc = WtFlowControl::new(
         input.initial_max_data,
+        input.initial_max_data,
         input.max_streams_bidi,
+        input.max_streams_bidi,
+        input.max_streams_uni,
         input.max_streams_uni,
     );
     for action in input.actions.iter().take(256) {
