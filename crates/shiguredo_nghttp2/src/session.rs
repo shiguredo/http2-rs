@@ -1,6 +1,6 @@
 //! nghttp2 セッション
 
-use crate::error::{Error, Result, check_nghttp2, check_nghttp2_with_value};
+use crate::error::{Error, Result, check_nghttp2};
 use crate::options::SessionOptions;
 use crate::types::{ErrorCode, FrameType, Header, Http2Event, SettingsId, StreamId};
 use std::collections::{HashMap, VecDeque};
@@ -188,7 +188,12 @@ impl Session {
         let result = unsafe {
             nghttp2_sys::nghttp2_session_mem_recv(self.session, data.as_ptr(), data.len())
         };
-        check_nghttp2_with_value(result as i32).map(|v| v as usize)
+        // nghttp2_session_mem_recv は ssize_t (isize) を返す。
+        // 負値はエラーコード、非負値は消費バイト数。
+        if result < 0 {
+            return Err(Error::from_nghttp2(result as i32));
+        }
+        Ok(result as usize)
     }
 
     /// 出力データを生成
