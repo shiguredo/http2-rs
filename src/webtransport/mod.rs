@@ -877,12 +877,14 @@ impl WtSession {
                 maximum: _,
             } => {
                 // draft-ietf-webtrans-http2-15 Section 6.9:
-                // クローズ済みまたはリセット済みのストリームでは
-                // WT_STREAM_STATE_ERROR
-                if let Some(stream) = self.streams.get(&stream_id)
-                    && !stream.can_recv()
-                    && !stream.can_send()
-                {
+                // 存在しないストリーム、または受信側がデータ受信不能な状態の
+                // ストリームへの WT_STREAM_DATA_BLOCKED は WT_STREAM_STATE_ERROR
+                let stream = self.streams.get(&stream_id).ok_or_else(|| {
+                    WtError::stream_state_error(
+                        "WT_STREAM_DATA_BLOCKED received for unknown stream",
+                    )
+                })?;
+                if !stream.can_recv() {
                     return Err(WtError::stream_state_error(
                         "WT_STREAM_DATA_BLOCKED received for stream not in valid state",
                     ));

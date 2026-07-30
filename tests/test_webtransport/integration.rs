@@ -149,8 +149,73 @@ fn send_after_close_errors() {
     let err = session.send_datagram(b"x").unwrap_err();
     assert_eq!(
         err.kind,
-        shiguredo_http2::webtransport::WtErrorKind::SessionStateError
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
     );
+}
+
+/// 存在しないストリーム ID への WT_STREAM_DATA_BLOCKED で WT_STREAM_STATE_ERROR が返ることを確認する
+/// (draft-ietf-webtrans-http2-15 Section 6.9)
+#[test]
+fn wt_stream_data_blocked_unknown_stream_errors() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("initiate should succeed");
+
+    // 存在しないストリーム ID への WT_STREAM_DATA_BLOCKED
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStreamDataBlocked {
+        stream_id: 999,
+        maximum: 1024,
+    });
+    session.feed(&encoder.take()).expect("feed should succeed");
+    let err = session.process().unwrap_err();
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason.contains("unknown stream"));
+}
+
+/// 受信側が終端状態のストリームに WT_STREAM_DATA_BLOCKED を受信した場合に
+/// WT_STREAM_STATE_ERROR が返ることを確認する
+/// (draft-ietf-webtrans-http2-15 Section 6.9)
+#[test]
+fn wt_stream_data_blocked_recv_terminal_state_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("initiate should succeed");
+
+    // クライアント開始 bidi ストリーム (ID=0) をピアが開設し FIN 付きで送信
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: 0,
+        data: b"hello".to_vec(),
+        fin: true,
+    });
+    session.feed(&encoder.take()).expect("feed should succeed");
+    session.process().expect("process should succeed");
+
+    // poll_event で StreamData { fin: true } を pop して DataRead に遷移させる
+    let mut found_fin = false;
+    while let Some(event) = session.poll_event() {
+        if let WtEvent::StreamData { fin: true, .. } = event {
+            found_fin = true;
+            break;
+        }
+    }
+    assert!(found_fin, "FIN 付き StreamData イベントが取得できること");
+
+    // 受信側が終端状態のストリームに WT_STREAM_DATA_BLOCKED を送信
+    let mut encoder2 = CapsuleEncoder::new();
+    encoder2.encode(&Capsule::WtStreamDataBlocked {
+        stream_id: 0,
+        maximum: 1024,
+    });
+    session.feed(&encoder2.take()).expect("feed should succeed");
+    let err = session.process().unwrap_err();
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason.contains("not in valid state"));
 }
 
 /// `open_bidi_stream` がローカルのストリーム上限で `flow_control_error`
