@@ -348,7 +348,7 @@ proptest! {
         max_data in 1u64..=10000,
         send_size in 1u64..=20000,
     ) {
-        let mut stream = WtStream::new(0, max_data, max_data, true);
+        let mut stream = WtStream::new(0, max_data, max_data, true, true);
 
         let result = stream.send_data(send_size, false);
         if send_size <= max_data {
@@ -364,7 +364,7 @@ proptest! {
         max_data in 1u64..=10000,
         recv_size in 1u64..=20000,
     ) {
-        let mut stream = WtStream::new(0, max_data, max_data, true);
+        let mut stream = WtStream::new(0, max_data, max_data, true, true);
 
         let result = stream.recv_data(recv_size, false);
         if recv_size <= max_data {
@@ -381,7 +381,7 @@ proptest! {
         chunk1 in 1u64..=500,
         chunk2 in 1u64..=500,
     ) {
-        let mut stream = WtStream::new(0, max_data, max_data, true);
+        let mut stream = WtStream::new(0, max_data, max_data, true, true);
 
         if chunk1 <= max_data {
             let r1 = stream.send_data(chunk1, false);

@@ -322,11 +322,11 @@ fn stop_sending_triggers_auto_reset_send_state() {
     }
 }
 
-/// DataSent 状態のストリームでは WT_STOP_SENDING 受信時に
+/// FIN 送信済み (DataRecvd) のストリームでは WT_STOP_SENDING 受信時に
 /// WT_RESET_STREAM が生成されないことを確認する。
 /// (draft-ietf-webtrans-http2-15 Section 6.3: 受信者はストリームが Ready または Send 状態の場合、同一エラーコードの WT_RESET_STREAM で応答する)
 #[test]
-fn stop_sending_no_auto_reset_data_sent_state() {
+fn stop_sending_no_auto_reset_after_fin_sent() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
@@ -346,7 +346,7 @@ fn stop_sending_no_auto_reset_data_sent_state() {
     session.feed(&encoder.take()).expect("feed should succeed");
     session.process().expect("process should succeed");
 
-    // DataSent では WT_RESET_STREAM が生成されない
+    // FIN 送信済み (DataRecvd) では WT_RESET_STREAM が生成されない
     assert!(!session.has_output());
 
     // ただし WtEvent::StopSending は発行される
@@ -753,4 +753,123 @@ fn asymmetric_flow_control_stream_send_uses_peer_value() {
         shiguredo_http2::webtransport::WtErrorKind::FlowControlError
     );
     assert!(err.reason.contains("stream send limit exceeded"));
+}
+
+/// 双方向ストリームが FIN 送受信で完全に閉じた後に HashMap から削除されることを確認する
+#[test]
+fn bidi_stream_removed_after_both_sides_close() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("initiate should succeed");
+
+    let stream_id = session.open_bidi_stream().expect("open should succeed");
+
+    // FIN 付きで送信 → 送信側は即座に DataRecvd (終端)
+    session
+        .send_stream_data(stream_id, b"hello", true)
+        .expect("send should succeed");
+
+    // まだ受信側が閉じていないのでストリームは残っている
+    assert!(
+        session.stream(stream_id).is_some(),
+        "stream should still exist before recv side closes"
+    );
+
+    // ピアから FIN 付きデータを受信
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id,
+        data: b"world".to_vec(),
+        fin: true,
+    });
+    session.feed(&encoder.take()).expect("feed should succeed");
+    session.process().expect("process should succeed");
+
+    // poll_event で StreamData { fin: true } を pop すると DataRead に遷移して削除される
+    let mut got_fin = false;
+    while let Some(event) = session.poll_event() {
+        if let WtEvent::StreamData { fin: true, .. } = event {
+            got_fin = true;
+        }
+    }
+    assert!(got_fin, "should receive StreamData with fin=true");
+
+    // 両側が閉じたのでストリームは削除されている
+    assert!(
+        session.stream(stream_id).is_none(),
+        "stream should be removed after both sides close"
+    );
+}
+
+/// 送信専用単方向ストリームが FIN 送信で即座に削除されることを確認する
+#[test]
+fn uni_send_stream_removed_after_fin() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("initiate should succeed");
+
+    let stream_id = session.open_uni_stream().expect("open should succeed");
+
+    // FIN 付きで送信 → 送信専用 uni は即座に閉じて削除される
+    session
+        .send_stream_data(stream_id, b"data", true)
+        .expect("send should succeed");
+
+    assert!(
+        session.stream(stream_id).is_none(),
+        "send-only uni stream should be removed after FIN"
+    );
+}
+
+/// 受信専用単方向ストリームが FIN 受信 + poll_event で削除されることを確認する
+#[test]
+fn uni_recv_stream_removed_after_fin_and_poll() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("initiate should succeed");
+
+    // クライアント開始 uni ストリーム (ID=2) をピアが開設
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: 2,
+        data: b"data".to_vec(),
+        fin: true,
+    });
+    session.feed(&encoder.take()).expect("feed should succeed");
+    session.process().expect("process should succeed");
+
+    // poll_event で StreamData { fin: true } を pop すると削除される
+    while let Some(event) = session.poll_event() {
+        if let WtEvent::StreamData { fin: true, .. } = event {
+            break;
+        }
+    }
+
+    assert!(
+        session.stream(2).is_none(),
+        "recv-only uni stream should be removed after FIN and poll"
+    );
+}
+
+/// ストリーム削除後もフロー制御の累積カウントが正しく動作することを確認する
+#[test]
+fn flow_control_cumulative_count_works_after_stream_removal() {
+    let peer_config = WtConfig {
+        initial_max_streams_bidi: 2,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::client(WtConfig::default(), peer_config);
+    session.initiate().expect("initiate should succeed");
+
+    // 2 つのストリームを開いて閉じる
+    for _ in 0..2 {
+        let stream_id = session.open_bidi_stream().expect("open should succeed");
+        session
+            .send_stream_data(stream_id, b"x", true)
+            .expect("send should succeed");
+    }
+
+    // 累積カウントにより 3 つ目のストリームは制限に達する
+    let err = session.open_bidi_stream().unwrap_err();
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
 }

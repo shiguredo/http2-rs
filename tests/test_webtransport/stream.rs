@@ -40,7 +40,7 @@ fn test_stream_id_server_uni() {
 
 #[test]
 fn test_stream_creation() {
-    let stream = WtStream::new(0, 65536, 65536, true);
+    let stream = WtStream::new(0, 65536, 65536, true, true);
     assert_eq!(stream.id(), 0);
     assert!(stream.is_bidirectional());
     assert_eq!(stream.send_state(), SendState::Ready);
@@ -51,7 +51,7 @@ fn test_stream_creation() {
 
 #[test]
 fn test_send_data() {
-    let mut stream = WtStream::new(0, 65536, 65536, true);
+    let mut stream = WtStream::new(0, 65536, 65536, true, true);
 
     stream
         .send_data(100, false)
@@ -60,17 +60,18 @@ fn test_send_data() {
     assert_eq!(stream.send_offset(), 100);
     assert!(stream.can_send());
 
+    // draft-ietf-webtrans-http2-15 Section 5.2: FIN 送信で即座に DataRecvd へ遷移
     stream
         .send_data(100, true)
         .expect("operation should succeed");
-    assert_eq!(stream.send_state(), SendState::DataSent);
+    assert_eq!(stream.send_state(), SendState::DataRecvd);
     assert_eq!(stream.send_offset(), 200);
     assert!(!stream.can_send());
 }
 
 #[test]
 fn test_recv_data() {
-    let mut stream = WtStream::new(0, 65536, 65536, true);
+    let mut stream = WtStream::new(0, 65536, 65536, true, true);
 
     stream
         .recv_data(100, false)
@@ -79,40 +80,43 @@ fn test_recv_data() {
     assert_eq!(stream.recv_offset(), 100);
     assert!(stream.can_recv());
 
+    // draft-ietf-webtrans-http2-15 Section 5.2: FIN 受信で即座に DataRecvd へ遷移
     stream
         .recv_data(100, true)
         .expect("operation should succeed");
-    assert_eq!(stream.recv_state(), RecvState::SizeKnown);
+    assert_eq!(stream.recv_state(), RecvState::DataRecvd);
     assert_eq!(stream.recv_offset(), 200);
 }
 
 #[test]
 fn test_send_reset() {
-    let mut stream = WtStream::new(0, 65536, 65536, true);
+    let mut stream = WtStream::new(0, 65536, 65536, true, true);
 
     stream
         .send_data(100, false)
         .expect("operation should succeed");
+    // draft-ietf-webtrans-http2-15 Section 5.2: リセット送信で即座に ResetRecvd へ遷移
     stream.send_reset();
-    assert_eq!(stream.send_state(), SendState::ResetSent);
+    assert_eq!(stream.send_state(), SendState::ResetRecvd);
     assert!(!stream.can_send());
 }
 
 #[test]
 fn test_recv_reset() {
-    let mut stream = WtStream::new(0, 65536, 65536, true);
+    let mut stream = WtStream::new(0, 65536, 65536, true, true);
 
     stream
         .recv_data(100, false)
         .expect("operation should succeed");
+    // draft-ietf-webtrans-http2-15 Section 5.2: リセット受信で即座に ResetRead へ遷移
     stream.recv_reset();
-    assert_eq!(stream.recv_state(), RecvState::ResetRecvd);
+    assert_eq!(stream.recv_state(), RecvState::ResetRead);
     assert!(!stream.can_recv());
 }
 
 #[test]
 fn test_update_send_max() {
-    let mut stream = WtStream::new(0, 65536, 65536, true);
+    let mut stream = WtStream::new(0, 65536, 65536, true, true);
     assert_eq!(stream.send_available(), 65536);
 
     stream
