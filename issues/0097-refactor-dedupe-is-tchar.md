@@ -1,7 +1,7 @@
 # webtransport モジュール内の is_tchar 重複を解消する
 
 - Created: 2026-07-30
-- Completed: {Completed}
+- Completed: 2026-07-31
 - Branch: feature/refactor-dedupe-is-tchar
 - Polished: 2026-07-30
 
