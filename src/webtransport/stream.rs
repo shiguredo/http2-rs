@@ -206,6 +206,8 @@ pub struct WtStream {
     id: WtStreamId,
     /// 双方向ストリームかどうか
     bidirectional: bool,
+    /// ローカルが開設したストリームかどうか
+    locally_initiated: bool,
     /// 送信状態
     send_state: SendState,
     /// 受信状態
@@ -237,10 +239,17 @@ impl WtStream {
     ///
     /// `send_max` にはピアが広告した送信上限、`recv_max` にはローカルが広告した受信上限を渡す。
     #[must_use]
-    pub fn new(id: WtStreamId, send_max: u64, recv_max: u64, bidirectional: bool) -> Self {
+    pub fn new(
+        id: WtStreamId,
+        send_max: u64,
+        recv_max: u64,
+        bidirectional: bool,
+        locally_initiated: bool,
+    ) -> Self {
         Self {
             id,
             bidirectional,
+            locally_initiated,
             send_state: SendState::Ready,
             recv_state: RecvState::Recv,
             send_offset: 0,
@@ -342,10 +351,13 @@ impl WtStream {
             return Err(WtError::flow_control_error("stream send limit exceeded"));
         }
         self.send_offset = new_offset;
-        self.send_state = SendState::Send;
 
         if fin {
-            self.send_state = SendState::DataSent;
+            // draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 の順序配送により
+            // ACK が不要なため、DataSent を経由せず即座に DataRecvd へ遷移する
+            self.send_state = SendState::DataRecvd;
+        } else {
+            self.send_state = SendState::Send;
         }
 
         Ok(())
@@ -353,7 +365,9 @@ impl WtStream {
 
     /// リセットを送信する
     pub fn send_reset(&mut self) {
-        self.send_state = SendState::ResetSent;
+        // draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 の順序配送により
+        // ACK が不要なため、ResetSent を経由せず即座に ResetRecvd へ遷移する
+        self.send_state = SendState::ResetRecvd;
     }
 
     /// データを受信する
@@ -377,7 +391,9 @@ impl WtStream {
         self.recv_offset = new_offset;
 
         if fin {
-            self.recv_state = RecvState::SizeKnown;
+            // draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 の順序配送により
+            // 全データ到着済みなので、SizeKnown を経由せず即座に DataRecvd へ遷移する
+            self.recv_state = RecvState::DataRecvd;
         }
 
         Ok(())
@@ -385,7 +401,19 @@ impl WtStream {
 
     /// リセットを受信する
     pub fn recv_reset(&mut self) {
-        self.recv_state = RecvState::ResetRecvd;
+        // draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 の順序配送により
+        // 即座に ResetRead へ遷移する
+        self.recv_state = RecvState::ResetRead;
+    }
+
+    /// 受信データをアプリケーションが読み取ったことをマークする
+    ///
+    /// `poll_event()` で `StreamData { fin: true }` を pop した際に呼び出す。
+    /// DataRecvd → DataRead へ遷移する。
+    pub fn mark_data_read(&mut self) {
+        if self.recv_state == RecvState::DataRecvd {
+            self.recv_state = RecvState::DataRead;
+        }
     }
 
     /// 送信上限を更新する
@@ -412,9 +440,19 @@ impl WtStream {
     }
 
     /// ストリームが完全に閉じたかどうかを返す
+    ///
+    /// 双方向: 送信側と受信側の両方が終端状態
+    /// 送信専用単方向 (ローカル開設 uni): 送信側の終端のみ
+    /// 受信専用単方向 (ピア開設 uni): 受信側の終端のみ
     #[must_use]
     pub const fn is_closed(&self) -> bool {
-        self.send_state.is_terminal() && self.recv_state.is_terminal()
+        if self.bidirectional {
+            self.send_state.is_terminal() && self.recv_state.is_terminal()
+        } else if self.locally_initiated {
+            self.send_state.is_terminal()
+        } else {
+            self.recv_state.is_terminal()
+        }
     }
 
     /// STOP_SENDING を送信済みかどうかを返す

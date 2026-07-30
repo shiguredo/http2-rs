@@ -348,9 +348,27 @@ impl WtSession {
     }
 
     /// イベントを取得する
-    #[must_use]
+    ///
+    /// `StreamData { fin: true }` を pop した際に、対象ストリームの受信状態を
+    /// DataRecvd → DataRead へ遷移させ、完全に閉じていればストリームを削除する。
     pub fn poll_event(&mut self) -> Option<WtEvent> {
-        self.events.pop_front()
+        let event = self.events.pop_front()?;
+
+        // draft-ietf-webtrans-http2-15 Section 5.2: FIN 付きデータを読み取った時点で
+        // DataRecvd → DataRead へ遷移し、閉じたストリームを削除する
+        if let WtEvent::StreamData {
+            stream_id,
+            fin: true,
+            ..
+        } = &event
+        {
+            if let Some(stream) = self.streams.get_mut(stream_id) {
+                stream.mark_data_read();
+            }
+            self.remove_if_closed(*stream_id);
+        }
+
+        Some(event)
     }
 
     /// 出力バッファにデータがあるかどうかを返す
@@ -415,7 +433,7 @@ impl WtSession {
             )
         };
 
-        let stream = WtStream::new(stream_id, send_max, recv_max, bidirectional);
+        let stream = WtStream::new(stream_id, send_max, recv_max, bidirectional, true);
         self.streams.insert(stream_id, stream);
 
         // ストリーム数を更新
@@ -466,6 +484,11 @@ impl WtSession {
         self.capsule_encoder.encode(&capsule);
         self.output_buffer.extend(self.capsule_encoder.take());
 
+        // 送信専用 uni ストリームは FIN 送信で即座に閉じる
+        if fin {
+            self.remove_if_closed(stream_id);
+        }
+
         Ok(())
     }
 
@@ -497,6 +520,9 @@ impl WtSession {
 
         // 送信状態を更新
         stream.send_reset();
+
+        // 送信専用 uni ストリームはリセット送信で即座に閉じる
+        self.remove_if_closed(stream_id);
 
         Ok(())
     }
@@ -785,6 +811,9 @@ impl WtSession {
                     stream_id,
                     error_code,
                 });
+
+                // リセット受信で閉じたストリームを削除する
+                self.remove_if_closed(stream_id);
             }
             Capsule::WtStopSending {
                 stream_id,
@@ -961,7 +990,7 @@ impl WtSession {
                 )
             };
 
-            let stream = WtStream::new(stream_id, send_max, recv_max, bidirectional);
+            let stream = WtStream::new(stream_id, send_max, recv_max, bidirectional, false);
             self.streams.insert(stream_id, stream);
 
             self.events.push_back(WtEvent::StreamOpened {
@@ -994,5 +1023,16 @@ impl WtSession {
         });
 
         Ok(())
+    }
+
+    /// ストリームが完全に閉じていれば HashMap から削除する
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 の順序配送により
+    /// ACK が不要なため、終端状態への遷移は即座に行われる。
+    /// 閉じたストリームの状態オブジェクトを保持し続ける必要はない。
+    fn remove_if_closed(&mut self, stream_id: WtStreamId) {
+        if self.streams.get(&stream_id).is_some_and(|s| s.is_closed()) {
+            self.streams.remove(&stream_id);
+        }
     }
 }
