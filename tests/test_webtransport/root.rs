@@ -228,3 +228,89 @@ fn test_duplicate_operations_are_errors() {
         .expect("open stream should succeed");
     assert!(session.stop_sending(stream_id2, error_code).is_err());
 }
+
+/// draft-ietf-webtrans-http2-15 Section 6.7: send_max_streams で 2^60 を超える値はエラー
+#[test]
+fn test_send_max_streams_exceeds_2_60() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("initiate should succeed");
+
+    // 2^60 ちょうどは成功
+    session
+        .send_max_streams(1u64 << 60, true)
+        .expect("2^60 は成功すること");
+
+    // 2^60 + 1 はエラー
+    let err = session
+        .send_max_streams((1u64 << 60) + 1, true)
+        .unwrap_err();
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+}
+
+/// draft-ietf-webtrans-http2-15 Section 6.13: Draining 状態でもストリーム開設・データ送信・データグラム送信が許可される
+#[test]
+fn test_draining_state_allows_operations() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("initiate should succeed");
+
+    // Active 中にストリームを開設
+    let stream_id = session.open_bidi_stream().expect("open should succeed");
+
+    // Draining に遷移
+    session.drain().expect("drain should succeed");
+    assert_eq!(session.state(), WtSessionState::Draining);
+
+    // Draining 状態でもストリーム開設が許可される
+    let stream_id2 = session.open_bidi_stream().expect("open should succeed");
+    assert_ne!(stream_id, stream_id2);
+
+    // Draining 状態でもデータ送信が許可される
+    session
+        .send_stream_data(stream_id, b"hello", false)
+        .expect("send should succeed");
+
+    // Draining 状態でもデータグラム送信が許可される
+    session
+        .send_datagram(b"datagram")
+        .expect("send should succeed");
+}
+
+/// WtConfig::overlay_settings が SETTINGS 値で上書きし、None 時は既存値を維持することを確認する
+/// (draft-ietf-webtrans-http2-15 Section 4.3.1)
+#[test]
+fn test_overlay_settings() {
+    use shiguredo_http2::settings::{Setting, Settings};
+
+    let mut config = WtConfig::default();
+    let original_max_data = config.initial_max_data;
+
+    // SETTINGS に WT_INITIAL_MAX_DATA を設定
+    let mut settings = Settings::default();
+    settings.apply(Setting::WtInitialMaxData(999_999));
+    settings.apply(Setting::WtInitialMaxStreamsBidi(42));
+
+    config.overlay_settings(&settings);
+
+    // 設定された値は上書きされる
+    assert_eq!(config.initial_max_data, 999_999);
+    assert_eq!(config.initial_max_streams_bidi, 42);
+
+    // 設定されていない値 (None) は既存値が維持される
+    assert_eq!(
+        config.initial_max_stream_data_uni,
+        WtConfig::default().initial_max_stream_data_uni
+    );
+    assert_eq!(
+        config.initial_max_streams_uni,
+        WtConfig::default().initial_max_streams_uni
+    );
+
+    // 空の SETTINGS では全て既存値が維持される
+    let mut config2 = WtConfig::default();
+    let empty_settings = Settings::default();
+    config2.overlay_settings(&empty_settings);
+    assert_eq!(config2.initial_max_data, original_max_data);
+}
