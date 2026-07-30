@@ -130,3 +130,18 @@ fn test_add_recv_max_u64_max_overflow() {
     // u64::MAX + 1 は saturating_add で u64::MAX のまま → varint MAX_VALUE 超過でエラー
     assert!(fc.add_recv_max(1).is_err());
 }
+
+/// update_max_streams で 2^60 を超える値はエラーになることを確認する
+/// (draft-ietf-webtrans-http2-15 Section 6.7)
+#[test]
+fn test_update_max_streams_exceeds_2_60() {
+    let mut fc = WtFlowControl::new(65536, 65536, 100, 100, 50, 50);
+
+    // 2^60 ちょうどは成功
+    fc.update_max_streams(1u64 << 60, true)
+        .expect("2^60 は成功すること");
+
+    // 2^60 + 1 はエラー
+    assert!(fc.update_max_streams((1u64 << 60) + 1, true).is_err());
+    assert!(fc.update_max_streams((1u64 << 60) + 1, false).is_err());
+}

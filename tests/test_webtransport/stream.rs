@@ -144,3 +144,59 @@ fn test_update_recv_max_varint_overflow() {
     // MAX_VALUE + 1 → エラー
     assert!(stream.update_recv_max(MAX_VALUE + 1).is_err());
 }
+
+/// DataRecvd (FIN 送信済み) 後の send_data はエラーになることを確認する
+#[test]
+fn test_send_data_after_fin_is_error() {
+    let mut stream = WtStream::new(0, 65536, 65536, true, true);
+
+    // FIN 付きで送信 → DataRecvd に遷移
+    stream
+        .send_data(100, true)
+        .expect("operation should succeed");
+    assert_eq!(stream.send_state(), SendState::DataRecvd);
+
+    // DataRecvd 後の send_data はエラー
+    assert!(stream.send_data(100, false).is_err());
+}
+
+/// DataRecvd (FIN 受信済み) 後の recv_data はエラーになることを確認する
+#[test]
+fn test_recv_data_after_fin_is_error() {
+    let mut stream = WtStream::new(0, 65536, 65536, true, true);
+
+    // FIN 付きで受信 → DataRecvd に遷移
+    stream
+        .recv_data(100, true)
+        .expect("operation should succeed");
+    assert_eq!(stream.recv_state(), RecvState::DataRecvd);
+
+    // DataRecvd 後の recv_data はエラー
+    assert!(stream.recv_data(100, false).is_err());
+}
+
+/// ResetRead (リセット受信済み) 後の recv_data はエラーになることを確認する
+#[test]
+fn test_recv_data_after_reset_is_error() {
+    let mut stream = WtStream::new(0, 65536, 65536, true, true);
+
+    // リセット受信 → ResetRead に遷移
+    stream.recv_reset();
+    assert_eq!(stream.recv_state(), RecvState::ResetRead);
+
+    // ResetRead 後の recv_data はエラー
+    assert!(stream.recv_data(100, false).is_err());
+}
+
+/// ResetRecvd (リセット送信済み) 後の send_data はエラーになることを確認する
+#[test]
+fn test_send_data_after_reset_is_error() {
+    let mut stream = WtStream::new(0, 65536, 65536, true, true);
+
+    // リセット送信 → ResetRecvd に遷移
+    stream.send_reset();
+    assert_eq!(stream.send_state(), SendState::ResetRecvd);
+
+    // ResetRecvd 後の send_data はエラー
+    assert!(stream.send_data(100, false).is_err());
+}

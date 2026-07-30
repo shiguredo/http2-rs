@@ -1,7 +1,7 @@
 # WebTransport フロー制御の境界値テストと公開 API テストを追加する
 
 - Created: 2026-07-30
-- Completed: {Completed}
+- Completed: 2026-07-31
 - Branch: feature/add-wt-flow-control-boundary-tests
 - Polished: 2026-07-30
 
