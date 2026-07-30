@@ -126,6 +126,8 @@
   - @voluntas
 - [FIX] `CapsuleDecoder::feed` にバッファサイズ上限 (デフォルト 16 MiB) を追加し、不完全なカプセルを送り続ける DoS 攻撃を防止する
   - @voluntas
+- [FIX] Sans I/O 層で `:protocol=webtransport` 時の `:scheme=https` 検証を追加し、`:scheme=http` のリクエストを拒否する (draft-ietf-webtrans-http2-15 Section 3.2)
+  - @voluntas
 - [FIX] HPACK デコーダがインデックス参照爆弾でメモリを無制限に確保する問題を修正する。受信ヘッダーのデコード後サイズ (`SETTINGS_MAX_HEADER_LIST_SIZE`) を展開途中で逐次検査し、超過時に展開を打ち切って COMPRESSION_ERROR の接続エラーにする (従来はデコード完了後に検査していたため、巨大なヘッダーリストを展開しきってからしか拒否できなかった) (RFC 9113 §6.5.2 / §4.3、DoS 背景は §10.5.1) (issue 0050)
   - @voluntas
 - [FIX] CONTINUATION フレームの累積ヘッダーブロックフラグメントが無制限に成長する問題を修正する。累積サイズが `SETTINGS_MAX_HEADER_LIST_SIZE` を超えると COMPRESSION_ERROR の接続エラーにする (RFC 9113 §6.10 / §4.3) (issue 0050)

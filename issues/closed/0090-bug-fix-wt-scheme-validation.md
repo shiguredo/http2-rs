@@ -1,7 +1,7 @@
 # Sans I/O 層で :protocol=webtransport 時の :scheme=https 検証を追加する
 
 - Created: 2026-07-30
-- Completed: {Completed}
+- Completed: 2026-07-31
 - Branch: feature/fix-wt-scheme-validation
 - Polished: 2026-07-30
 
