@@ -597,7 +597,6 @@ impl CapsuleDecoder {
                 }
                 // draft-ietf-webtrans-http2-15 Section 6.12:
                 // 1024 超または非 UTF-8 は session error WT_ERROR として扱う (MUST)。
-                // 0077 完了後は ErrorCode::WtError に対応付ける。
                 let reason_len = payload.len() - 4;
                 if reason_len > MAX_CLOSE_REASON_LEN {
                     return Err(WtError::session_state_error(

@@ -1,7 +1,7 @@
 # ソースコード内の issue 番号参照を削除する
 
 - Created: 2026-07-30
-- Completed: {Completed}
+- Completed: 2026-07-31
 - Branch: feature/refactor-remove-issue-number-from-source
 - Polished: 2026-07-30
 
