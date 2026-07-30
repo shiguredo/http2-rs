@@ -1,7 +1,7 @@
 # WtSession::streams から閉じたストリームを削除してメモリリークを修正する
 
 - Created: 2026-07-30
-- Completed: {Completed}
+- Completed: 2026-07-31
 - Branch: feature/fix-wt-stream-memory-leak
 - Polished: 2026-07-30
 
