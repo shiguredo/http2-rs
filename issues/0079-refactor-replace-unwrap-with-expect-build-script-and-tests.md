@@ -2,7 +2,8 @@
 
 - Priority: Low
 - Created: 2026-06-12
-- Polished: {Polished}
+- Completed: 2026-07-31
+- Polished: 2026-07-31
 - Model: Opus 4.7
 - Branch: feature/refactor-replace-unwrap-with-expect-build-script-and-tests
 
@@ -74,6 +75,10 @@ build script 内に `.unwrap()` が 6 箇所存在 (`grep -n "\.unwrap()" crates
 ## 解決方法
 
 issue 0075 マージ後に着手する。詳細な置換手順とテストの量に応じた分割可否は `/polish-issue` で磨き上げる。
+
+## 解決方法
+
+`crates/nghttp2-sys/build.rs` および `tests/` 配下の `.unwrap()` は既に全て `.expect()` に置換済みであることを確認した (`grep -rn "\.unwrap()" crates/nghttp2-sys/build.rs tests/` の結果が 0 件)。本 issue の目的は達成されているため closed にする。
 
 ## 参照
 
