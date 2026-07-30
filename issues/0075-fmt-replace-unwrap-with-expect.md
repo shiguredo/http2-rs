@@ -2,6 +2,7 @@
 
 - Priority: Low
 - Created: 2026-06-11
+- Completed: 2026-07-31
 - Polished: 2026-06-12
 - Model: deepseek-v4-pro
 - Branch: feature/refactor-replace-unwrap-with-expect
@@ -144,6 +145,10 @@ let listen: String = noargs::opt("listen")
 - `cargo build --workspace` が成功する
 - `cargo test --workspace` が成功する
 - `cargo clippy --workspace --all-targets -- -D warnings` が通過する
+
+## 解決方法
+
+`examples/` 配下の `.unwrap()` は既に全て `.expect()` に置換済みであることを確認した (`grep -rn "\.unwrap()" examples/` の結果が 0 件)。本 issue の目的は達成されているため closed にする。
 
 ## 参照
 
