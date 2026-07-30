@@ -214,12 +214,19 @@ impl WtServerRequest {
         // セッション確立時は ACK 済みの自広告 SETTINGS 初期値を適用する。
         config.overlay_settings(conn.local_settings());
 
+        // draft-ietf-webtrans-http2-15 Section 4.3.1:
+        // ピア (クライアント) の SETTINGS からピア用 WtConfig を構築する。
+        // send_max はピアの広告値を使う (Section 4.3.1)
+        let mut peer_config = WtConfig::default();
+        peer_config.overlay_settings(conn.remote_settings());
+
         // draft-ietf-webtrans-http2-15 Section 4.3 (L480-L483) / Section 4.3.2 (L525-L540):
-        // WebTransport-Init が存在する場合は RFC 8941 Dictionary としてパースし、
-        // SETTINGS 値と max マージする。パース失敗・型不一致・値範囲外は MUST 4xx 拒否。
+        // WebTransport-Init はクライアントが送信するヘッダーであり、クライアントの広告値を含む。
+        // ピア用 config には bl/br のマッピングが逆転するため apply_init_as_peer を使う。
+        // パース失敗・型不一致・値範囲外は MUST 4xx 拒否。
         if let Some(bytes) = init_bytes {
             match WtInit::parse(&bytes) {
-                Ok(init) => config.apply_init(&init),
+                Ok(init) => peer_config.apply_init_as_peer(&init),
                 Err(e) => {
                     let response = vec![HeaderField::from_static(b":status", b"400")];
                     conn.send_response(stream_id, response, true).await?;
@@ -271,7 +278,7 @@ impl WtServerRequest {
         conn.send_response(stream_id, response, false).await?;
 
         // WtSession を作成して Active 状態にする
-        let mut wt_session = WtSession::server(config);
+        let mut wt_session = WtSession::server(config, peer_config);
         wt_session.initiate()?;
 
         // Actor channels

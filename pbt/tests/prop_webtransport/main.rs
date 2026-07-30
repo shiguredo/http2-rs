@@ -348,7 +348,7 @@ proptest! {
         max_data in 1u64..=10000,
         send_size in 1u64..=20000,
     ) {
-        let mut stream = WtStream::new(0, max_data, true);
+        let mut stream = WtStream::new(0, max_data, max_data, true);
 
         let result = stream.send_data(send_size, false);
         if send_size <= max_data {
@@ -364,7 +364,7 @@ proptest! {
         max_data in 1u64..=10000,
         recv_size in 1u64..=20000,
     ) {
-        let mut stream = WtStream::new(0, max_data, true);
+        let mut stream = WtStream::new(0, max_data, max_data, true);
 
         let result = stream.recv_data(recv_size, false);
         if recv_size <= max_data {
@@ -381,7 +381,7 @@ proptest! {
         chunk1 in 1u64..=500,
         chunk2 in 1u64..=500,
     ) {
-        let mut stream = WtStream::new(0, max_data, true);
+        let mut stream = WtStream::new(0, max_data, max_data, true);
 
         if chunk1 <= max_data {
             let r1 = stream.send_data(chunk1, false);
@@ -473,9 +473,9 @@ proptest! {
         ops in prop::collection::vec(session_op(), 0..30),
     ) {
         let mut session = if is_client {
-            WtSession::client(WtConfig::default())
+            WtSession::client(WtConfig::default(), WtConfig::default())
         } else {
-            WtSession::server(WtConfig::default())
+            WtSession::server(WtConfig::default(), WtConfig::default())
         };
 
         for op in &ops {
@@ -508,9 +508,9 @@ proptest! {
         ops_after in prop::collection::vec(session_op(), 1..10),
     ) {
         let mut session = if is_client {
-            WtSession::client(WtConfig::default())
+            WtSession::client(WtConfig::default(), WtConfig::default())
         } else {
-            WtSession::server(WtConfig::default())
+            WtSession::server(WtConfig::default(), WtConfig::default())
         };
 
         // 操作を適用
@@ -546,9 +546,9 @@ proptest! {
         ops in prop::collection::vec(session_op(), 0..30),
     ) {
         let mut session = if is_client {
-            WtSession::client(WtConfig::default())
+            WtSession::client(WtConfig::default(), WtConfig::default())
         } else {
-            WtSession::server(WtConfig::default())
+            WtSession::server(WtConfig::default(), WtConfig::default())
         };
 
         // 状態の順序を定義
@@ -602,9 +602,9 @@ proptest! {
         ),
     ) {
         let mut session = if is_client {
-            WtSession::client(WtConfig::default())
+            WtSession::client(WtConfig::default(), WtConfig::default())
         } else {
-            WtSession::server(WtConfig::default())
+            WtSession::server(WtConfig::default(), WtConfig::default())
         };
         session.initiate().expect("initiate should succeed");
 

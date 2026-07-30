@@ -2,14 +2,14 @@ use shiguredo_http2::webtransport::WtFlowControl;
 
 #[test]
 fn test_new_flow_control() {
-    let fc = WtFlowControl::new(65536, 100, 50);
+    let fc = WtFlowControl::new(65536, 65536, 100, 100, 50, 50);
     assert_eq!(fc.send_available(), 65536);
     assert_eq!(fc.recv_available(), 65536);
 }
 
 #[test]
 fn test_consume_send() {
-    let mut fc = WtFlowControl::new(65536, 100, 50);
+    let mut fc = WtFlowControl::new(65536, 65536, 100, 100, 50, 50);
 
     fc.consume_send(1000).expect("construction should succeed");
     assert_eq!(fc.send_available(), 64536);
@@ -18,7 +18,7 @@ fn test_consume_send() {
 
 #[test]
 fn test_consume_send_exhausted() {
-    let mut fc = WtFlowControl::new(100, 100, 50);
+    let mut fc = WtFlowControl::new(100, 100, 100, 100, 50, 50);
 
     fc.consume_send(100).expect("construction should succeed");
     assert!(fc.consume_send(1).is_err());
@@ -26,7 +26,7 @@ fn test_consume_send_exhausted() {
 
 #[test]
 fn test_consume_recv() {
-    let mut fc = WtFlowControl::new(65536, 100, 50);
+    let mut fc = WtFlowControl::new(65536, 65536, 100, 100, 50, 50);
 
     fc.consume_recv(1000).expect("construction should succeed");
     assert_eq!(fc.recv_available(), 64536);
@@ -35,7 +35,7 @@ fn test_consume_recv() {
 
 #[test]
 fn test_consume_recv_exceeded() {
-    let mut fc = WtFlowControl::new(100, 100, 50);
+    let mut fc = WtFlowControl::new(100, 100, 100, 100, 50, 50);
 
     fc.consume_recv(100).expect("construction should succeed");
     assert!(fc.consume_recv(1).is_err());
@@ -43,7 +43,7 @@ fn test_consume_recv_exceeded() {
 
 #[test]
 fn test_update_send_max() {
-    let mut fc = WtFlowControl::new(65536, 100, 50);
+    let mut fc = WtFlowControl::new(65536, 65536, 100, 100, 50, 50);
 
     fc.consume_send(65536).expect("construction should succeed");
     assert!(fc.is_send_blocked());
@@ -55,7 +55,7 @@ fn test_update_send_max() {
 
 #[test]
 fn test_update_send_max_decrease_error() {
-    let mut fc = WtFlowControl::new(65536, 100, 50);
+    let mut fc = WtFlowControl::new(65536, 65536, 100, 100, 50, 50);
 
     // draft-ietf-webtrans-http2-15 Section 6.5: 減少はエラー
     assert!(fc.update_send_max(32768).is_err());
@@ -63,7 +63,7 @@ fn test_update_send_max_decrease_error() {
 
 #[test]
 fn test_stream_limits() {
-    let mut fc = WtFlowControl::new(65536, 2, 1);
+    let mut fc = WtFlowControl::new(65536, 65536, 2, 2, 1, 1);
 
     assert!(fc.can_open_bidi_stream());
     assert!(fc.can_open_uni_stream());
@@ -80,7 +80,7 @@ fn test_stream_limits() {
 
 #[test]
 fn test_update_max_streams() {
-    let mut fc = WtFlowControl::new(65536, 2, 1);
+    let mut fc = WtFlowControl::new(65536, 65536, 2, 2, 1, 1);
 
     fc.opened_stream(true);
     fc.opened_stream(true);
@@ -92,7 +92,7 @@ fn test_update_max_streams() {
 
 #[test]
 fn test_update_max_streams_decrease_error() {
-    let mut fc = WtFlowControl::new(65536, 100, 50);
+    let mut fc = WtFlowControl::new(65536, 65536, 100, 100, 50, 50);
 
     // draft-ietf-webtrans-http2-15 Section 6.7: 減少はエラー
     assert!(fc.update_max_streams(50, true).is_err());
@@ -101,7 +101,7 @@ fn test_update_max_streams_decrease_error() {
 
 #[test]
 fn test_should_send_max_data() {
-    let mut fc = WtFlowControl::new(65536, 100, 50);
+    let mut fc = WtFlowControl::new(65536, 65536, 100, 100, 50, 50);
 
     assert!(!fc.should_send_max_data(65536));
 

@@ -5,28 +5,28 @@ use shiguredo_http2::webtransport::{
 
 #[test]
 fn test_client_session_creation() {
-    let session = WtSession::client(WtConfig::default());
+    let session = WtSession::client(WtConfig::default(), WtConfig::default());
     assert_eq!(session.role(), Role::Client);
     assert_eq!(session.state(), WtSessionState::Initial);
 }
 
 #[test]
 fn test_server_session_creation() {
-    let session = WtSession::server(WtConfig::default());
+    let session = WtSession::server(WtConfig::default(), WtConfig::default());
     assert_eq!(session.role(), Role::Server);
     assert_eq!(session.state(), WtSessionState::Initial);
 }
 
 #[test]
 fn test_session_initiate() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
     assert_eq!(session.state(), WtSessionState::Active);
 }
 
 #[test]
 fn test_open_bidi_stream() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     let stream_id = session.open_bidi_stream().expect("initiate should succeed");
@@ -36,7 +36,7 @@ fn test_open_bidi_stream() {
 
 #[test]
 fn test_open_uni_stream() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     let stream_id = session.open_uni_stream().expect("initiate should succeed");
@@ -46,7 +46,7 @@ fn test_open_uni_stream() {
 
 #[test]
 fn test_send_datagram() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     session
@@ -57,7 +57,7 @@ fn test_send_datagram() {
 
 #[test]
 fn test_close_session() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     session
@@ -68,7 +68,7 @@ fn test_close_session() {
 
 #[test]
 fn test_drain_session() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     session.drain().expect("initiate should succeed");
@@ -78,7 +78,7 @@ fn test_drain_session() {
 /// `close()` の二重呼び出しが `SessionStateError` になることを確認する
 #[test]
 fn test_close_double_call_errors() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     session
@@ -96,7 +96,7 @@ fn test_close_double_call_errors() {
 /// `close()` が WT_CLOSE_SESSION capsule を出力することを確認する
 #[test]
 fn test_close_emits_wt_close_session_capsule() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     session
@@ -126,7 +126,7 @@ fn test_close_emits_wt_close_session_capsule() {
 /// (draft-ietf-webtrans-http2-15 Section 6.12: メッセージ長は 1024 バイトを超えてはならない (MUST NOT))
 #[test]
 fn test_close_reason_max_length_ok() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     let reason = "a".repeat(1024);
@@ -138,7 +138,7 @@ fn test_close_reason_max_length_ok() {
 /// (draft-ietf-webtrans-http2-15 Section 6.12: 切り詰めは義務ではないが許容される)
 #[test]
 fn test_close_reason_exceeds_max_length_truncated() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     // 1025 バイトの ASCII reason → 1024 バイトに切り詰め
@@ -170,7 +170,7 @@ fn test_close_reason_exceeds_max_length_truncated() {
 /// マルチバイト文字が 1024 バイト境界にまたがる場合の切り詰めを確認する。
 #[test]
 fn test_close_reason_truncation_utf8_boundary() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     // 1023 バイトの ASCII + 2 バイト文字 (U+00E9 = é = 0xC3 0xA9) = 1025 バイト
@@ -208,7 +208,7 @@ fn test_close_reason_truncation_utf8_boundary() {
 #[test]
 fn test_duplicate_operations_are_errors() {
     let error_code = 42;
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     let stream_id = session.open_bidi_stream().expect("initiate should succeed");

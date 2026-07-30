@@ -188,7 +188,7 @@ async fn test_wt_bidi_echo() {
     }
 
     // クライアント側 WtSession
-    let mut wt_client = WtSession::client(WtConfig::default());
+    let mut wt_client = WtSession::client(WtConfig::default(), WtConfig::default());
     wt_client.initiate().expect("wt initiate");
 
     let bidi_id = wt_client.open_bidi_stream().expect("open bidi");
@@ -351,7 +351,7 @@ async fn test_wt_uni_echo() {
         .expect("connect");
     let connect_stream = perform_connect(&mut client).await;
 
-    let mut wt_client = WtSession::client(WtConfig::default());
+    let mut wt_client = WtSession::client(WtConfig::default(), WtConfig::default());
     wt_client.initiate().expect("initiate");
     let uni_id = wt_client.open_uni_stream().expect("open uni");
     wt_client
@@ -426,7 +426,7 @@ async fn test_wt_datagram_echo() {
         .expect("connect");
     let connect_stream = perform_connect(&mut client).await;
 
-    let mut wt_client = WtSession::client(WtConfig::default());
+    let mut wt_client = WtSession::client(WtConfig::default(), WtConfig::default());
     wt_client.initiate().expect("initiate");
     wt_client.send_datagram(b"dgram-payload").expect("send");
     while let Some(out) = wt_client.poll_output() {
@@ -489,7 +489,7 @@ async fn test_wt_close() {
         .expect("connect");
     let connect_stream = perform_connect(&mut client).await;
 
-    let mut wt_client = WtSession::client(WtConfig::default());
+    let mut wt_client = WtSession::client(WtConfig::default(), WtConfig::default());
     wt_client.initiate().expect("initiate");
 
     let mut closed: Option<(u32, String)> = None;
@@ -549,7 +549,7 @@ async fn test_wt_drain() {
         .expect("connect");
     let connect_stream = perform_connect(&mut client).await;
 
-    let mut wt_client = WtSession::client(WtConfig::default());
+    let mut wt_client = WtSession::client(WtConfig::default(), WtConfig::default());
     wt_client.initiate().expect("initiate");
 
     let mut drained = false;
@@ -609,7 +609,7 @@ async fn test_wt_close_sends_end_stream() {
         .expect("connect");
     let connect_stream = perform_connect(&mut client).await;
 
-    let mut wt_client = WtSession::client(WtConfig::default());
+    let mut wt_client = WtSession::client(WtConfig::default(), WtConfig::default());
     wt_client.initiate().expect("initiate");
 
     let mut end_stream_received = false;
@@ -680,7 +680,7 @@ async fn test_wt_close_received_sends_end_stream() {
         .expect("connect");
     let connect_stream = perform_connect(&mut client).await;
 
-    let mut wt_client = WtSession::client(WtConfig::default());
+    let mut wt_client = WtSession::client(WtConfig::default(), WtConfig::default());
     wt_client.initiate().expect("initiate");
 
     // WT_CLOSE_SESSION capsule を送信
@@ -758,7 +758,7 @@ async fn test_wt_close_same_frame_end_stream() {
         .expect("connect");
     let connect_stream = perform_connect(&mut client).await;
 
-    let mut wt_client = WtSession::client(WtConfig::default());
+    let mut wt_client = WtSession::client(WtConfig::default(), WtConfig::default());
     wt_client.initiate().expect("initiate");
 
     // WT_CLOSE_SESSION capsule と END_STREAM を同一 DATA フレームで送信

@@ -13,7 +13,7 @@ fn decode_single_capsule(bytes: &[u8]) -> Capsule {
 /// `grow_recv_window` が `WT_MAX_DATA` capsule をエンコードする
 #[test]
 fn grow_recv_window_emits_wt_max_data() {
-    let mut session = WtSession::server(WtConfig::default());
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     session
@@ -34,7 +34,7 @@ fn grow_recv_window_emits_wt_max_data() {
 /// `grow_stream_recv_window` で存在しない stream_id を指定すると `invalid_stream_id`
 #[test]
 fn grow_stream_recv_window_unknown_stream_errors() {
-    let mut session = WtSession::server(WtConfig::default());
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     let err = session.grow_stream_recv_window(0, 1024).unwrap_err();
@@ -49,7 +49,7 @@ fn grow_stream_recv_window_unknown_stream_errors() {
 /// `stream_state_error` になること (draft-ietf-webtrans-http2-15 Section 6.6)
 #[test]
 fn send_max_stream_data_after_stop_sending_errors() {
-    let mut session = WtSession::server(WtConfig::default());
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     let stream_id = session.open_bidi_stream().expect("open stream");
@@ -85,7 +85,7 @@ fn grow_max_streams_bidi_emits_capsule() {
         initial_max_streams_bidi: 4,
         ..WtConfig::default()
     };
-    let mut session = WtSession::server(config);
+    let mut session = WtSession::server(config.clone(), config);
     session.initiate().expect("initiate should succeed");
 
     session
@@ -115,7 +115,7 @@ fn received_wt_max_data_decrease_errors() {
         initial_max_data: 1024,
         ..WtConfig::default()
     };
-    let mut session = WtSession::server(config);
+    let mut session = WtSession::server(config.clone(), config);
     session.initiate().expect("initiate should succeed");
 
     let mut encoder = CapsuleEncoder::new();
@@ -133,7 +133,7 @@ fn received_wt_max_data_decrease_errors() {
 /// `close` 後の送信系操作はエラーになる
 #[test]
 fn send_after_close_errors() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     let bidi_id = session.open_bidi_stream().expect("initiate should succeed");
@@ -161,7 +161,7 @@ fn open_bidi_stream_over_limit_errors() {
         initial_max_streams_bidi: 1,
         ..WtConfig::default()
     };
-    let mut session = WtSession::client(config);
+    let mut session = WtSession::client(config.clone(), config);
     session.initiate().expect("initiate should succeed");
 
     let _ = session.open_bidi_stream().expect("initiate should succeed");
@@ -175,7 +175,7 @@ fn open_bidi_stream_over_limit_errors() {
 /// `send_max_data` の直接呼び出しで capsule が出力される
 #[test]
 fn send_max_data_emits_capsule() {
-    let mut session = WtSession::server(WtConfig::default());
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     session
@@ -192,7 +192,7 @@ fn send_max_data_emits_capsule() {
 /// peer 起点の bidi ストリーム到着後、`stream()` と `flow_control()` getter が動作する
 #[test]
 fn getters_return_expected_state() {
-    let mut session = WtSession::server(WtConfig::default());
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     // クライアント (peer) 起点の bidi ストリーム (id=0) から `hi` を受信した扱いにする
@@ -244,7 +244,7 @@ fn stop_sending_triggers_auto_reset_ready_state() {
     // サーバー側のピア (client) が開いた bidi ストリーム (id=0) に対して
     // サーバーが WT_STOP_SENDING を送り、ピアが WT_RESET_STREAM で応答するケースを模擬する。
     // ここではサーバーが stop_sending を送信した扱いでテストする。
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     // クライアント側で bidi ストリームを開く (id=0, Ready → このストリームはピアから見て Ready)
@@ -284,7 +284,7 @@ fn stop_sending_triggers_auto_reset_ready_state() {
 /// (draft-ietf-webtrans-http2-15 Section 6.3: 受信者はストリームが Ready または Send 状態の場合、同一エラーコードの WT_RESET_STREAM で応答する)
 #[test]
 fn stop_sending_triggers_auto_reset_send_state() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     let stream_id = session.open_bidi_stream().expect("initiate should succeed");
@@ -327,7 +327,7 @@ fn stop_sending_triggers_auto_reset_send_state() {
 /// (draft-ietf-webtrans-http2-15 Section 6.3: 受信者はストリームが Ready または Send 状態の場合、同一エラーコードの WT_RESET_STREAM で応答する)
 #[test]
 fn stop_sending_no_auto_reset_data_sent_state() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     let stream_id = session.open_bidi_stream().expect("initiate should succeed");
@@ -369,7 +369,7 @@ fn stop_sending_no_auto_reset_data_sent_state() {
 /// WtEvent::StopSending を発行することを確認する。
 #[test]
 fn stop_sending_unknown_stream_emits_event() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     let mut encoder = CapsuleEncoder::new();
@@ -395,7 +395,7 @@ fn stop_sending_unknown_stream_emits_event() {
 /// (draft-ietf-webtrans-http2-15 Section 6.3: 2 回目の WT_STOP_SENDING 受信時は WT_STREAM_STATE_ERROR のストリームエラーを送らなければならない (MUST))
 #[test]
 fn stop_sending_duplicate_errors() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     let stream_id = session.open_bidi_stream().expect("initiate should succeed");
@@ -431,7 +431,7 @@ fn stop_sending_duplicate_errors() {
 /// (draft-ietf-webtrans-http2-15 Section 6.2: 有効な状態にないストリームへの WT_RESET_STREAM 受信時は WT_STREAM_STATE_ERROR のストリームエラーを送らなければならない (MUST))
 #[test]
 fn wt_reset_stream_unknown_stream_id_errors() {
-    let mut session = WtSession::server(WtConfig::default());
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     let mut encoder = CapsuleEncoder::new();
@@ -456,7 +456,7 @@ fn wt_reset_stream_unknown_stream_id_errors() {
 /// reliable_size == recv_offset で WT_RESET_STREAM が正常に処理される
 #[test]
 fn wt_reset_stream_reliable_size_exact_match() {
-    let mut session = WtSession::server(WtConfig::default());
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     // クライアント起点の bidi ストリーム (id=0) から 5 バイト受信
@@ -497,7 +497,7 @@ fn wt_reset_stream_reliable_size_exact_match() {
 /// reliable_size == 0 && recv_offset == 0 で WT_RESET_STREAM が正常に処理される
 #[test]
 fn wt_reset_stream_reliable_size_zero_match() {
-    let mut session = WtSession::server(WtConfig::default());
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     // クライアント起点の bidi ストリーム (id=0) をデータなしで開く
@@ -527,7 +527,7 @@ fn wt_reset_stream_reliable_size_zero_match() {
 /// reliable_size > recv_offset (過大) でセッションエラーになる
 #[test]
 fn wt_reset_stream_reliable_size_too_large_errors() {
-    let mut session = WtSession::server(WtConfig::default());
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     // クライアント起点の bidi ストリーム (id=0) から 5 バイト受信
@@ -560,7 +560,7 @@ fn wt_reset_stream_reliable_size_too_large_errors() {
 /// reliable_size < recv_offset (過小) でセッションエラーになる
 #[test]
 fn wt_reset_stream_reliable_size_too_small_errors() {
-    let mut session = WtSession::server(WtConfig::default());
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     // クライアント起点の bidi ストリーム (id=0) から 5 バイト受信
@@ -594,12 +594,13 @@ fn wt_reset_stream_reliable_size_too_small_errors() {
 /// (draft-ietf-webtrans-http2-15 Section 6.6: ストリームレベルのフロー制御)
 #[test]
 fn send_stream_data_stream_flow_control_violation_does_not_pollute_buffer() {
-    // ストリームレベルの送信上限を 5 バイトに制限
-    let config = WtConfig {
-        initial_max_stream_data_bidi_local: 5,
+    // ピアのストリームレベル送信上限を 5 バイトに制限
+    let local_config = WtConfig::default();
+    let peer_config = WtConfig {
+        initial_max_stream_data_bidi_remote: 5,
         ..WtConfig::default()
     };
-    let mut session = WtSession::client(config);
+    let mut session = WtSession::client(local_config, peer_config);
     session.initiate().expect("initiate should succeed");
 
     let stream_id = session.open_bidi_stream().expect("open should succeed");
@@ -631,7 +632,7 @@ fn send_stream_data_session_flow_control_violation_does_not_pollute_buffer() {
         initial_max_stream_data_bidi_local: 1024,
         ..WtConfig::default()
     };
-    let mut session = WtSession::client(config);
+    let mut session = WtSession::client(config.clone(), config);
     session.initiate().expect("initiate should succeed");
 
     let stream_id = session.open_bidi_stream().expect("open should succeed");
@@ -656,7 +657,7 @@ fn send_stream_data_session_flow_control_violation_does_not_pollute_buffer() {
 /// 送信側が常に send_offset と一致する Reliable Size を送ることを確認する
 #[test]
 fn wt_reset_stream_send_uses_send_offset() {
-    let mut session = WtSession::client(WtConfig::default());
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
     // bidi ストリームを開いて 10 バイト送信
@@ -687,4 +688,69 @@ fn wt_reset_stream_send_uses_send_offset() {
         }
         other => panic!("expected WtResetStream, got {other:?}"),
     }
+}
+
+/// 非対称なフロー制御値: 送信制限がピアの広告値に従うことを確認する
+/// (draft-ietf-webtrans-http2-15 Section 4.3.1: send_max はピアの SETTINGS 初期値)
+#[test]
+fn asymmetric_flow_control_send_uses_peer_value() {
+    // ローカルは大きな受信上限を広告、ピアは小さな送信上限 (10 バイト) を広告
+    let local_config = WtConfig {
+        initial_max_data: 1_048_576,
+        initial_max_stream_data_bidi_local: 1_048_576,
+        ..WtConfig::default()
+    };
+    let peer_config = WtConfig {
+        initial_max_data: 10,
+        initial_max_stream_data_bidi_remote: 100,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::client(local_config, peer_config);
+    session.initiate().expect("initiate should succeed");
+
+    let stream_id = session.open_bidi_stream().expect("open should succeed");
+
+    // ピアの広告値 (10 バイト) 以内は送信可能
+    session
+        .send_stream_data(stream_id, b"0123456789", false)
+        .expect("send within peer limit should succeed");
+
+    // ピアの広告値を超えるとセッションレベルのフロー制御違反
+    let err = session
+        .send_stream_data(stream_id, b"x", false)
+        .unwrap_err();
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(err.reason.contains("send window exhausted"));
+}
+
+/// 非対称なフロー制御値: ストリームレベルの送信制限がピアの広告値に従うことを確認する
+/// (draft-ietf-webtrans-http2-15 Section 11.2: BIDI_REMOTE はピア視点で remote = ローカル開始)
+#[test]
+fn asymmetric_flow_control_stream_send_uses_peer_value() {
+    // ローカルは大きなストリーム受信上限を広告、ピアは小さなストリーム送信上限 (5 バイト) を広告
+    let local_config = WtConfig {
+        initial_max_stream_data_bidi_local: 1_048_576,
+        ..WtConfig::default()
+    };
+    let peer_config = WtConfig {
+        initial_max_stream_data_bidi_remote: 5,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::client(local_config, peer_config);
+    session.initiate().expect("initiate should succeed");
+
+    let stream_id = session.open_bidi_stream().expect("open should succeed");
+
+    // ピアのストリームレベル広告値 (5 バイト) を超えるとフロー制御違反
+    let err = session
+        .send_stream_data(stream_id, b"0123456789", false)
+        .unwrap_err();
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(err.reason.contains("stream send limit exceeded"));
 }

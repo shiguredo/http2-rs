@@ -1,7 +1,7 @@
 # WtFlowControl / WtStream の send_max と recv_max を別々に初期化する
 
 - Created: 2026-07-30
-- Completed: {Completed}
+- Completed: 2026-07-30
 - Branch: feature/fix-wt-flow-control-send-max-init
 - Polished: 2026-07-30
 
