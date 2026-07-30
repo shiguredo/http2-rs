@@ -1,7 +1,7 @@
 # CapsuleDecoder::feed にバッファサイズ上限を追加して DoS を防止する
 
 - Created: 2026-07-30
-- Completed: {Completed}
+- Completed: 2026-07-31
 - Branch: feature/fix-wt-capsule-decoder-buffer-limit
 - Polished: 2026-07-30
 
