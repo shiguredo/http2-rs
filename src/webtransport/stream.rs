@@ -433,10 +433,18 @@ impl WtStream {
     }
 
     /// 受信上限を更新する
-    pub fn update_recv_max(&mut self, maximum: u64) {
+    ///
+    /// varint の最大値 (2^62 - 1) を超えた場合はエラーを返す。
+    pub fn update_recv_max(&mut self, maximum: u64) -> WtResult<()> {
+        if maximum > super::varint::MAX_VALUE {
+            return Err(WtError::flow_control_error(
+                "recv_max exceeds varint maximum value",
+            ));
+        }
         if maximum > self.recv_max {
             self.recv_max = maximum;
         }
+        Ok(())
     }
 
     /// ストリームが完全に閉じたかどうかを返す

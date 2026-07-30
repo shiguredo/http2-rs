@@ -717,7 +717,7 @@ impl WtSession {
             ));
         }
         let new_max = stream.recv_max().saturating_add(increment);
-        stream.update_recv_max(new_max);
+        stream.update_recv_max(new_max)?;
         self.send_max_stream_data(stream_id, new_max)
     }
 
