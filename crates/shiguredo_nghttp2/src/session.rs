@@ -46,11 +46,12 @@ pub struct Session {
     last_error_message: Option<String>,
 }
 
-// SAFETY: Session の全パブリックメソッドは &mut self を要求するため、
-// Rust の借用規則により同時アクセスが防止される。
-// nghttp2_session ポインタは Session が所有し、Drop で解放される。
+// SAFETY: Session の所有権移転 (Send) は安全である。
+// nghttp2_session ポインタは Session が独占所有し、Drop で解放される。
+// 一方、Sync は実装しない。nghttp2 はスレッドセーフではなく、
+// &self メソッド (want_write, get_remote_settings 等) も内部の C 構造体を
+// 参照するため、複数スレッドからの同時呼び出しは UB となる。
 unsafe impl Send for Session {}
-unsafe impl Sync for Session {}
 
 impl Session {
     /// 新しいクライアントセッションを作成
