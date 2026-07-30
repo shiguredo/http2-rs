@@ -1,7 +1,7 @@
 # wt_server README のステータスコードを実装に合わせる
 
 - Created: 2026-07-30
-- Completed: {Completed}
+- Completed: 2026-07-31
 - Branch: feature/update-wt-server-readme-status-code
 - Polished: 2026-07-30
 
