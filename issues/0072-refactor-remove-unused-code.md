@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-11
-- Polished: 2026-06-12
+- Polished: 2026-07-31
 - Model: deepseek-v4-pro
 - Branch: feature/refactor-remove-unused-code
 
@@ -100,7 +100,7 @@ pub const fn stream_type(id: WtStreamId) -> u8 {
 **ファイル**: `src/stream/buffer.rs`
 **削除範囲**: メソッド定義 (doc コメントを含む) と関連テストの修正
 
-**根拠**: 製品コードからの呼び出しはなく、`tests/test_stream/buffer.rs:29,56` (`test_recv_buffer_push_pop` / `test_recv_buffer_push_uses_saturating_add`) でのみ使用されている。`pop(buf.len())` で等価の動作が得られるため、`take()` を削除して当該テストを `pop(buf.len())` 形式に書き換える方針とする。テスト自体は受信バッファの全データ取り出し動作の保証として有用なので削除せず維持する。
+**根拠**: 製品コードからの呼び出しはなく、`tests/test_stream/buffer.rs` の `test_recv_buffer_push_pop` / `test_recv_buffer_push_uses_saturating_add` でのみ使用されている。`pop(buf.len())` で等価の動作が得られるため、`take()` を削除して当該テストを `pop(buf.len())` 形式に書き換える方針とする。テスト自体は受信バッファの全データ取り出し動作の保証として有用なので削除せず維持する。
 
 ### 8. `impl Default for WtFlowControl`
 
