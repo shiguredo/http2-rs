@@ -594,12 +594,13 @@ fn wt_reset_stream_reliable_size_too_small_errors() {
 /// (draft-ietf-webtrans-http2-15 Section 6.6: ストリームレベルのフロー制御)
 #[test]
 fn send_stream_data_stream_flow_control_violation_does_not_pollute_buffer() {
-    // ストリームレベルの送信上限を 5 バイトに制限
-    let config = WtConfig {
-        initial_max_stream_data_bidi_local: 5,
+    // ピアのストリームレベル送信上限を 5 バイトに制限
+    let local_config = WtConfig::default();
+    let peer_config = WtConfig {
+        initial_max_stream_data_bidi_remote: 5,
         ..WtConfig::default()
     };
-    let mut session = WtSession::client(config.clone(), config);
+    let mut session = WtSession::client(local_config, peer_config);
     session.initiate().expect("initiate should succeed");
 
     let stream_id = session.open_bidi_stream().expect("open should succeed");
@@ -701,7 +702,7 @@ fn asymmetric_flow_control_send_uses_peer_value() {
     };
     let peer_config = WtConfig {
         initial_max_data: 10,
-        initial_max_stream_data_bidi_remote: 10,
+        initial_max_stream_data_bidi_remote: 100,
         ..WtConfig::default()
     };
     let mut session = WtSession::client(local_config, peer_config);

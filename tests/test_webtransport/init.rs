@@ -260,7 +260,8 @@ fn test_apply_init_propagates_to_uni_stream_initial_max() {
 }
 
 /// `apply_init` で更新された `br` 値が自身が開く双方向ストリームの
-/// 初期最大データ量に反映されること
+/// 受信上限 (recv_max) に反映されること。
+/// 新モデルでは `br` → `config.bidi_local` → locally-opened ストリームの recv_max に対応する。
 #[test]
 fn test_apply_init_propagates_to_bidi_local_stream_initial_max() {
     let mut config = WtConfig::default();
@@ -275,9 +276,9 @@ fn test_apply_init_propagates_to_bidi_local_stream_initial_max() {
     let stream_id = session.open_bidi_stream().expect("open bidi");
     let stream = session.stream(stream_id).expect("stream");
     assert_eq!(
-        stream.send_available(),
+        stream.recv_available(),
         updated,
-        "br が反映されたら自身が開く双方向ストリームの初期最大データ量も更新されるべき"
+        "br が反映されたら自身が開く双方向ストリームの受信上限も更新されるべき"
     );
 }
 

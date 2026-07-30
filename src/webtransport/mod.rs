@@ -158,6 +158,28 @@ impl WtConfig {
         }
     }
 
+    /// **ピア用 `WtConfig`** に Init ヘッダー由来の値を max マージする
+    ///
+    /// `apply_init` とは `bl`/`br` のマッピングが逆になる:
+    /// - `bl` → `initial_max_stream_data_bidi_local` (ピア自身が開始するストリームの送信上限)
+    /// - `br` → `initial_max_stream_data_bidi_remote` (ピア視点で remote = ローカル開始の送信上限)
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 4.3 (L480-L483) の MUST 規則に従い、
+    /// SETTINGS 値と Init 値の大きい方を採用する。
+    pub fn apply_init_as_peer(&mut self, init: &WtInit) {
+        if let Some(u) = init.u {
+            self.initial_max_stream_data_uni = self.initial_max_stream_data_uni.max(u);
+        }
+        if let Some(bl) = init.bl {
+            self.initial_max_stream_data_bidi_local =
+                self.initial_max_stream_data_bidi_local.max(bl);
+        }
+        if let Some(br) = init.br {
+            self.initial_max_stream_data_bidi_remote =
+                self.initial_max_stream_data_bidi_remote.max(br);
+        }
+    }
+
     /// HTTP/2 SETTINGS 由来の初期フロー制御値を上書き適用する
     ///
     /// draft-ietf-webtrans-http2-15 Section 4.3.1:

@@ -222,10 +222,11 @@ impl WtServerRequest {
 
         // draft-ietf-webtrans-http2-15 Section 4.3 (L480-L483) / Section 4.3.2 (L525-L540):
         // WebTransport-Init はクライアントが送信するヘッダーであり、クライアントの広告値を含む。
-        // SETTINGS 値と max マージする。パース失敗・型不一致・値範囲外は MUST 4xx 拒否。
+        // ピア用 config には bl/br のマッピングが逆転するため apply_init_as_peer を使う。
+        // パース失敗・型不一致・値範囲外は MUST 4xx 拒否。
         if let Some(bytes) = init_bytes {
             match WtInit::parse(&bytes) {
-                Ok(init) => peer_config.apply_init(&init),
+                Ok(init) => peer_config.apply_init_as_peer(&init),
                 Err(e) => {
                     let response = vec![HeaderField::from_static(b":status", b"400")];
                     conn.send_response(stream_id, response, true).await?;
