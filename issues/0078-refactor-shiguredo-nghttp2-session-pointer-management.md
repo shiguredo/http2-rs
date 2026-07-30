@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-06-12
-- Polished: {Polished}
+- Polished: 2026-07-31
 - Model: Opus 4.7
 - Branch: feature/refactor-shiguredo-nghttp2-session-pointer-management
 
@@ -37,9 +37,9 @@ pub fn set_user_data(&mut self) {
 
 問題点:
 
-- `self as *mut Session as *mut c_void` を nghttp2 に登録するが、`Session` は `Send + Sync` 実装の通常構造体で `Pin`/`Box` で固定されていない。`Session` を move するとアドレスが変わり、登録済みポインタが dangling になる
+- `self as *mut Session as *mut c_void` を nghttp2 に登録するが、`Session` は `unsafe impl Send` のみの通常構造体で `Pin`/`Box` で固定されていない。`Session` を move するとアドレスが変わり、登録済みポインタが dangling になる
 - 0069 適用後の暫定設計は `recv()`/`send()` の冒頭で毎回 `set_user_data()` を呼び直すことで「move 後に再登録される」形になるが、これは「callback を発火させ得る API すべての先頭で再登録する」前提に依存している
-- 現在の develop では 0069 が未適用のため、`recv()` は `set_user_data()` を呼ぶ一方で `send()` は呼んでいない。0078 は 0069 の最小修正後に残る根本課題を扱うが、現状の危険度は issue 起票時の前提より高い
+- 現状の develop では 0069 がマージ済みのため、`recv()` と `send()` の両方が冒頭で `set_user_data()` を呼び直している。0078 はこの暫定設計の根本課題 (move 後 dangling pointer のリスク) を扱う
 - `submit_request` / `submit_data` 等の `submit_*` 系は現状 callback を発火させないため `set_user_data` を呼んでいないが、将来 `nghttp2_session_resume_data` が callback を発火する経路に変わったり、新しい submit API が追加されたりした場合、同じ呼び忘れバグが再発する
 - `set_user_data` が `pub` のため、外部から `session.set_user_data()` を誤って呼べる。これは内部実装の詳細であり、`pub(crate)` 以下に絞るべき
 - 加えて、`submit_request(headers, None, true)` 後の `submit_data` の挙動 (data provider が未登録のため `nghttp2_session_resume_data` が失敗する可能性) が API ドキュメントに明示されていない
@@ -86,7 +86,7 @@ pub fn set_user_data(&mut self) {
 
 ## 解決方法
 
-issue 0069 マージ後に着手する。設計方針 (案 A 推奨) の詳細を `/polish-issue` で磨き上げてから実装する。
+issue 0069 はマージ済み。設計方針 (案 A 推奨) の詳細を確定してから実装する。
 
 ## 参照
 
