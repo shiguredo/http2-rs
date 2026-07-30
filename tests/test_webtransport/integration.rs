@@ -6,7 +6,7 @@ use shiguredo_http2::webtransport::{
 /// 1 つの Capsule をデコードするヘルパー
 fn decode_single_capsule(bytes: &[u8]) -> Capsule {
     let mut decoder = CapsuleDecoder::new();
-    decoder.feed(bytes);
+    decoder.feed(bytes).expect("feed should succeed");
     decoder.decode().expect("decode").expect("capsule expected")
 }
 

@@ -300,22 +300,57 @@ impl CapsuleEncoder {
     }
 }
 
+/// Capsule デコーダーのデフォルトバッファ上限 (16 MiB)
+///
+/// ピアが不完全なカプセルを送り続ける DoS 攻撃を防止するための上限。
+const DEFAULT_MAX_BUFFER_SIZE: usize = 16 * 1024 * 1024;
+
 /// Capsule デコーダー (ストリーミング対応)
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct CapsuleDecoder {
     buffer: Vec<u8>,
+    /// バッファサイズの上限 (DoS 防止)
+    max_buffer_size: usize,
+}
+
+impl Default for CapsuleDecoder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CapsuleDecoder {
     /// 新しいデコーダーを生成する
     #[must_use]
     pub fn new() -> Self {
-        Self { buffer: Vec::new() }
+        Self {
+            buffer: Vec::new(),
+            max_buffer_size: DEFAULT_MAX_BUFFER_SIZE,
+        }
+    }
+
+    /// バッファ上限を指定してデコーダーを生成する
+    #[must_use]
+    pub fn with_max_buffer_size(max_buffer_size: usize) -> Self {
+        Self {
+            buffer: Vec::new(),
+            max_buffer_size,
+        }
     }
 
     /// データを追加する
-    pub fn feed(&mut self, data: &[u8]) {
+    ///
+    /// バッファ上限を超えた場合はエラーを返す。
+    pub fn feed(&mut self, data: &[u8]) -> WtResult<()> {
+        // saturating_sub により加算オーバーフローを構造的に防止する
+        if data.len() > self.max_buffer_size.saturating_sub(self.buffer.len()) {
+            return Err(WtError::with_reason(
+                WtErrorKind::InvalidInput,
+                "capsule decoder buffer limit exceeded",
+            ));
+        }
         self.buffer.extend_from_slice(data);
+        Ok(())
     }
 
     /// Capsule をデコードする

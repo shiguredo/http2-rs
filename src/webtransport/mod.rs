@@ -325,7 +325,7 @@ impl WtSession {
     ///
     /// 消費したバイト数を返す。
     pub fn feed(&mut self, data: &[u8]) -> WtResult<usize> {
-        self.capsule_decoder.feed(data);
+        self.capsule_decoder.feed(data)?;
         Ok(data.len())
     }
 
