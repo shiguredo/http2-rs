@@ -70,12 +70,3 @@ pub fn check_nghttp2(code: libc::c_int) -> Result<()> {
         Ok(())
     }
 }
-
-/// nghttp2 の結果をチェック（戻り値を返す）
-pub fn check_nghttp2_with_value(code: libc::c_int) -> Result<libc::c_int> {
-    if code < 0 {
-        Err(Error::from_nghttp2(code))
-    } else {
-        Ok(code)
-    }
-}

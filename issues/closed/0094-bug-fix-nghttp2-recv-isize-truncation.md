@@ -1,7 +1,7 @@
 # shiguredo_nghttp2::Session::recv / send の isize から i32 への切り詰めを修正する
 
 - Created: 2026-07-30
-- Completed: {Completed}
+- Completed: 2026-07-31
 - Branch: feature/fix-nghttp2-recv-isize-truncation
 - Polished: 2026-07-30
 
