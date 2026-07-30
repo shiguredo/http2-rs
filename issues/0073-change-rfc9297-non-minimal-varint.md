@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-11
-- Polished: 2026-06-12
+- Polished: 2026-07-31
 - Model: deepseek-v4-pro
 - Branch: feature/change-rfc9297-allow-non-minimal-varint
 
@@ -79,10 +79,10 @@ if encoded_len(value) != len {
 
 ### 編集するファイル
 
-- `src/webtransport/varint.rs:139-140` — `decode` 関数 doc コメントの「非最小エンコーディングの場合」項目を削除
-- `src/webtransport/varint.rs:192-202` — 非最小エンコーディング検査ブロックの削除
-- `src/webtransport/varint.rs:1-11` (モジュール冒頭 doc コメント) — RFC 9297 経由で使用される旨を追記 (例: 「RFC 9000 Section 16 で定義され、RFC 9297 Section 1.1 経由で WebTransport Capsule の各フィールドにも適用される。RFC 9297 は最小エンコーディングを要求しないため、本実装も非最小エンコーディングを受け入れる」)
-- `tests/test_webtransport/varint.rs:103-125` — 既存テスト `test_decode_non_minimal_encoding` を 6 ケースの「受入テスト」に書き換える (各 `decode(...)` が `Ok((value, len))` を返し、`value` が期待値と一致することを assert する)。テスト関数名は `test_decode_non_minimal_encoding_accepts_rfc9297` 等に変更
+- `src/webtransport/varint.rs` の `decode` 関数 doc コメント — 「非最小エンコーディングの場合」項目を削除
+- `src/webtransport/varint.rs` の `decode` 関数内 — 非最小エンコーディング検査ブロック (`if encoded_len(value) != len { ... }`) を削除
+- `src/webtransport/varint.rs` のモジュール冒頭 doc コメント — RFC 9297 経由で使用される旨を追記 (例: 「RFC 9000 Section 16 で定義され、RFC 9297 Section 1.1 経由で WebTransport Capsule の各フィールドにも適用される。RFC 9297 は最小エンコーディングを要求しないため、本実装も非最小エンコーディングを受け入れる」)
+- `tests/test_webtransport/varint.rs` の `test_decode_non_minimal_encoding` — 6 ケースの「受入テスト」に書き換える (各 `decode(...)` が `Ok((value, len))` を返し、`value` が期待値と一致することを assert する)。テスト関数名は `test_decode_non_minimal_encoding_accepts_rfc9297` 等に変更
 
 ### 編集不要 (影響なし)
 
@@ -96,13 +96,13 @@ if encoded_len(value) != len {
 ## 対応手順
 
 1. 作業ブランチ `feature/change-rfc9297-allow-non-minimal-varint` を作成する
-2. `src/webtransport/varint.rs:192-202` の非最小エンコーディング検査ブロックを削除する
-3. `src/webtransport/varint.rs:139-140` の doc コメント `- 非最小エンコーディングの場合 ...` の項目を削除する
-4. `src/webtransport/varint.rs:1-11` のモジュール冒頭 doc コメントを、RFC 9297 Section 1.1 経由で使用される旨と非最小エンコーディング許容方針を反映した内容に書き換える
-5. `tests/test_webtransport/varint.rs:103-125` の `test_decode_non_minimal_encoding` を「受入テスト」に書き換える:
+2. `src/webtransport/varint.rs` の `decode` 関数内にある非最小エンコーディング検査ブロック (`if encoded_len(value) != len { ... }`) を削除する
+3. `src/webtransport/varint.rs` の `decode` 関数 doc コメントにある「非最小エンコーディングの場合」項目を削除する
+4. `src/webtransport/varint.rs` のモジュール冒頭 doc コメントを、RFC 9297 Section 1.1 経由で使用される旨と非最小エンコーディング許容方針を反映した内容に書き換える
+5. `tests/test_webtransport/varint.rs` の `test_decode_non_minimal_encoding` を「受入テスト」に書き換える:
    - 関数名を `test_decode_non_minimal_encoding_accepts_rfc9297` 等に変更
    - 既存 6 ケース (`assert!(decode(...).is_err())`) を `let (value, len) = decode(...).expect("RFC 9297 は非最小エンコーディングを許容する"); assert_eq!(value, <期待値>); assert_eq!(len, <バイト数>);` 形式に書き換え
-   - コメント (line 105) を「RFC 9297 Section 1.1 に従い非最小エンコーディングを受け入れる」に書き換え
+   - コメントを「RFC 9297 Section 1.1 に従い非最小エンコーディングを受け入れる」に書き換え
 6. `cargo fmt --all -- --check` で整形違反がないことを確認する
 7. `cargo build --workspace` でビルドが成功することを確認する
 8. `cargo test --workspace` で全テスト通過を確認する (新規受入テストが通ること、既存 `test_rfc_examples` 等が退行しないこと)
@@ -111,8 +111,8 @@ if encoded_len(value) != len {
 
 ## 完了条件
 
-- `src/webtransport/varint.rs:192-202` の非最小エンコーディング検査ブロックが削除されている
-- `src/webtransport/varint.rs:139-140` の doc コメント該当項目が削除されている
+- `src/webtransport/varint.rs` の `decode` 関数内の非最小エンコーディング検査ブロックが削除されている
+- `src/webtransport/varint.rs` の `decode` 関数 doc コメントの該当項目が削除されている
 - `src/webtransport/varint.rs` のモジュール冒頭 doc コメントが RFC 9297 経由の使用と非最小エンコーディング許容を反映している
 - `tests/test_webtransport/varint.rs` の `test_decode_non_minimal_encoding` が 6 ケースの受入テストに書き換えられている
 - `cargo fmt --all -- --check` が通過する
@@ -123,12 +123,12 @@ if encoded_len(value) != len {
 
 ## 参照
 
-- `refs/rfc9297.txt:124-127` — RFC 9297 Section 1.1: 「Integer values do not need to be encoded on the minimum number of bytes necessary.」
-- `refs/rfc9000.txt:4886-4888` — RFC 9000 Section 16: varint エンコーディング全体の規定 (最小バイト数の要求なし)
-- `refs/rfc9000.txt:3987-3998` — RFC 9000 Section 12.4: QUIC Frame Type のみ最小エンコーディング MUST (Capsule Type には適用されない)
+- `refs/rfc9297.txt` Section 1.1 — 「Integer values do not need to be encoded on the minimum number of bytes necessary.」
+- `refs/rfc9000.txt` Section 16 — varint エンコーディング全体の規定 (最小バイト数の要求なし)
+- `refs/rfc9000.txt` Section 12.4 — QUIC Frame Type のみ最小エンコーディング MUST (Capsule Type には適用されない)
 - `refs/draft-ietf-webtrans-http2-15.txt` Section 5 — WebTransport over HTTP/2 が Capsule Protocol (RFC 9297) を使用することを規定
-- `src/webtransport/varint.rs:139-202` — 修正対象の doc コメントと検査ブロック
-- `src/webtransport/varint.rs:1-11` — モジュール冒頭 doc コメント (修正対象)
+- `src/webtransport/varint.rs` の `decode` 関数 — 修正対象の doc コメントと検査ブロック
+- `src/webtransport/varint.rs` のモジュール冒頭 doc コメント — 修正対象
 - `src/webtransport/capsule.rs` — `varint::decode` の呼び出し元 (Capsule Type / Length / 各種 WT_* フィールド、変更不要)
-- `tests/test_webtransport/varint.rs:103-125` — 既存テスト (書き換え対象)
+- `tests/test_webtransport/varint.rs` の `test_decode_non_minimal_encoding` — 書き換え対象
 - `pbt/tests/prop_webtransport/main.rs` — varint 関連 prop (影響なし)
