@@ -410,6 +410,12 @@ impl WtSession {
             return Err(WtError::stream_state_error("cannot send on this stream"));
         }
 
+        // エンコードより前にフロー制御チェックを完了し、違反時にバッファを汚染しない。
+        // draft-ietf-webtrans-http2-15 Section 6.5 / 6.6: フロー制御違反はセッションエラー
+        // (MUST close) のため、部分状態変更はセッション終了で破棄される
+        stream.send_data(data.len() as u64, fin)?;
+        self.flow_control.consume_send(data.len() as u64)?;
+
         // WT_STREAM Capsule をエンコード
         let capsule = Capsule::WtStream {
             stream_id,
@@ -418,12 +424,6 @@ impl WtSession {
         };
         self.capsule_encoder.encode(&capsule);
         self.output_buffer.extend(self.capsule_encoder.take());
-
-        // 送信状態を更新
-        stream.send_data(data.len() as u64, fin)?;
-
-        // フロー制御を更新
-        self.flow_control.consume_send(data.len() as u64)?;
 
         Ok(())
     }

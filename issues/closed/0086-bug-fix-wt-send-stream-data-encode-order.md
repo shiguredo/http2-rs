@@ -1,7 +1,7 @@
 # WtSession::send_stream_data のカプセルエンコード順序を修正する
 
 - Created: 2026-07-30
-- Completed: {Completed}
+- Completed: 2026-07-30
 - Branch: feature/fix-wt-send-stream-data-encode-order
 - Polished: 2026-07-30
 
