@@ -1,7 +1,7 @@
 # WT_STREAM_DATA_BLOCKED 受信時のストリーム状態チェックを仕様に合わせる
 
 - Created: 2026-07-30
-- Completed: {Completed}
+- Completed: 2026-07-31
 - Branch: feature/fix-wt-stream-data-blocked-state-check
 - Polished: 2026-07-30
 
