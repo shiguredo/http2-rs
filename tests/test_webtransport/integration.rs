@@ -149,7 +149,7 @@ fn send_after_close_errors() {
     let err = session.send_datagram(b"x").unwrap_err();
     assert_eq!(
         err.kind,
-        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+        shiguredo_http2::webtransport::WtErrorKind::SessionStateError
     );
 }
 
