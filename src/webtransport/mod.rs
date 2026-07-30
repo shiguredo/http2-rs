@@ -33,6 +33,29 @@ use std::collections::{HashMap, VecDeque};
 use crate::connection::Role;
 use crate::webtransport::capsule::MAX_CLOSE_REASON_LEN;
 
+/// RFC 9110 Section 5.6.2: tchar (RFC 7230 §3.2.6 から定義は変わらず移管されている)
+///
+/// `"!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA`
+pub(crate) fn is_tchar(b: u8) -> bool {
+    matches!(
+        b,
+        b'!' | b'#'
+            | b'$'
+            | b'%'
+            | b'&'
+            | b'\''
+            | b'*'
+            | b'+'
+            | b'-'
+            | b'.'
+            | b'^'
+            | b'_'
+            | b'`'
+            | b'|'
+            | b'~'
+    ) || b.is_ascii_alphanumeric()
+}
+
 pub use capsule::{Capsule, CapsuleDecoder, CapsuleEncoder, capsule_type};
 pub use error::{WtError, WtErrorKind, WtResult};
 pub use exporter::serialize_exporter_context;

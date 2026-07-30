@@ -189,6 +189,8 @@
 
 ### misc
 
+- [UPDATE] webtransport モジュール内の `is_tchar` 重複を解消し、共通実装に集約する
+  - @voluntas
 - [UPDATE] ソースコード内の issue 番号参照を削除し shiguredo-issues 規約に準拠させる
   - @voluntas
 - [ADD] WebTransport フロー制御の境界値テスト (2^60 上限)、`overlay_settings` テスト、Draining 状態の操作許可テスト、`WtStream` の不正状態遷移テストを追加する

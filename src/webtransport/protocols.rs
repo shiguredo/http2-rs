@@ -413,23 +413,4 @@ impl<'a> ListParser<'a> {
     }
 }
 
-/// RFC 9110 Section 5.6.2: tchar
-fn is_tchar(b: u8) -> bool {
-    matches!(
-        b,
-        b'!' | b'#'
-            | b'$'
-            | b'%'
-            | b'&'
-            | b'\''
-            | b'*'
-            | b'+'
-            | b'-'
-            | b'.'
-            | b'^'
-            | b'_'
-            | b'`'
-            | b'|'
-            | b'~'
-    ) || b.is_ascii_alphanumeric()
-}
+use super::is_tchar;
