@@ -590,6 +590,69 @@ fn wt_reset_stream_reliable_size_too_small_errors() {
     assert!(err.reason.contains("does not match"));
 }
 
+/// ストリームレベルのフロー制御違反時に output_buffer が汚染されないことを確認する
+/// (draft-ietf-webtrans-http2-15 Section 6.6: ストリームレベルのフロー制御)
+#[test]
+fn send_stream_data_stream_flow_control_violation_does_not_pollute_buffer() {
+    // ストリームレベルの送信上限を 5 バイトに制限
+    let config = WtConfig {
+        initial_max_stream_data_bidi_local: 5,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::client(config);
+    session.initiate().expect("initiate should succeed");
+
+    let stream_id = session.open_bidi_stream().expect("open should succeed");
+
+    // 上限を超える 10 バイトの送信はストリームレベルのフロー制御違反
+    let err = session
+        .send_stream_data(stream_id, b"0123456789", false)
+        .unwrap_err();
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(err.reason.contains("stream send limit exceeded"));
+
+    // 違反時に output_buffer にデータが残っていないこと
+    assert!(
+        session.poll_output().is_none(),
+        "output_buffer must be empty after flow control violation"
+    );
+}
+
+/// セッションレベルのフロー制御違反時に output_buffer が汚染されないことを確認する
+/// (draft-ietf-webtrans-http2-15 Section 6.5: セッションレベルのフロー制御)
+#[test]
+fn send_stream_data_session_flow_control_violation_does_not_pollute_buffer() {
+    // セッションレベルの送信上限を 5 バイトに制限 (ストリームレベルは十分大きく)
+    let config = WtConfig {
+        initial_max_data: 5,
+        initial_max_stream_data_bidi_local: 1024,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::client(config);
+    session.initiate().expect("initiate should succeed");
+
+    let stream_id = session.open_bidi_stream().expect("open should succeed");
+
+    // ストリームレベルは通過するが、セッションレベルの上限を超える 10 バイトの送信
+    let err = session
+        .send_stream_data(stream_id, b"0123456789", false)
+        .unwrap_err();
+    assert_eq!(
+        err.kind,
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(err.reason.contains("send window exhausted"));
+
+    // 違反時に output_buffer にデータが残っていないこと
+    assert!(
+        session.poll_output().is_none(),
+        "output_buffer must be empty after flow control violation"
+    );
+}
+
 /// 送信側が常に send_offset と一致する Reliable Size を送ることを確認する
 #[test]
 fn wt_reset_stream_send_uses_send_offset() {
