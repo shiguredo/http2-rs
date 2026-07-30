@@ -1,7 +1,7 @@
 # WtFlowControl::add_recv_max のオーバーフローで varint エンコードが panic する問題を修正する
 
 - Created: 2026-07-30
-- Completed: {Completed}
+- Completed: 2026-07-31
 - Branch: feature/fix-wt-varint-overflow-panic
 - Polished: 2026-07-30
 
