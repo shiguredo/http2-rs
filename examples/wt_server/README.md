@@ -23,7 +23,7 @@ cargo run
 cargo run -- --listen 127.0.0.1:4443
 ```
 
-`WtServerRequest::reject(404)` の動作確認。
+`WtServerRequest::reject(405)` の動作確認。
 
 ```bash
 cargo run -- --reject-connect
@@ -40,7 +40,7 @@ RUST_LOG=debug cargo run
 | オプション | 説明 | デフォルト |
 | --- | --- | --- |
 | `-l`, `--listen <ADDR>` | リッスンアドレス | `127.0.0.1:4443` |
-| `--reject-connect` | 全セッションを 404 で拒否 | 無効 |
+| `--reject-connect` | 全セッションを 405 で拒否 | 無効 |
 | `-h`, `--help` | ヘルプを表示 | |
 | `--version` | バージョンを表示 | |
 
