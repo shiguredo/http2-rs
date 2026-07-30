@@ -2,7 +2,7 @@
 
 - Priority: Low
 - Created: 2026-06-12
-- Polished: {Polished}
+- Polished: 2026-07-31
 - Model: Opus 4.7
 - Branch: feature/refactor-translate-remaining-english-comments
 
@@ -59,13 +59,11 @@ issue 0076 (`refactor-translate-english-comments`、英語コメントの日本�
 
 ## 解決方法
 
-issue 0076 マージ後、`/polish-issue` で方針確定してから実装する。方針議論はチームでの合意を得る前提 (個別判断で勝手に翻訳しない)。
+issue 0076 マージ後に着手する。方針確定してから実装する。方針議論はチームでの合意を得る前提 (個別判断で勝手に翻訳しない)。
 
 ## 参照
 
-- `issues/closed/0076-fmt-translate-english-comments.md` — 先行 issue (英語コメント翻訳の明示列挙箇所)。本 issue のスコープ外として分離された経緯が書かれている
+- `issues/0076-fmt-translate-english-comments.md` — 先行 issue (英語コメント翻訳の明示列挙箇所)。本 issue のスコープ外として分離された経緯が書かれている
 - CLAUDE.md — コメント言語の規約
-- `~/.claude/skills/shiguredo-rust/SKILL.md` — コメント方針
-- `~/.claude/skills/shiguredo-changelog/SKILL.md` — `### misc` サブセクションの扱い
 - `src/hpack/encoder.rs` / `src/hpack/decoder.rs` — RFC 7541 セクション名コメントの対象
 - `tests/test_hpack/decoder.rs` — `Never Indexed with new name` 等のテスト用コメントの対象
