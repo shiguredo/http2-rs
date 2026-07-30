@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-06-11
-- Polished: 2026-06-11
+- Polished: 2026-07-31
 - Model: deepseek-v4-pro
 - Branch: feature/change-error-field-privatization
 
@@ -123,13 +123,15 @@ issue 0072 (`refactor-remove-unused-code`) で削除予定の API:
 
 ### 外部からのフィールド直接アクセスを getter 経由に置換
 
-`Error` / `WtError` の `pub` フィールドへの直接アクセスを grep で網羅した結果、以下の 15 箇所を確認した。これらを getter 呼び出しに置き換える:
+`Error` / `WtError` の `pub` フィールドへの直接アクセスを grep で網羅した結果、以下のファイル群で合計約 50 箇所を確認した。これらを getter 呼び出しに置き換える:
 
-- `tests/test_error.rs:36,37,46` — `err.reason.contains(...)` → `err.reason().contains(...)` (3 箇所)
-- `tests/test_webtransport/root.rs:85,136` — `err.kind` → `err.kind()` (Copy 値比較、2 箇所)
-- `tests/test_webtransport/integration.rs:40,91,108,114,133,382,404` — `err.kind` → `err.kind()` (7 箇所)
-- `tests/test_webtransport/integration.rs:407` — `err.reason.contains(...)` → `err.reason().contains(...)` (1 箇所)
-- `src/webtransport/capsule.rs:333,344` — `e.kind == WtErrorKind::Incomplete` → `e.kind() == WtErrorKind::Incomplete` (別モジュールなので private 化後はアクセス不可、getter 経由が必要、2 箇所)
+- `tests/test_error.rs` — `err.reason.contains(...)` → `err.reason().contains(...)` (3 箇所)
+- `tests/test_webtransport/root.rs` — `err.kind` → `err.kind()` (2 箇所)
+- `tests/test_webtransport/integration.rs` — `err.kind` → `err.kind()` / `err.reason.contains(...)` → `err.reason().contains(...)` (約 20 箇所)
+- `tests/test_webtransport/protocols.rs` — `err.kind` → `err.kind()` (10 箇所)
+- `tests/test_webtransport/exporter.rs` — `err.kind` → `err.kind()` (2 箇所)
+- `tests/test_webtransport/capsule.rs` — `err.kind` → `err.kind()` / `err.reason.contains(...)` → `err.reason().contains(...)` (約 6 箇所)
+- `src/webtransport/capsule.rs` — `e.kind == WtErrorKind::Incomplete` → `e.kind() == WtErrorKind::Incomplete` (別モジュールなので private 化後はアクセス不可、getter 経由が必要、2 箇所)
 
 ### 除外対象 (本 issue と無関係)
 
@@ -229,7 +231,7 @@ issue 0072 (`refactor-remove-unused-code`) で削除予定の API:
 - 全 getter に `#[must_use]` が付与され、`pub const fn` で実装されている
 - `Error` / `WtError` への setter は提供されていない (ミューテーション経路は既存コンストラクタのみ)
 - `impl std::error::Error for Error` / `impl std::error::Error for WtError` は空 impl のまま (source override 追加なし)
-- 既存のフィールド直接アクセス 15 箇所 (`tests/test_error.rs` / `tests/test_webtransport/*` / `src/webtransport/capsule.rs`) が getter 呼び出しに置き換えられている
+- 既存のフィールド直接アクセス約 50 箇所 (`tests/test_error.rs` / `tests/test_webtransport/*` / `src/webtransport/capsule.rs`) が getter 呼び出しに置き換えられている
 - `CHANGES.md` の `## develop` に 2 件の `[CHANGE]` エントリ (`Error` 用と `WtError` 用) と担当者行が追加されている
 - `cargo fmt --all -- --check` が通過する
 - `cargo test --workspace` が通過する
