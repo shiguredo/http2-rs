@@ -12,7 +12,7 @@ shiguredo_http2 = { path = "../.." }
 tokio-http2 = { path = "../../crates/tokio-http2" }
 # TLS
 rustls = "0.23"
-rustls-pki-types = "1.14"
+rustls-pki-types = "1.15"
 # 自己署名証明書生成
 rcgen = "0.14"
 # 証明書 SHA-256 計算
@@ -22,7 +22,7 @@ base64ct = { version = "1.8", features = ["alloc"] }
 # 証明書有効期間の時刻計算
 time = "0.3"
 # 非同期ランタイム
-tokio = { version = "1.52", features = ["full"] }
+tokio = { version = "1.53", features = ["full"] }
 # CLI 引数パース
 noargs = "0.4"
 # 証明書キャッシュ JSONC

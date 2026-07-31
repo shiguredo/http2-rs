@@ -8,4 +8,4 @@ publish = false
 [dependencies]
 shiguredo_http11 = "2026.6"
 tokio-http2 = { path = "../../crates/tokio-http2" }
-tokio = { version = "1.52", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros"] }

@@ -15,11 +15,11 @@ rustls = {
     "tls12",
   ]
 }
-rustls-pki-types = { version = "1.14", features = ["std"] }
+rustls-pki-types = { version = "1.15", features = ["std"] }
 rustls-platform-verifier = "0.7"
 shiguredo_http2 = { path = "../.." }
 tokio = {
-  version = "1.52",
+  version = "1.53",
   features = [
     "io-util",
     "macros",
@@ -34,5 +34,5 @@ tokio-rustls = "0.26"
 [dev-dependencies]
 rcgen = "0.14"
 shiguredo_nghttp2 = { path = "../shiguredo_nghttp2" }
-tokio = { version = "1.52", features = ["full"] }
+tokio = { version = "1.53", features = ["full"] }
 tokio-nghttp2 = { path = "../tokio-nghttp2" }
