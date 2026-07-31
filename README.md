@@ -123,7 +123,8 @@ let decoded = decoder.decode(&encoded)?;
 use shiguredo_http2::webtransport::{WtSession, WtConfig};
 
 // クライアントセッションを生成
-let mut session = WtSession::client(WtConfig::default());
+// config はローカル広告値、peer_config はピア広告値 (フロー制御の初期化に使う)
+let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
 session.initiate()?;
 
 // 双方向ストリームを開く
@@ -168,6 +169,7 @@ session.send_datagram(b"Datagram")?;
 - SETTINGS_MAX_HEADER_LIST_SIZE (0x06)
 - SETTINGS_ENABLE_CONNECT_PROTOCOL (0x08) - RFC 8441
 - SETTINGS_NO_RFC7540_PRIORITIES (0x09) - RFC 9218
+- SETTINGS_WT_ENABLED (0x2b60) - draft-ietf-webtrans-http2
 - SETTINGS_WT_INITIAL_MAX_DATA (0x2b61) - draft-ietf-webtrans-http2
 - SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62) - draft-ietf-webtrans-http2
 - SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63) - draft-ietf-webtrans-http2
@@ -216,6 +218,10 @@ session.send_datagram(b"Datagram")?;
 ## WebTransport over HTTP/2
 
 draft-ietf-webtrans-http2 で定義される WebTransport をサポートします。
+
+WebTransport を有効にするには `LimitsBuilder` で `enable_connect_protocol(true)` と `wt_enabled(true)` の両方を設定する必要があります (SETTINGS_ENABLE_CONNECT_PROTOCOL と SETTINGS_WT_ENABLED の二重ゲート)。
+
+サブプロトコル交渉 (`WT-Available-Protocols` / `WT-Protocol`)、TLS Keying Material Exporter、Origin 検証は `tokio-http2` の `WtServerRequest::accept()` 経由で利用できます。
 
 ### Capsule Protocol (RFC 9297)
 

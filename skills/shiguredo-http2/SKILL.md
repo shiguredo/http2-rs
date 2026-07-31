@@ -20,7 +20,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 ## バージョン情報
 
 - crate 名: `shiguredo_http2`
-- バージョン: 2026.1.0-canary.6
+- バージョン: 2026.1.0-canary.8
 - Rust Edition: 2024
 - 最小 Rust バージョン: 1.93
 - ライセンス: Apache-2.0
@@ -99,25 +99,25 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 
 | 型 | 説明 | 主要メソッド |
 |----|------|-------------|
-| `HpackEncoder` | HPACK エンコーダー (`hpack::Encoder` のエイリアス) | `new(max_table_size: usize)`, `set_huffman(bool)`, `set_max_table_size(usize)`, `encode(&mut Vec<u8>, &[HeaderField])`, `encode_header(&mut Vec<u8>, name, value, indexing)`, `encode_header_sensitive(&Vec<u8>, name, value)`, `encode_size_update(&Vec<u8>, new_size)`, `dynamic_table()` |
+| `HpackEncoder` | HPACK エンコーダー (`hpack::Encoder` のエイリアス) | `new(max_table_size: usize)`, `set_huffman(bool)`, `set_max_table_size(usize)`, `encode(&mut Vec<u8>, &[HeaderField])`, `encode_header(&mut Vec<u8>, name, value, indexing)`, `encode_header_sensitive(&mut Vec<u8>, name, value)`, `encode_size_update(&mut Vec<u8>, new_size)`, `dynamic_table()` |
 | `HpackDecoder` | HPACK デコーダー (`hpack::Decoder` のエイリアス) | `new(max_table_size: usize)`, `set_max_header_list_size(Option<usize>)`, `set_max_table_size(usize)`, `decode(&[u8]) -> Result<Vec<HeaderField>>`, `dynamic_table()` |
-| `HeaderField` | HTTP/2 ヘッダーフィールド (HPACK 用、CRLF/NUL を構築時バリデーション) | `new(name, value) -> Result<Self, HeaderFieldError>`, `name() -> &[u8]`, `value() -> &[u8]` |
+| `HeaderField` | HTTP/2 ヘッダーフィールド (HPACK 用、CRLF/NUL を構築時バリデーション) | `new(name, value) -> Result<Self, HeaderFieldError>`, `new_with_sensitive(name, value, sensitive) -> Result<Self, HeaderFieldError>`, `from_static(name, value) -> Self` (`const fn`、コンパイル時検査), `name() -> &[u8]`, `value() -> &[u8]`, `sensitive() -> bool` |
 | `HeaderFieldError` | `HeaderField` の構築エラー | 不正なヘッダー名・値のバリデーション失敗 |
 
 ### Limits / Settings
 
 | 型 | 説明 |
 |----|------|
-| `Limits` | HTTP/2 接続の上限設定 (`max_concurrent_streams`, `initial_window_size`, `max_frame_size`, `max_header_list_size`, `header_table_size`, `connection_window_size`, `enable_connect_protocol`, `no_rfc7540_priorities`, `wt_initial_max_*`) |
-| `LimitsBuilder` | `Limits` のビルダー。`builder()` で取得し、各メソッドで設定後 `build()` |
-| `LimitsError` | `Limits` 構築時の値域エラー |
-| `Settings` | 受信した SETTINGS パラメータの値ホルダー |
-| `Setting` | 個別の SETTINGS パラメータ (`HeaderTableSize`, `EnablePush`, `MaxConcurrentStreams`, `InitialWindowSize`, `MaxFrameSize`, `MaxHeaderListSize`, `EnableConnectProtocol`, `NoRfc7540Priorities`, `WtInitialMaxData`, `WtInitialMaxStreamDataUni`, `WtInitialMaxStreamDataBidiLocal`, `WtInitialMaxStreamsUni`, `WtInitialMaxStreamsBidi`, `WtInitialMaxStreamDataBidiRemote`) |
-| `SettingError` | SETTINGS の値検証エラー |
-| `WindowSize` | フロー制御ウィンドウサイズ (`from_static(u32)` const + 動的 `try_new`) |
+| `Limits` | HTTP/2 接続の上限設定 (`max_concurrent_streams`, `initial_window_size`, `max_frame_size`, `max_header_list_size`, `header_table_size`, `connection_window_size`, `enable_connect_protocol`, `no_rfc7540_priorities`, `wt_enabled`, `wt_initial_max_*`) |
+| `LimitsBuilder` | `Limits` のビルダー。`builder()` で取得し、各メソッドで設定後 `build()` / `build_static()` (`const fn`)。WebTransport には `wt_enabled(true)` + `enable_connect_protocol(true)` + `webtransport(...)` が必要 (二重ゲート) |
+| `LimitsError` | `Limits` 構築時のエラー (`WebtransportRequiresConnectProtocol`, `WebtransportRequiresWtEnabled`) |
+| `Settings` | 受信した SETTINGS パラメータの値ホルダー (フィールド private、getter 経由) |
+| `Setting` | 個別の SETTINGS パラメータ (`HeaderTableSize`, `EnablePush`, `MaxConcurrentStreams`, `InitialWindowSize`, `MaxFrameSize`, `MaxHeaderListSize`, `EnableConnectProtocol`, `NoRfc7540Priorities`, `WtEnabled`, `WtInitialMaxData`, `WtInitialMaxStreamDataUni`, `WtInitialMaxStreamDataBidiLocal`, `WtInitialMaxStreamsUni`, `WtInitialMaxStreamsBidi`, `WtInitialMaxStreamDataBidiRemote`, `Unknown { id, value }`) |
+| `SettingError` | SETTINGS の値検証エラー (`EnablePushNotBoolean`, `InitialWindowSizeOutOfRange`, `MaxFrameSizeOutOfRange`, `EnableConnectProtocolNotBoolean`, `NoRfc7540PrioritiesNotBoolean`, `WtEnabledNotBoolean`) |
+| `WindowSize` | フロー制御ウィンドウサイズ (`from_static(u32)` const + 動的 `new(u32) -> Result`) |
 | `MaxFrameSize` | フレームサイズ上限 (16384..=16777215, RFC 9113 §6.5.2) |
 
-**Limits のデフォルト値** (`Limits::default()`):
+**Limits のデフォルト値** (`Limits::default()` / `Limits::builder()`):
 
 | 項目 | 値 |
 |------|----|
@@ -126,6 +126,9 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 | `max_frame_size` | 16384 (RFC 9113 §6.5.2) |
 | `max_header_list_size` | `Some(16384)` |
 | `header_table_size` | 4096 (RFC 7541) |
+| `enable_connect_protocol` | `false` |
+| `wt_enabled` | `false` |
+| `wt_initial_max_*` | すべて `None` |
 
 ### Stream / StreamId
 
@@ -173,9 +176,9 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 
 | メソッド | 戻り値 | 説明 |
 |---------|--------|------|
-| `WtSession::client(WtConfig)` / `WtSession::server(WtConfig)` | `Self` | セッションを作成 |
+| `WtSession::client(WtConfig, WtConfig)` / `WtSession::server(WtConfig, WtConfig)` | `Self` | セッションを作成。第 1 引数はローカル広告値、第 2 引数はピア広告値 (send_max / recv_max の初期化に使う) |
 | `role()` / `state()` / `is_active()` / `is_closed()` | (各種) | セッション状態を返す |
-| `initiate()` | `WtResult<()>` | 初期 SETTINGS を送信 |
+| `initiate()` | `WtResult<()>` | 初期 SETTINGS を送信し `Active` に遷移 |
 | `feed(&[u8])` | `WtResult<usize>` | 受信バイトを投入 |
 | `process()` | `WtResult<()>` | 内部状態を進める |
 | `poll_output()` | `Option<Vec<u8>>` | 送信すべきバイト列を取得 |
@@ -186,7 +189,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 | `reset_stream(WtStreamId, error_code: u64)` | `WtResult<()>` | WT_RESET_STREAM を送信 |
 | `stop_sending(WtStreamId, error_code: u64)` | `WtResult<()>` | WT_STOP_SENDING を送信 |
 | `send_datagram(&[u8])` | `WtResult<()>` | DATAGRAM Capsule (RFC 9297) を送信 |
-| `close(error_code: u32, reason: &str)` | `WtResult<()>` | WT_CLOSE_SESSION を送信してセッション終了 |
+| `close(error_code: u32, reason: &str)` | `WtResult<()>` | WT_CLOSE_SESSION を送信してセッション終了。reason が 1024 バイト超過時は UTF-8 境界で切り詰める |
 | `drain()` | `WtResult<()>` | WT_DRAIN_SESSION を送信 |
 | `send_max_data(maximum: u64)` | `WtResult<()>` | WT_MAX_DATA を送信 |
 | `send_max_stream_data(WtStreamId, maximum: u64)` | `WtResult<()>` | WT_MAX_STREAM_DATA を送信 |
@@ -200,24 +203,39 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 
 ### WtConfig / WtInit
 
-`WtConfig` は初期フロー制御値や上限を保持する。`apply_init(&WtInit)` で `WebTransport-Init` ヘッダー値を反映できる。
+`WtConfig` は初期フロー制御値や上限を保持する。
+
+| メソッド | 説明 |
+|---------|------|
+| `apply_init(&WtInit)` | `WebTransport-Init` ヘッダー値をローカル設定に反映 |
+| `apply_init_as_peer(&WtInit)` | ピア側設定として `WebTransport-Init` を反映 |
+| `overlay_settings(&Settings)` | HTTP/2 SETTINGS の `SETTINGS_WT_INITIAL_MAX_*` を上書き適用 (`accept()` で自動呼出) |
 
 ### WtEvent / WtSessionState
 
 | `WtEvent` バリアント | 説明 |
 |--------------------|------|
-| `SessionReady` | セッション確立 |
-| `BidiStreamOpened` / `UniStreamOpened` | ストリームが開かれた |
-| `StreamData` | ストリームに WT_STREAM Capsule が到着 |
-| `StreamReset` / `StreamStopSending` | リセット/停止要求 |
-| `Datagram` | DATAGRAM を受信 |
-| `MaxData` / `MaxStreamData` / `MaxStreams` | フロー制御上限の更新 |
-| `DataBlocked` / `StreamDataBlocked` / `StreamsBlocked` | フロー制御ブロック通知 |
-| `CloseSession` / `DrainSession` | セッション終了/排他要求 |
+| `StreamOpened { stream_id, bidirectional }` | ストリームが開かれた |
+| `StreamData { stream_id, data, fin }` | ストリームに WT_STREAM Capsule が到着 |
+| `StreamReset { stream_id, error_code }` | WT_RESET_STREAM を受信 |
+| `StopSending { stream_id, error_code }` | WT_STOP_SENDING を受信 |
+| `DatagramReceived { data }` | DATAGRAM を受信 |
+| `SessionDraining` | WT_DRAIN_SESSION を受信 |
+| `SessionClosed { error_code, reason }` | WT_CLOSE_SESSION を受信 |
+
+フロー制御 Capsule (`WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` / `*_BLOCKED`) の受信は内部状態を更新するが、`WtEvent` としては公開しない。
 
 | `WtSessionState` | 説明 |
 |----------------|------|
 | `Initial` / `Active` / `Draining` / `Closed` | セッション状態遷移 |
+
+### サブプロトコル / Exporter
+
+| 型 / 関数 | 説明 |
+|----------|------|
+| `WtAvailableProtocols` | `WT-Available-Protocols` ヘッダーのパース結果 (`parse(&[u8]) -> Result<Self, WtError>`、RFC 8941 List of String) |
+| `serialize_wt_protocol(&[u8])` | `WT-Protocol` 値を RFC 8941 sf-string としてシリアライズ |
+| `serialize_exporter_context(session_id, app_label, app_context)` | TLS Keying Material Exporter 用コンテキストをシリアライズ (draft-15 Section 5.3) |
 
 ### Capsule (draft-ietf-webtrans-http2-15 Section 6)
 
@@ -225,8 +243,8 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 |---------|------------|
 | `WT_RESET_STREAM` | `0x190B4D39` |
 | `WT_STOP_SENDING` | `0x190B4D3A` |
-| `WT_STREAM` (FIN=0) | `0x190B4D3B` |
-| `WT_STREAM` (FIN=1) | `0x190B4D3C` |
+| `WT_STREAM` (FIN=0, 非終端) | `0x190B4D3C` |
+| `WT_STREAM` (FIN=1, 終端) | `0x190B4D3B` |
 | `WT_MAX_DATA` | `0x190B4D3D` |
 | `WT_MAX_STREAM_DATA` | `0x190B4D3E` |
 | `WT_MAX_STREAMS_BIDI` | `0x190B4D3F` |
@@ -238,10 +256,13 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 | `WT_CLOSE_SESSION` | `0x2843` |
 | `WT_DRAIN_SESSION` | `0x78AE` |
 
+draft-15 では WT_STREAM の LSB が FIN bit。`0x190B4D3C` (LSB=0) が非終端、`0x190B4D3B` (LSB=1) が終端。
+
 ### WebTransport SETTINGS
 
 | パラメータ | Identifier |
 |----------|-----------|
+| `SETTINGS_WT_ENABLED` | `0x2b60` |
 | `SETTINGS_WT_INITIAL_MAX_DATA` | `0x2b61` |
 | `SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI` | `0x2b62` |
 | `SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL` | `0x2b63` |
@@ -341,7 +362,7 @@ let decoded = decoder.decode(&encoded)?;
 ```rust
 use shiguredo_http2::webtransport::{WtConfig, WtSession};
 
-let mut session = WtSession::client(WtConfig::default());
+let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
 session.initiate()?;
 
 let stream_id = session.open_bidi_stream()?;
@@ -395,14 +416,16 @@ match client.next_event().await? {
 
 ### tokio-http2 WebTransport サーバー
 
-`ServerConnection::next_event()` で Extended CONNECT (`:method=CONNECT` かつ `:protocol=webtransport`) を検出したら `WtServerRequest::from_connection()` で要求を組み立てて `accept(WtConfig, allowed_origin: Option<&[u8]>)` する。
+`ServerConnection::next_event()` で Extended CONNECT (`:method=CONNECT` かつ `:protocol=webtransport`) を検出したら `WtServerRequest::from_connection()` で要求を組み立てて `accept(WtConfig, allowed_origin, selected_protocol)` する。サーバー側 `Limits` には `enable_connect_protocol(true)` と `wt_enabled(true)` が必要。
 
 ```rust
 use shiguredo_http2::webtransport::WtConfig;
 use tokio_http2::webtransport::{WEBTRANSPORT_PROTOCOL, WtServerRequest};
 
 let request = WtServerRequest::from_connection(conn, stream_id, headers);
-let mut session = request.accept(WtConfig::default(), Some(b"https://example.com")).await?;
+let mut session = request
+    .accept(WtConfig::default(), Some(b"https://example.com"), None)
+    .await?;
 while let Some(mut bidi) = session.accept_bidi().await {
     let data = bidi.recv().await?;
     bidi.send(b"hello".to_vec(), true).await?;
@@ -411,7 +434,16 @@ while let Some(mut bidi) = session.accept_bidi().await {
 
 WebTransport 関連型: `WtServerRequest`, `WtServerSession`, `WtSessionHandle`, `WtSessionParts`, `WtBidiStream`, `WtUniRecvStream`, `WtUniSendStream`, 定数 `WEBTRANSPORT_PROTOCOL = b"webtransport"`。
 
-`accept()` は draft-ietf-webtrans-http2-15 Section 7 (TLS 1.3 必須) と Section 3.2 (Origin 検証) を実施する。第 2 引数に `None` を渡すと Origin 検証はスキップする (非 Web context 向け)。
+`accept(config, allowed_origin, selected_protocol)` の挙動:
+
+- TLS 1.3 必須 (draft-ietf-webtrans-http2-15 Section 7。rustls 0.23 が TLS 1.2 + extended master secret の状態を公開しないため仕様より厳しい)
+- `:scheme` が `https` でない場合は `RST_STREAM(PROTOCOL_ERROR)` で拒否 (Section 3.2)
+- `allowed_origin: Some(_)` のとき、Origin ヘッダーが存在する場合のみ検証する。欠落時は検証スキップ。不一致は 403
+- `selected_protocol: Some(_)` のとき、リクエストの `WT-Available-Protocols` に含まれることを検証し、レスポンスに `wt-protocol` を付与 (Section 3.3)
+- `WebTransport-Init` のパース失敗時は `:status=400` で拒否
+- 自広告 / ピア SETTINGS を `WtConfig::overlay_settings` で自動適用 (Section 4.3.1)
+
+`WtServerSession::export_keying_material` / `WtSessionHandle::export_keying_material` で TLS Keying Material Exporter を利用できる (Section 5.3)。
 
 ### nghttp2 系 (tokio-nghttp2 / shiguredo_nghttp2)
 
@@ -433,20 +465,19 @@ nghttp2 C ライブラリを使う系統。`shiguredo_nghttp2::Session` を中�
 
 ### `Error` (HTTP/2 接続エラー)
 
-`Error` は `ErrorKind` を内包する。`Error::connection_error(ErrorCode, reason)` / `Error::stream_error(ErrorCode, reason)` / `Error::hpack_error(reason)` / `Error::protocol_error(reason)` / `Error::frame_size_error(reason)` で作成する。`is_connection_error()` / `is_stream_error()` / `error_code()` で分類できる。
+`Error` は `ErrorKind` と `reason` / `location` / `backtrace` を内包する。`Error::connection_error(ErrorCode, reason)` / `Error::stream_error(ErrorCode, reason)` / `Error::hpack_error(reason)` / `Error::protocol_error(reason)` / `Error::frame_size_error(reason)` で作成する。`is_connection_error()` / `is_stream_error()` / `error_code()` で分類できる。
 
 | `ErrorKind` バリアント | 説明 |
 |--------------------|------|
-| `Connection { code, reason }` | 接続レベルエラー (GOAWAY 送信対象) |
-| `Stream { code, reason }` | ストリームレベルエラー (RST_STREAM 送信対象) |
-| `Hpack { reason }` | HPACK デコードエラー (RFC 7541) |
-| `Protocol { reason }` | プロトコル違反 |
-| `FrameSize { reason }` | フレームサイズ違反 |
-| `Io { source }` | I/O エラー |
+| `ConnectionError(ErrorCode)` | 接続レベルエラー (GOAWAY 送信対象) |
+| `StreamError(ErrorCode)` | ストリームレベルエラー (RST_STREAM 送信対象) |
+| `HpackError` | HPACK デコードエラー (RFC 7541)。詳細は `Error::reason` |
+
+`protocol_error` / `frame_size_error` はいずれも `ConnectionError` を構築するヘルパー。
 
 ### `ErrorCode` (HTTP/2 エラーコード)
 
-RFC 9113 §7 の HTTP/2 エラーコード。`as_u32()` / `from_u32(u32)` で変換可能。
+RFC 9113 §7 の HTTP/2 エラーコードに加え、draft-ietf-webtrans-http2-15 Section 3.4 / Section 11.3 の WebTransport エラーコードを含む。`as_u32()` / `from_u32(u32)` で変換可能。
 
 | バリアント | コード |
 |----------|-------|
@@ -464,16 +495,33 @@ RFC 9113 §7 の HTTP/2 エラーコード。`as_u32()` / `from_u32(u32)` で変
 | `EnhanceYourCalm` | `0x0b` |
 | `InadequateSecurity` | `0x0c` |
 | `Http11Required` | `0x0d` |
+| `WtError` | `0x100` (`WT_ERROR`) |
+| `WtStreamStateError` | `0x101` (`WT_STREAM_STATE_ERROR`) |
+| `WtFlowControlError` | `0x102` (`WT_FLOW_CONTROL_ERROR`) |
+
+注: `ErrorCode::WtError` は HTTP/2 GOAWAY/RST_STREAM 用のエラーコードであり、`webtransport::WtError` 構造体とは別物。
+
+### `tokio_http2::Error`
+
+| バリアント | 説明 |
+|----------|------|
+| `Io(io::Error)` | I/O エラー |
+| `Protocol(shiguredo_http2::Error)` | HTTP/2 プロトコルエラー |
+| `Tls(...)` | TLS エラー |
+| `WebTransport(WtError)` | WebTransport セッション / Capsule 処理エラー |
+| `ConnectionClosed` | 接続クローズ |
+| `InvalidArgument(String)` | 無効な引数 |
 
 ### その他
 
 - `DecodeError`: フレームデコード時のバイト列エラー
-- `SendError`: 送信側 API のエラー (フロー制御不足、ストリーム状態違反など)
+- `SendError`: 送信側 API 用のエラー型 (現状 `Connection::send_*` には未統合で `Error` を返す)
 - `FrameError`: フレーム構造エラー
 - `SettingError`: SETTINGS 値検証エラー
-- `LimitsError`: `Limits` 構築時の値域エラー
+- `LimitsError`: `Limits` 構築時のエラー (`WebtransportRequiresConnectProtocol` / `WebtransportRequiresWtEnabled`)
 - `StreamIdError`: ストリーム ID 構築エラー
 - `HeaderFieldError`: HPACK ヘッダー構築エラー (CRLF/NUL 拒否)
+- `WtError` / `WtErrorKind`: WebTransport 層のエラー (`Incomplete`, `BufferTooShort`, `InvalidInput`, `CapsuleDecode`, `InvalidStreamId`, `StreamStateError`, `FlowControlError`, `SessionStateError`, `SessionClosed`)
 
 ## 対応仕様
 
@@ -488,9 +536,10 @@ RFC 9113 §7 の HTTP/2 エラーコード。`as_u32()` / `from_u32(u32)` で変
 
 ## 既知の未対応 / 制限
 
-- **サーバープッシュ (PUSH_PROMISE)**: 主要ブラウザ (Chrome / Firefox / Safari) が削除済みのため未対応。受信した場合は `PROTOCOL_ERROR` で GOAWAY する (`src/connection/mod.rs:926`)。
+- **サーバープッシュ (PUSH_PROMISE)**: 主要ブラウザ (Chrome / Firefox / Safari) が削除済みのため未対応。受信した場合は `PROTOCOL_ERROR` で GOAWAY する (`src/connection/mod.rs` の `Frame::PushPromise` 分岐)。
 - **WebSocket over HTTP/2**: Extended CONNECT (RFC 8441) は対応しているが、WebSocket フレーム層は未実装。
 - **PRIORITY フレーム**: RFC 9113 で非推奨。受信は処理する (優先度情報は無視) が、送信はしない。
 - **HEADERS の優先度フィールド**: RFC 9113 で非推奨。
 - **tokio-nghttp2 と Extended CONNECT / WebTransport**: tokio-nghttp2 側は Extended CONNECT と WebTransport を提供しない (tokio-http2 のみ)。
 - **tokio-http2 の WebTransport accept は TLS 1.3 必須**: rustls 0.23 が TLS 1.2 + extended master secret のネゴシエーション状態を外部公開していないため、安全側に倒して TLS 1.3 のみを許可する (draft-ietf-webtrans-http2-15 Section 7 の要件より厳しい)。
+- **WebTransport の二重ゲート**: `:protocol=webtransport` の CONNECT 開始にはピアの `SETTINGS_ENABLE_CONNECT_PROTOCOL=1` と `SETTINGS_WT_ENABLED=1` の両方が必要。
