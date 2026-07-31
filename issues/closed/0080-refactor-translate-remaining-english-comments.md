@@ -88,7 +88,7 @@ doc コメントは **日本語で記述** する (AGENTS.md 規約準拠)。た
 
 ## 参照
 
-- `issues/closed/0076-fmt-translate-english-comments.md` — 先行 issue (英語コメント翻訳の明示列挙箇所)
+- `issues/0076-fmt-translate-english-comments.md` — 先行 issue (英語コメント翻訳の明示列挙箇所)
 - AGENTS.md — コメント言語の規約 (「コメントは全て日本語にすること」「ログメッセージは全て英語にすること」「テストのログメッセージは全て日本語にすること」)
 - `src/hpack/encoder.rs` / `src/hpack/decoder.rs` — RFC 7541 エンコーディング種別名コメント (英語維持)
 - `src/webtransport/flow_control.rs` — draft 直接引用 (英語維持)
