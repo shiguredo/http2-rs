@@ -2,6 +2,7 @@
 name = "shiguredo_http2-fuzz"
 version = "0.0.0"
 edition = "2024"
+rust-version = "1.93"
 publish = false
 
 [package.metadata]
@@ -141,8 +142,11 @@ path = "fuzz_targets/fuzz_wt_flow_control.rs"
 test = false
 
 [dependencies]
+# 任意バイト列からの構造化入力生成
 arbitrary = { version = "1", features = ["derive"] }
+# libFuzzer 連携
 libfuzzer-sys = "0.4"
 
+# Fuzzing 対象の HTTP/2 Sans I/O コア
 [dependencies.shiguredo_http2]
 path = ".."

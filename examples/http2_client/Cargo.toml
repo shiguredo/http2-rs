@@ -6,6 +6,9 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+# HTTP/1.1 URI パース
 shiguredo_http11 = "2026.6"
+# 非同期ランタイム
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread"] }
+# tokio 統合 HTTP/2
 tokio-http2 = { path = "../../crates/tokio-http2" }
-tokio = { version = "1.53", features = ["rt-multi-thread", "macros"] }

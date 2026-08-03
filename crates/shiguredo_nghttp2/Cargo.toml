@@ -6,5 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+# C 文字列・生ポインタ操作
 libc = "0.2"
+# nghttp2 本体のビルドと FFI 宣言
 nghttp2-sys = { path = "../nghttp2-sys" }

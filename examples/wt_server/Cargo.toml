@@ -6,27 +6,27 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-# HTTP/2 Sans I/O コア
-shiguredo_http2 = { path = "../.." }
-# tokio 統合 HTTP/2
-tokio-http2 = { path = "../../crates/tokio-http2" }
-# TLS
-rustls = "0.23"
-rustls-pki-types = "1.15"
-# 自己署名証明書生成
-rcgen = "0.14"
 # 証明書 SHA-256 計算
 aws-lc-rs = "1.17"
 # 証明書キャッシュの Base64 符号化
 base64ct = { version = "1.8", features = ["alloc"] }
-# 証明書有効期間の時刻計算
-time = "0.3"
-# 非同期ランタイム
-tokio = { version = "1.53", features = ["full"] }
 # CLI 引数パース
 noargs = "0.4"
 # 証明書キャッシュ JSONC
 nojson = "0.3"
+# 自己署名証明書生成
+rcgen = "0.14"
+# TLS
+rustls = "0.23"
+rustls-pki-types = "1.15"
+# HTTP/2 Sans I/O コア
+shiguredo_http2 = { path = "../.." }
+# 証明書有効期間の時刻計算
+time = "0.3"
+# 非同期ランタイム
+tokio = { version = "1.53", features = ["full"] }
+# tokio 統合 HTTP/2
+tokio-http2 = { path = "../../crates/tokio-http2" }
 # 構造化ログ
 tracing = "0.1"
 # ログフィルタ / 出力

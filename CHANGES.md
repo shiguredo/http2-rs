@@ -253,3 +253,9 @@
   - @voluntas
 - [ADD] tokio-http2 に nghttp2 との相互運用テストを 25 件追加し、全 96 件に拡充する (不足方向の HTTP メソッド・ステータスコード・RST_STREAM エラーコード・大規模データ転送・複数クライアント・GOAWAY エラーコード・混在メソッド・PATCH・301/302/400/403・SETTINGS ネゴシエーション)
   - @voluntas
+- [UPDATE] `src/<module>/mod.rs` を `src/<module>.rs` + `src/<module>/<submodule>.rs` 構成に移行し、mod.rs を廃止する
+  - @voluntas
+- [UPDATE] `prek.toml` に tombi の lint / format フックを追加する
+  - @voluntas
+- [UPDATE] 各 Cargo.toml の依存ライブラリに用途コメントを追加し、`fuzz/Cargo.toml` に `rust-version` を明記する
+  - @voluntas

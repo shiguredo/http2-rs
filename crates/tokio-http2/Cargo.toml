@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+# TLS
 rustls = {
   version = "0.23",
   default-features = false,
@@ -15,9 +16,13 @@ rustls = {
     "tls12",
   ]
 }
+# 証明書の DER 型
 rustls-pki-types = { version = "1.15", features = ["std"] }
+# システム信頼ストア検証
 rustls-platform-verifier = "0.7"
+# HTTP/2 Sans I/O コア
 shiguredo_http2 = { path = "../.." }
+# 非同期ランタイム
 tokio = {
   version = "1.53",
   features = [
@@ -29,10 +34,15 @@ tokio = {
     "time",
   ]
 }
+# TLS ストリームの tokio 統合
 tokio-rustls = "0.26"
 
 [dev-dependencies]
+# 自己署名証明書生成
 rcgen = "0.14"
+# interop テスト用 nghttp2 ベース実装
 shiguredo_nghttp2 = { path = "../shiguredo_nghttp2" }
+# テスト用非同期ランタイム
 tokio = { version = "1.53", features = ["full"] }
+# interop テスト用 nghttp2 ベース統合実装
 tokio-nghttp2 = { path = "../tokio-nghttp2" }

@@ -17,12 +17,15 @@ nghttp2 = { git = "https://github.com/nghttp2/nghttp2", version = "1.69.0" }
 doctest = false
 
 [dependencies]
+# C 文字列・生ポインタ操作
 libc = "0.2"
 
 [build-dependencies]
 # overwrite feature でのみ使用 (通常ビルドでは libclang 不要)
 bindgen = { version = "0.72", optional = true }
+# CMake で nghttp2 をビルドする
 shiguredo_cmake = "4.4"
+# 外部依存のビルド設定を読み込む
 shiguredo_toml = "2026.2"
 
 [features]
