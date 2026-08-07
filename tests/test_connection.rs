@@ -784,6 +784,32 @@ mod reset_stream {
         assert!(!find_event(conn, pred), "{}", message);
     }
 
+    /// 指定したストリーム ID の RST_STREAM フレームが出力に含まれることを検証する
+    ///
+    /// 出力バッファ全体を消費するため、検査対象の出力がすべて揃った後に呼ぶこと。
+    fn assert_rst_stream_sent(conn: &mut Connection, stream_id: u32, message: &str) {
+        let output = conn
+            .poll_output()
+            .expect("RST_STREAM フレームが出力されるべき");
+        let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+        // クライアントの出力には接続プリフェイスが含まれるため、除去してからデコードする
+        let frame_bytes = if output.starts_with(shiguredo_http2::CONNECTION_PREFACE) {
+            &output[shiguredo_http2::CONNECTION_PREFACE_LEN..]
+        } else {
+            &output[..]
+        };
+        decoder.feed(frame_bytes);
+        let mut found_rst = false;
+        while let Some(frame) = decoder.decode().expect("decode should succeed") {
+            if let Frame::RstStream(rst) = frame
+                && rst.stream_id.as_u32() == stream_id
+            {
+                found_rst = true;
+            }
+        }
+        assert!(found_rst, "{}", message);
+    }
+
     /// ストリームレベルのフロー制御違反 (受信ウィンドウ超過の DATA) による内部リセットで
     /// `Event::StreamReset` が通知される
     ///
@@ -920,16 +946,7 @@ mod reset_stream {
         );
 
         // RST_STREAM フレームが出力されている
-        let output = server.poll_output().expect("output should exist");
-        let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
-        decoder.feed(&output);
-        let mut found_rst = false;
-        while let Some(frame) = decoder.decode().expect("decode should succeed") {
-            if matches!(frame, Frame::RstStream(_)) {
-                found_rst = true;
-            }
-        }
-        assert!(found_rst, "RST_STREAM フレームが出力されるべき");
+        assert_rst_stream_sent(&mut server, 1, "RST_STREAM フレームが出力されるべき");
 
         // 内部リセットは Event::StreamClosed を通知しない
         assert_no_event(
@@ -947,7 +964,7 @@ mod reset_stream {
     /// 「closed 状態のストリームには PRIORITY 以外を送信してはならない (MUST NOT)」と、
     /// ピアからの RST_STREAM 受信後の送信は Section 5.4.2 の「RST_STREAM への応答で
     /// RST_STREAM を送信してはならない (MUST NOT)」に厳密には抵触しうるが、
-    /// 本修正は既存挙動 (streams に存在しないストリームへも送信) を維持する。
+    /// idle 以外のストリームへの送信は既存挙動を維持する (今回の修正は idle のみを拒否する)。
     #[test]
     fn test_reset_stream_closed_no_event() {
         // クローズ済みストリーム (ピアからの RST_STREAM で削除済み)
@@ -973,24 +990,41 @@ mod reset_stream {
             |e| matches!(e, Event::StreamReset { .. }),
             "クローズ済みストリームへの明示リセットで Event::StreamReset が push されてはならない",
         );
+
+        // RST_STREAM フレームは送信される (既存挙動の維持)
+        assert_rst_stream_sent(
+            &mut server,
+            1,
+            "クローズ済みストリームへの RST_STREAM は送信されるべき",
+        );
     }
 
-    /// idle ストリームへの明示 `reset_stream` では `Event::StreamReset` が push されない
+    /// idle ストリームへの明示 `reset_stream` はエラーを返し、RST_STREAM を送信しない
     ///
-    /// RST_STREAM 送信は常に行い、終了イベントの push と `streams` からの削除は
-    /// `streams` にストリームが存在する場合のみ行う。
-    /// なお、idle ストリームへの RST_STREAM 送信は RFC 9113 Section 6.4 の MUST NOT に
-    /// 抵触するが、本修正は既存挙動を維持する (このテストは送信の成否を検証しない)。
+    /// RFC 9113 Section 6.4: idle ストリームへの RST_STREAM 送信は MUST NOT で禁止されており、
+    /// 受信したピアは PROTOCOL_ERROR の接続エラーにする。一度も開かれていないストリームへの
+    /// 明示リセットは RST_STREAM を送信せずエラーを返す。
     #[test]
-    fn test_reset_stream_idle_no_event() {
+    fn test_reset_stream_on_idle_stream_is_error() {
         // idle ストリーム (一度も開かれていない)
         let mut idle_server = setup_server();
         while idle_server.poll_event().is_some() {}
-        // 既存挙動 (RST_STREAM 送信のみ) のため戻り値は検証しない。
-        // idle ストリームへの明示リセットは別途エラーを返すようになるため、
-        // 成功 (Ok) を assert しない。
-        let _ = idle_server.reset_stream(client_stream_id(1), ErrorCode::Cancel);
+        // セットアップ時の出力 (SETTINGS とその ACK) を消費しておく
+        let _ = idle_server.poll_output();
 
+        // idle ストリームへの明示リセットはエラーを返し、RST_STREAM を送信しない
+        let result = idle_server.reset_stream(client_stream_id(1), ErrorCode::Cancel);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.is_stream_error());
+            assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
+        }
+
+        // RST_STREAM 未送信のため出力は増えず、Event::StreamReset も push されない
+        assert!(
+            idle_server.poll_output().is_none(),
+            "idle ストリームへの明示リセットで RST_STREAM が送信されてはならない"
+        );
         assert_no_event(
             &mut idle_server,
             |e| matches!(e, Event::StreamReset { .. }),
@@ -1302,5 +1336,122 @@ mod reset_stream {
             assert!(e.is_connection_error());
             assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
         }
+    }
+
+    /// 偶数ストリーム ID への明示 `reset_stream` はエラーを返す
+    ///
+    /// ストリーム ID の奇偶は RFC 9113 Section 5.1.1 で定められており (クライアントは奇数、
+    /// サーバーは偶数)、本実装はサーバープッシュ非サポートのためサーバー開始ストリームが
+    /// 存在しない。したがって偶数ストリーム ID は常に idle であり、RST_STREAM は送信されない。
+    #[test]
+    fn test_reset_stream_on_even_stream_id_is_error() {
+        let mut server = setup_server();
+        // last_recv_stream_id を 3 まで進めておき、偶数 ID の判定だけがエラーを生むことを
+        // 保証する (last_recv_stream_id 超過の判定では idle にならない)
+        open_stream_on_server(&mut server, 1);
+        open_stream_on_server(&mut server, 3);
+        // セットアップ時の出力を消費しておく
+        let _ = server.poll_output();
+
+        let result = server.reset_stream(
+            shiguredo_http2::StreamId::Server(shiguredo_http2::ServerStreamId::from_static(2)),
+            ErrorCode::Cancel,
+        );
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.is_stream_error());
+            assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
+        }
+
+        // RST_STREAM 未送信のため出力は増えず、Event::StreamReset も push されない
+        assert!(
+            server.poll_output().is_none(),
+            "偶数ストリーム ID への明示リセットで RST_STREAM が送信されてはならない"
+        );
+        assert_no_event(
+            &mut server,
+            |e| matches!(e, Event::StreamReset { .. }),
+            "偶数ストリーム ID への明示リセットで Event::StreamReset が push されてはならない",
+        );
+    }
+
+    /// リセット済みストリームへの再リセットは既存挙動 (RST_STREAM 送信のみ) を維持する
+    ///
+    /// クライアントが送信開始したストリーム (last_recv_stream_id 超過) は closed_streams に
+    /// 登録済みのため、`is_idle_stream` の closed_streams 考慮により idle と判定されず、
+    /// 2 回目の明示リセットでも RST_STREAM が送信される。
+    #[test]
+    fn test_reset_stream_twice_sends_rst() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+        client
+            .reset_stream(client_stream_id(1), ErrorCode::Cancel)
+            .expect("reset_stream should succeed");
+
+        // リセット済みストリームへの 2 回目の明示リセットは既存挙動を維持する
+        client
+            .reset_stream(client_stream_id(1), ErrorCode::Cancel)
+            .expect("reset_stream should succeed");
+
+        // 2 回目の明示リセットの RST_STREAM フレームが出力されている
+        assert_rst_stream_sent(
+            &mut client,
+            1,
+            "リセット済みストリームへの再リセットで RST_STREAM は送信されるべき",
+        );
+    }
+
+    /// `StreamId::Connection` への明示 `reset_stream` は接続エラー (PROTOCOL_ERROR) を返す
+    ///
+    /// RFC 9113 Section 6.4: RST_STREAM は非ゼロストリーム ID に関連付けなければならない。
+    /// idle 検査を追加しても、ストリーム ID 0 の既存のエラー種別は変わらない。
+    #[test]
+    fn test_reset_stream_on_connection_id_is_error() {
+        let mut server = setup_server();
+
+        let result = server.reset_stream(shiguredo_http2::StreamId::Connection, ErrorCode::Cancel);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.is_connection_error());
+            assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
+        }
+    }
+
+    /// ピアがストリーム ID を飛ばしたことで暗黙的にクローズ済みになったストリームへの
+    /// 明示 `reset_stream` は既存挙動 (RST_STREAM 送信のみ) を維持する
+    ///
+    /// RFC 9113 Section 5.1.1: より大きい ID のストリームが開かれると、スキップされた
+    /// ストリームは暗黙的に closed に遷移する。closed 状態は idle ではないため、
+    /// 明示リセットはエラーにならず RST_STREAM が送信される。
+    /// なお、closed 状態への RST_STREAM 送信は RFC 9113 Section 5.1 の
+    /// 「PRIORITY 以外を送信してはならない (MUST NOT)」に厳密には抵触しうるが、
+    /// 既存挙動を維持する。
+    #[test]
+    fn test_reset_stream_implicitly_closed_stream_sends_rst() {
+        let mut server = setup_server();
+        // ストリーム 1 と 5 を受信 (ストリーム 3 はスキップ → 暗黙的にクローズ済み)
+        open_stream_on_server(&mut server, 1);
+        open_stream_on_server(&mut server, 5);
+
+        // スキップされたストリーム 3 への明示リセットは既存挙動 (RST_STREAM 送信のみ) を維持する
+        server
+            .reset_stream(client_stream_id(3), ErrorCode::Cancel)
+            .expect("reset_stream should succeed");
+
+        // streams に存在しないため Event::StreamReset は push されない
+        assert_no_event(
+            &mut server,
+            |e| matches!(e, Event::StreamReset { .. }),
+            "暗黙的クローズ済みストリームへの明示リセットで Event::StreamReset が push されてはならない",
+        );
+
+        // RST_STREAM フレームは送信される (既存挙動の維持)
+        assert_rst_stream_sent(
+            &mut server,
+            3,
+            "暗黙的クローズ済みストリームへの RST_STREAM は送信されるべき",
+        );
     }
 }

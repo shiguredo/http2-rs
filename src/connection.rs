@@ -819,11 +819,18 @@ impl Connection {
     }
 
     /// ストリームをリセットする
+    ///
+    /// # Errors
+    ///
+    /// - `StreamId::Connection` (stream_id = 0) → [`ErrorKind::ConnectionError`] (PROTOCOL_ERROR)
+    /// - idle ストリーム → [`ErrorKind::StreamError`] (PROTOCOL_ERROR)。RST_STREAM は送信されない
+    ///
+    /// idle 判定はローカル視点で行うため、ピアが HEADERS を送信済みで未受信のストリーム
+    /// (フライト中) も idle と判定されエラーになる。クローズ済みストリームは idle ではなく
+    /// 既存挙動どおり RST_STREAM が送信される (closed_streams の上限超過で追い出された
+    /// ストリームのうち last_recv_stream_id を超えるものは idle と判定される既知の限界あり)。
     pub fn reset_stream(&mut self, stream_id: StreamId, error_code: ErrorCode) -> Result<()> {
-        // RFC 9113 Section 6.4: RST_STREAM は非ゼロストリーム ID に関連付けなければならない。
-        // idle ストリームへの RST_STREAM 送信 (Section 6.4 の MUST NOT) と、closed 状態への
-        // フレーム送信 (Section 5.1 の MUST NOT) には厳密には抵触しうるが、
-        // 本修正では既存挙動 (streams に存在しないストリームへも送信) を維持する。
+        // RFC 9113 Section 6.4: RST_STREAM は非ゼロストリーム ID に関連付けなければならない
         let nz_stream_id = stream_id.non_zero().ok_or_else(|| {
             Error::connection_error(
                 ErrorCode::ProtocolError,
@@ -831,11 +838,23 @@ impl Connection {
             )
         })?;
 
+        // RFC 9113 Section 6.4: idle ストリームへの RST_STREAM 送信は MUST NOT で禁止されており、
+        // 受信したピアは PROTOCOL_ERROR の接続エラーにする。
+        // エラー種別は公開 API の呼び出し拒否で使われる stream_error を踏襲する
+        // (ピアに何も送信しないローカル呼び出しのエラーであり、
+        // GOAWAY を要求する接続エラーとは区別する)。
+        let sid = stream_id.as_u32();
+        if self.is_idle_stream(sid) {
+            return Err(Error::stream_error(
+                ErrorCode::ProtocolError,
+                format!("RST_STREAM on idle stream: {}", sid),
+            ));
+        }
+
         // send_frame は streams を変更しないため、送信前後で存在判定は一致する。
         // 終了処理を送信成功後に限定するため、送信前に存在を記録しておく。
         // (状態遷移 send_rst_stream は送信前に実行されるが、エンコードは失敗しないため
         // 送信失敗時に状態だけが遷移する事態は現状発生しない)
-        let sid = stream_id.as_u32();
         let exists = self.streams.contains_key(&sid);
 
         if let Some(stream) = self.streams.get_mut(&sid) {
@@ -848,11 +867,12 @@ impl Connection {
         // RST_STREAM 送信成功後、streams に存在したストリームのみ受信パス
         // (handle_rst_stream) と対称に Event::StreamReset を push し、
         // closed_streams へ登録してから streams から削除する。
-        // streams に存在しないストリーム (クローズ済み・idle) は既存挙動
-        // (RST_STREAM 送信のみ) を維持する。
+        // streams に存在しないストリーム (クローズ済み) への RST_STREAM 送信は
+        // RFC 9113 Section 5.1 の closed 状態へのフレーム送信制限 (MUST NOT) に
+        // 厳密には抵触しうるが、既存挙動 (RST_STREAM 送信のみ) を維持する。
         // なお、closed_streams の上限超過で追い出されたストリームのうち
         // last_recv_stream_id を超えるものは、以後 idle と判定され
-        // 遅延フレームが接続エラーに昇格する (既知の限界)。
+        // エラーを返す (既知の限界)。
         if exists {
             self.events.push_back(Event::StreamReset {
                 stream_id,
