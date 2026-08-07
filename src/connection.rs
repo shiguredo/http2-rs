@@ -820,7 +820,10 @@ impl Connection {
 
     /// ストリームをリセットする
     pub fn reset_stream(&mut self, stream_id: StreamId, error_code: ErrorCode) -> Result<()> {
-        // RFC 9113 §6.4: RST_STREAM は非ゼロストリーム ID に関連付けなければならない
+        // RFC 9113 Section 6.4: RST_STREAM は非ゼロストリーム ID に関連付けなければならない。
+        // idle ストリームへの RST_STREAM 送信 (Section 6.4 の MUST NOT) と、closed 状態への
+        // フレーム送信 (Section 5.1 の MUST NOT) には厳密には抵触しうるが、
+        // 本修正では既存挙動 (streams に存在しないストリームへも送信) を維持する。
         let nz_stream_id = stream_id.non_zero().ok_or_else(|| {
             Error::connection_error(
                 ErrorCode::ProtocolError,
@@ -828,12 +831,36 @@ impl Connection {
             )
         })?;
 
-        if let Some(stream) = self.streams.get_mut(&stream_id.as_u32()) {
+        // send_frame は streams を変更しないため、送信前後で存在判定は一致する。
+        // 終了処理を送信成功後に限定するため、送信前に存在を記録しておく。
+        // (状態遷移 send_rst_stream は送信前に実行されるが、エンコードは失敗しないため
+        // 送信失敗時に状態だけが遷移する事態は現状発生しない)
+        let sid = stream_id.as_u32();
+        let exists = self.streams.contains_key(&sid);
+
+        if let Some(stream) = self.streams.get_mut(&sid) {
             stream.state_machine_mut().send_rst_stream();
         }
 
         let rst_frame = RstStreamFrame::new(nz_stream_id, error_code.as_u32());
         self.send_frame(&Frame::RstStream(rst_frame))?;
+
+        // RST_STREAM 送信成功後、streams に存在したストリームのみ受信パス
+        // (handle_rst_stream) と対称に Event::StreamReset を push し、
+        // closed_streams へ登録してから streams から削除する。
+        // streams に存在しないストリーム (クローズ済み・idle) は既存挙動
+        // (RST_STREAM 送信のみ) を維持する。
+        // なお、closed_streams の上限超過で追い出されたストリームのうち
+        // last_recv_stream_id を超えるものは、以後 idle と判定され
+        // 遅延フレームが接続エラーに昇格する (既知の限界)。
+        if exists {
+            self.events.push_back(Event::StreamReset {
+                stream_id,
+                error_code,
+            });
+            self.closed_streams.insert(sid);
+            self.streams.remove(&sid);
+        }
 
         Ok(())
     }
@@ -1341,10 +1368,22 @@ impl Connection {
 
     /// ストリームが idle 状態かどうかを判定する
     ///
-    /// RFC 9113 Section 5.1: マップに存在しないストリームで、
-    /// last_recv_stream_id より大きい（または偶数で未使用）ものは idle。
+    /// RFC 9113 Section 5.1.1: ストリームは idle 状態から開始し、より大きい ID の
+    /// ストリームが開かれると、それより小さい未開設ストリームは closed に遷移する。
+    /// したがって、マップに存在しないストリームで last_recv_stream_id より大きい
+    /// (または偶数で未使用) ものは idle と判定できる。
+    /// 一度開かれたストリーム (closed_streams に登録済み) は idle ではない
+    /// (RFC 9113 Section 5.1: RST_STREAM 送信・受信で closed 状態に遷移する)。
+    /// closed_streams の上限超過で追い出されたクローズ済みストリームのうち
+    /// last_recv_stream_id を超えるものは idle と判定される (既知の限界)。
     fn is_idle_stream(&self, stream_id: u32) -> bool {
         if self.streams.contains_key(&stream_id) {
+            return false;
+        }
+        // リセット・クローズ済みストリーム (closed_streams に登録済み) は idle ではない。
+        // streams から削除されたストリームへの遅延フレームを idle 誤判定すると
+        // 接続エラーに昇格してしまうため、必ず参照する。
+        if self.closed_streams.contains(&stream_id) {
             return false;
         }
         // サーバープッシュ非サポートのため偶数ストリーム ID は常にアイドル
@@ -1366,25 +1405,14 @@ impl Connection {
     ///
     /// アイドルストリームへの DATA / RST_STREAM / WINDOW_UPDATE は接続エラー。
     /// サーバープッシュ非サポートのため偶数ストリーム ID も拒否する。
+    /// 判定ロジックは is_idle_stream と共有する。
     fn check_not_idle_stream(&self, stream_id: u32, frame_type: &str) -> Result<()> {
-        if self.streams.contains_key(&stream_id) {
-            return Ok(());
-        }
-        // サーバープッシュ非サポートのため偶数ストリーム ID は常にアイドル
-        if stream_id.is_multiple_of(2) {
+        if self.is_idle_stream(stream_id) {
             return Err(Error::connection_error(
                 ErrorCode::ProtocolError,
                 format!("{} on idle stream: {}", frame_type, stream_id),
             ));
         }
-        // last_recv_stream_id よりも大きいストリーム ID はアイドル
-        if stream_id > self.last_recv_stream_id {
-            return Err(Error::connection_error(
-                ErrorCode::ProtocolError,
-                format!("{} on idle stream: {}", frame_type, stream_id),
-            ));
-        }
-        // last_recv_stream_id 以下でマップにないストリームは暗黙的にクローズ済み
         Ok(())
     }
 

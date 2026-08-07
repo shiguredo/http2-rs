@@ -118,7 +118,8 @@
   - @voluntas
 - [ADD] `shiguredo_http2::webtransport` に WebTransport-Init ヘッダー (RFC 8941 Dictionary) パーサー `WtInit` と `WtConfig::apply_init` を追加し、`tokio_http2::WtServerRequest::accept()` で SETTINGS とのマージ・パース失敗時の `:status=400` 拒否を自動化する (draft-ietf-webtrans-http2-14 §4.3 / §4.3.2) (issue 0064)
   - @voluntas
-- [FIX] `WtSession::send_stream_data` でカプセルエンコードをフロー制御チェックより前に実行していたため、違反時に output_buffer が汚染される問題を修正する (draft-ietf-webtrans-http2-15 Section 6.5 / 6.6)
+- [FIX] ライブラリ内部からのストリームリセット時に `Event::StreamReset` が通知されずストリーム状態が残留する問題を修正する。RST_STREAM 送信時にも受信パスと対称に終了イベントの通知と `streams` からの即時削除を行うようにし、リセット済みストリームへの遅延フレームの idle 誤判定による接続エラー昇格 (RFC 9113 Section 5.1) と、送信バッファ残データの RST_STREAM 後送信 (RFC 9113 Section 5.4.2 違反) を併せて解消する
+  - @voluntas- [FIX] `WtSession::send_stream_data` でカプセルエンコードをフロー制御チェックより前に実行していたため、違反時に output_buffer が汚染される問題を修正する (draft-ietf-webtrans-http2-15 Section 6.5 / 6.6)
   - @voluntas
 - [FIX] `WtFlowControl::new` / `WtStream::new` が `send_max` (ピア広告値) と `recv_max` (ローカル広告値) を同一値で初期化していたバグを修正し、`WtSession` のコンストラクタにピア用 `WtConfig` を追加する (draft-ietf-webtrans-http2-15 Section 4.3.1 / Section 11.2)
   - @voluntas
