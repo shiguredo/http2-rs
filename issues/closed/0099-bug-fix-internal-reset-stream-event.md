@@ -2,6 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-08-07
+- Completed: 2026-08-07
 - Polished: 2026-08-07
 - Model: deepseek-v4-flash
 - Branch: feature/fix-internal-reset-stream-event
@@ -68,6 +69,21 @@
    - 既存の `pbt/tests/prop_connection/main.rs` の `prop_rst_stream_cancels_stream` は受信パスの検証であり、変更しない
 3. `CHANGES.md` の `## develop` に `[FIX]` エントリを追加する (shiguredo-changelog スキルを参照)
 4. `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` を実行する
+
+## 解決方法
+
+1. `src/connection.rs` の `Connection::reset_stream` に、RST_STREAM 送信成功後かつ `streams` にストリームが存在する場合のみ、`Event::StreamReset` の push・`closed_streams` への登録・`streams` からの削除を追加した (受信パスの `handle_rst_stream` と対称)
+2. `src/connection.rs` の `is_idle_stream` / `check_not_idle_stream` に `closed_streams` の参照を追加し、リセット済みストリームを idle と判定しないようにした。`check_not_idle_stream` は `is_idle_stream` への委譲に書き換え、判定ロジックの重複を排除した
+3. `src/connection/headers.rs` の GOAWAY 送信後チェックに `closed_streams` の参照を追加し、リセット済みストリームへの遅延 HEADERS を新規ストリームとして接続エラーにしないようにした
+4. `tests/test_connection.rs` に `mod reset_stream` を追加し、単体テスト 12 件を追加した:
+   - フロー制御違反 / デコードエラー (WINDOW_UPDATE 増分 0) / ウィンドウオーバーフローによる内部リセットで `Event::StreamReset` が通知されること
+   - 明示 `reset_stream` で `Event::StreamReset` が通知され、RST_STREAM が送信されること
+   - クローズ済み・idle ストリームへの明示 `reset_stream` で `Event::StreamReset` が push されないこと
+   - リセット済みストリームへの遅延 DATA / HEADERS / WINDOW_UPDATE / RST_STREAM が破棄・無視され接続が維持されること
+   - リセット時の送信バッファ残データが接続レベル WINDOW_UPDATE 受信で送信されないこと
+   - GOAWAY 送信後の新規ストリーム HEADERS が従来どおり接続エラーになること
+5. `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
+6. `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通ることを確認した
 
 ## 参照
 

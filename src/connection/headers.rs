@@ -228,9 +228,14 @@ impl Connection {
         let sid = frame.stream_id.as_u32();
 
         // RFC 9113 Section 6.8: GOAWAY 送信後の新規ストリームチェック
+        // リセット・クローズ済みストリーム (closed_streams に登録済み) への遅延
+        // HEADERS は新規ストリームではないため、このチェックの対象外とする。
+        // closed_streams の上限超過で追い出されたクローズ済みストリームは
+        // 新規ストリームと誤判定され接続エラーになる (既知の限界)。
         if matches!(self.state, ConnectionState::GoawaySent)
             && sid > self.last_recv_stream_id
             && !self.streams.contains_key(&sid)
+            && !self.closed_streams.contains(&sid)
         {
             return Err(Error::connection_error(
                 ErrorCode::ProtocolError,
@@ -241,6 +246,8 @@ impl Connection {
         // RFC 9113 Section 5.1: クローズ済みストリームへの遅延 HEADERS は
         // HPACK 状態を更新してから破棄する必要がある (MUST)。
         // closed_streams で追跡しているため、未開設ストリームの非単調 ID とは区別できる。
+        // closed_streams の上限超過で追い出されたクローズ済みストリームは
+        // 新規ストリームとして扱われてしまう (既知の限界)。
         let is_previously_closed = self.closed_streams.contains(&sid);
 
         if !is_previously_closed {

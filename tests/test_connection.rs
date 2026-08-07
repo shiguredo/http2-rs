@@ -4,7 +4,7 @@
 
 use shiguredo_http2::{
     Connection, ErrorCode, Event, HeaderField, HpackEncoder, LastStreamId, Limits, NonZeroStreamId,
-    WindowIncrement,
+    WindowIncrement, WindowSize,
     frame::{
         ContinuationFrame, DataFrame, Frame, FrameDecoder, FrameEncoder, GoawayFrame, HeadersFrame,
         PingFrame, RstStreamFrame, SettingsFrame, WindowUpdateFrame,
@@ -32,15 +32,21 @@ fn create_continuation(
 /// HPACK エンコードする。ストリーム ID 違反 (偶数 / 非単調) のテストで再利用する最小セット。
 fn encode_valid_request_headers() -> Vec<u8> {
     let mut encoder = HpackEncoder::new(4096);
-    let headers = vec![
+    let mut buf = Vec::new();
+    encoder.encode(&mut buf, &request_headers());
+    buf
+}
+
+/// 有効なリクエストヘッダー (生の HeaderField) を生成する
+///
+/// `start_stream` に渡すために使用する。
+fn request_headers() -> Vec<HeaderField> {
+    vec![
         HeaderField::new(":method", "GET").expect("valid header field"),
         HeaderField::new(":scheme", "https").expect("valid header field"),
         HeaderField::new(":path", "/").expect("valid header field"),
         HeaderField::new(":authority", "example.com").expect("valid header field"),
-    ];
-    let mut buf = Vec::new();
-    encoder.encode(&mut buf, &headers);
-    buf
+    ]
 }
 
 /// `connection_window_size == DEFAULT_INITIAL_WINDOW_SIZE` のとき
@@ -676,6 +682,625 @@ fn test_invalid_initial_window_size_is_flow_control_error() {
         if let Err(e) = result {
             assert!(e.is_connection_error());
             assert_eq!(e.error_code(), Some(ErrorCode::FlowControlError));
+        }
+    }
+}
+
+/// reset_stream の終了イベント通知とクローズ済みストリーム追跡のテスト
+///
+/// 内部リセット (ストリームエラー処理) と明示リセットで `Event::StreamReset` が通知され、
+/// リセット済みストリームへの遅延フレームが idle 誤判定で接続エラーに昇格しないことを
+/// 検証する。
+mod reset_stream {
+    use super::*;
+
+    /// 増分 0 のストリーム向け WINDOW_UPDATE (stream_id=1) を raw バイト列で構築する
+    ///
+    /// `WindowIncrement` 型は非ゼロを構造的に保証するため、raw バイト列で構築する。
+    /// RFC 9113 Section 6.9: 増分 0 の WINDOW_UPDATE はエラーとして扱わなければならない (MUST)。
+    fn encode_window_update_zero_increment() -> Vec<u8> {
+        let mut wu_bytes = Vec::new();
+        // フレームヘッダー: length=4, type=0x08 (WINDOW_UPDATE), flags=0, stream_id=1
+        wu_bytes.extend_from_slice(&[0x00, 0x00, 0x04, 0x08, 0x00, 0x00, 0x00, 0x00, 0x01]);
+        // WINDOW_UPDATE ペイロード: window_size_increment=0
+        wu_bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        wu_bytes
+    }
+
+    /// サーバー接続を初期化して Active 状態にする
+    ///
+    /// mark_preface_received + initiate + ピア SETTINGS 受信まで完了する。
+    fn setup_server() -> Connection {
+        setup_server_with_limits(Limits::default())
+    }
+
+    /// 指定した Limits でサーバー接続を初期化して Active 状態にする
+    fn setup_server_with_limits(limits: Limits) -> Connection {
+        let mut server = Connection::server(limits);
+        server.mark_preface_received();
+        server.initiate().expect("initiate should succeed");
+        let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
+        server.feed(&settings_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+        server
+    }
+
+    /// クライアント接続を初期化して Active 状態にする
+    ///
+    /// initiate + ピア SETTINGS 受信まで完了する。
+    fn setup_client() -> Connection {
+        let mut client = Connection::client(Limits::default());
+        client.initiate().expect("initiate should succeed");
+        let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
+        client.feed(&settings_bytes).expect("feed should succeed");
+        client.process().expect("process should succeed");
+        client
+    }
+
+    /// サーバー側でクライアント開始ストリームを開く (HEADERS を受信する)
+    fn open_stream_on_server(server: &mut Connection, stream_id: u32) {
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(stream_id),
+            encode_valid_request_headers(),
+        )
+        .with_end_headers(true);
+        let headers_bytes = encode_frame(&Frame::Headers(headers));
+        server.feed(&headers_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+    }
+
+    /// 有効なレスポンスヘッダー (:status 200) を HPACK エンコードする
+    fn encode_valid_response_headers() -> Vec<u8> {
+        let mut encoder = HpackEncoder::new(4096);
+        let headers = vec![HeaderField::new(":status", "200").expect("valid header field")];
+        let mut buf = Vec::new();
+        encoder.encode(&mut buf, &headers);
+        buf
+    }
+
+    /// クライアント開始ストリーム ID を生成する
+    fn client_stream_id(id: u32) -> shiguredo_http2::StreamId {
+        shiguredo_http2::StreamId::Client(shiguredo_http2::ClientStreamId::from_static(id))
+    }
+
+    /// イベントキューから条件に一致するイベントを探す
+    fn find_event<F>(conn: &mut Connection, mut pred: F) -> bool
+    where
+        F: FnMut(&Event) -> bool,
+    {
+        while let Some(event) = conn.poll_event() {
+            if pred(&event) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// イベントキューに条件に一致するイベントが無いことを検証する
+    fn assert_no_event<F>(conn: &mut Connection, pred: F, message: &str)
+    where
+        F: FnMut(&Event) -> bool,
+    {
+        assert!(!find_event(conn, pred), "{}", message);
+    }
+
+    /// ストリームレベルのフロー制御違反 (受信ウィンドウ超過の DATA) による内部リセットで
+    /// `Event::StreamReset` が通知される
+    ///
+    /// RFC 9113 Section 6.9.1: フロー制御ウィンドウを超える DATA の送信は MUST NOT であり、
+    /// ウィンドウを超過するフレームを受け入れられない受信者は FLOW_CONTROL_ERROR の
+    /// ストリームエラーで応答してよい (RFC 9113 Section 6.9 の MAY)。
+    /// 本実装は RST_STREAM(FLOW_CONTROL_ERROR) を送信し、内部リセット時にも受信パス
+    /// (ピアからの RST_STREAM) と対称に `Event::StreamReset` を通知する。
+    #[test]
+    fn test_flow_control_violation_pushes_stream_reset() {
+        // ストリームレベルの受信ウィンドウを 4096 に縮小し、
+        // 接続ウィンドウ (65535) は超過しない DATA で違反を起こす
+        let limits = Limits::builder()
+            .initial_window_size(WindowSize::from_static(4096))
+            .build()
+            .expect("should succeed");
+        let mut server = setup_server_with_limits(limits);
+        open_stream_on_server(&mut server, 1);
+
+        // 受信ウィンドウ 4096 を超過する DATA (4097 バイト)
+        let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![0u8; 4097],
+        )));
+        server.feed(&data_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        // Event::StreamReset (FLOW_CONTROL_ERROR) が通知されている
+        assert!(
+            find_event(&mut server, |e| matches!(
+                e,
+                Event::StreamReset {
+                    stream_id: shiguredo_http2::StreamId::Client(_),
+                    error_code: ErrorCode::FlowControlError,
+                }
+            )),
+            "Event::StreamReset が通知されるべき"
+        );
+
+        // 違反した DATA は DataReceived イベントにならない (RST_STREAM で早期 return される)
+        assert_no_event(
+            &mut server,
+            |e| matches!(e, Event::DataReceived { .. }),
+            "フロー制御違反の DATA は DataReceived イベントになってはならない",
+        );
+    }
+
+    /// ストリーム向け WINDOW_UPDATE の増分 0 (デコードエラー) による内部リセットで
+    /// `Event::StreamReset` が通知される
+    ///
+    /// RFC 9113 Section 6.9: 増分 0 の WINDOW_UPDATE はストリームエラー
+    /// (PROTOCOL_ERROR) として扱わなければならない (MUST)。ストリームエラーは
+    /// RST_STREAM で処理される (RFC 9113 Section 5.4.2)。
+    #[test]
+    fn test_decode_error_pushes_stream_reset() {
+        let mut server = setup_server();
+        open_stream_on_server(&mut server, 1);
+
+        server
+            .feed(&encode_window_update_zero_increment())
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        // Event::StreamReset (PROTOCOL_ERROR) が通知されている
+        assert!(
+            find_event(&mut server, |e| matches!(
+                e,
+                Event::StreamReset {
+                    stream_id: shiguredo_http2::StreamId::Client(_),
+                    error_code: ErrorCode::ProtocolError,
+                }
+            )),
+            "Event::StreamReset が通知されるべき"
+        );
+    }
+
+    /// ストリーム向け WINDOW_UPDATE のウィンドウオーバーフローによる内部リセットで
+    /// `Event::StreamReset` が通知される
+    ///
+    /// RFC 9113 Section 6.9.1: フロー制御ウィンドウは 2^31-1 を超えてはならない (MUST NOT)。
+    /// 超過は FLOW_CONTROL_ERROR のストリームエラーになり、RST_STREAM が送信される。
+    #[test]
+    fn test_window_overflow_pushes_stream_reset() {
+        let mut server = setup_server();
+        open_stream_on_server(&mut server, 1);
+
+        // 送信ウィンドウ (65535) に 2^31-1 を加算すると上限 (2^31-1) を超える
+        let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::for_stream(
+            NonZeroStreamId::from_static(1),
+            WindowIncrement::from_static(WindowIncrement::MAX),
+        ));
+        let wu_bytes = encode_frame(&wu_frame);
+        server.feed(&wu_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        // Event::StreamReset (FLOW_CONTROL_ERROR) が通知されている
+        assert!(
+            find_event(&mut server, |e| matches!(
+                e,
+                Event::StreamReset {
+                    stream_id: shiguredo_http2::StreamId::Client(_),
+                    error_code: ErrorCode::FlowControlError,
+                }
+            )),
+            "Event::StreamReset が通知されるべき"
+        );
+    }
+
+    /// 利用者が `reset_stream` を明示的に呼んだ場合に `Event::StreamReset` が通知される
+    ///
+    /// 受信パス (ピアからの RST_STREAM) と対称に、送信パスでもストリームの終了を
+    /// 利用者が認識できるようにする。RST_STREAM 送信は常に行い、ストリームが
+    /// `streams` に存在する場合のみ終了イベントを push して削除するため、
+    /// `Event::StreamClosed` は通知されない。
+    #[test]
+    fn test_explicit_reset_stream_pushes_event() {
+        let mut server = setup_server();
+        open_stream_on_server(&mut server, 1);
+
+        server
+            .reset_stream(client_stream_id(1), ErrorCode::Cancel)
+            .expect("reset_stream should succeed");
+
+        // Event::StreamReset (CANCEL) が通知されている
+        assert!(
+            find_event(&mut server, |e| matches!(
+                e,
+                Event::StreamReset {
+                    stream_id: shiguredo_http2::StreamId::Client(_),
+                    error_code: ErrorCode::Cancel,
+                }
+            )),
+            "Event::StreamReset が通知されるべき"
+        );
+
+        // RST_STREAM フレームが出力されている
+        let output = server.poll_output().expect("output should exist");
+        let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+        decoder.feed(&output);
+        let mut found_rst = false;
+        while let Some(frame) = decoder.decode().expect("decode should succeed") {
+            if matches!(frame, Frame::RstStream(_)) {
+                found_rst = true;
+            }
+        }
+        assert!(found_rst, "RST_STREAM フレームが出力されるべき");
+
+        // 内部リセットは Event::StreamClosed を通知しない
+        assert_no_event(
+            &mut server,
+            |e| matches!(e, Event::StreamClosed { .. }),
+            "明示リセットで Event::StreamClosed が push されてはならない",
+        );
+    }
+
+    /// クローズ済みストリームへの明示 `reset_stream` では `Event::StreamReset` が push されない
+    ///
+    /// RST_STREAM 送信は常に行い、終了イベントの push と `streams` からの削除は
+    /// `streams` にストリームが存在する場合のみ行う。
+    /// なお、クローズ済みストリームへの RST_STREAM 送信は RFC 9113 Section 5.1 の
+    /// 「closed 状態のストリームには PRIORITY 以外を送信してはならない (MUST NOT)」と、
+    /// ピアからの RST_STREAM 受信後の送信は Section 5.4.2 の「RST_STREAM への応答で
+    /// RST_STREAM を送信してはならない (MUST NOT)」に厳密には抵触しうるが、
+    /// 本修正は既存挙動 (streams に存在しないストリームへも送信) を維持する。
+    #[test]
+    fn test_reset_stream_closed_no_event() {
+        // クローズ済みストリーム (ピアからの RST_STREAM で削除済み)
+        let mut server = setup_server();
+        open_stream_on_server(&mut server, 1);
+        let rst_frame = Frame::RstStream(RstStreamFrame::new(
+            NonZeroStreamId::from_static(1),
+            ErrorCode::Cancel.as_u32(),
+        ));
+        server
+            .feed(&encode_frame(&rst_frame))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        // ピア RST_STREAM 由来の Event::StreamReset を含む既存イベントを消費する
+        while server.poll_event().is_some() {}
+
+        server
+            .reset_stream(client_stream_id(1), ErrorCode::Cancel)
+            .expect("reset_stream should succeed");
+
+        assert_no_event(
+            &mut server,
+            |e| matches!(e, Event::StreamReset { .. }),
+            "クローズ済みストリームへの明示リセットで Event::StreamReset が push されてはならない",
+        );
+    }
+
+    /// idle ストリームへの明示 `reset_stream` では `Event::StreamReset` が push されない
+    ///
+    /// RST_STREAM 送信は常に行い、終了イベントの push と `streams` からの削除は
+    /// `streams` にストリームが存在する場合のみ行う。
+    /// なお、idle ストリームへの RST_STREAM 送信は RFC 9113 Section 6.4 の MUST NOT に
+    /// 抵触するが、本修正は既存挙動を維持する (このテストは送信の成否を検証しない)。
+    #[test]
+    fn test_reset_stream_idle_no_event() {
+        // idle ストリーム (一度も開かれていない)
+        let mut idle_server = setup_server();
+        while idle_server.poll_event().is_some() {}
+        // 既存挙動 (RST_STREAM 送信のみ) のため戻り値は検証しない。
+        // idle ストリームへの明示リセットは別途エラーを返すようになるため、
+        // 成功 (Ok) を assert しない。
+        let _ = idle_server.reset_stream(client_stream_id(1), ErrorCode::Cancel);
+
+        assert_no_event(
+            &mut idle_server,
+            |e| matches!(e, Event::StreamReset { .. }),
+            "idle ストリームへの明示リセットで Event::StreamReset が push されてはならない",
+        );
+    }
+
+    /// リセット済みストリームへの遅延 DATA は破棄され、idle 誤判定による接続エラーに
+    /// 昇格しない
+    ///
+    /// クライアントが送信開始したストリーム (last_recv_stream_id 超過) を明示リセットした後に
+    /// ピアから DATA が到着しても、`check_not_idle_stream` が `closed_streams` を考慮し、
+    /// idle ストリームへのフレームとして接続エラーにしない。
+    /// RFC 9113 Section 5.1: RST_STREAM 送信で closed 状態になったストリームへの
+    /// 遅延フレームは最小処理して破棄する。
+    #[test]
+    fn test_reset_stream_delayed_data_discarded() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+        client
+            .reset_stream(client_stream_id(1), ErrorCode::Cancel)
+            .expect("reset_stream should succeed");
+        // 明示リセット由来の Event::StreamReset を消費する
+        while client.poll_event().is_some() {}
+
+        // リセット済みストリームへの遅延 DATA を受信しても接続は維持される
+        let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![1, 2, 3],
+        )));
+        client.feed(&data_bytes).expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        // 破棄されたデータは DataReceived イベントにならない
+        assert_no_event(
+            &mut client,
+            |e| matches!(e, Event::DataReceived { .. }),
+            "リセット済みストリームへの遅延 DATA は破棄されるべき",
+        );
+    }
+
+    /// リセット済みストリームへの WINDOW_UPDATE 増分 0 (デコードエラー) が
+    /// idle 誤判定による接続エラーに昇格しない
+    ///
+    /// `Connection::process` のデコードエラー処理は `is_idle_stream` で idle 判定するが、
+    /// `closed_streams` を考慮するため、リセット済みストリームへのエラーは
+    /// RST_STREAM 送信のみで処理され、接続が維持される。
+    /// リセット済みストリーム (streams に存在しない) への呼び出しでは終了イベントは
+    /// push されない。
+    /// なお、遅延不正フレームに対する 2 本目の RST_STREAM 送信は RFC 9113 Section 5.4.2 の
+    /// 複数送信制限 (SHOULD NOT) に厳密には抵触しうるが、本修正は既存挙動を維持する。
+    #[test]
+    fn test_reset_stream_decode_error_keeps_connection() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), true)
+            .expect("start_stream should succeed");
+        client
+            .reset_stream(client_stream_id(1), ErrorCode::Cancel)
+            .expect("reset_stream should succeed");
+        // 明示リセット由来の Event::StreamReset を消費する
+        while client.poll_event().is_some() {}
+
+        client
+            .feed(&encode_window_update_zero_increment())
+            .expect("feed should succeed");
+
+        // デコードエラーが接続エラーに昇格せず、接続が維持される
+        client.process().expect("process should succeed");
+
+        // リセット済みストリーム (streams に存在しない) への呼び出しでは
+        // Event::StreamReset は push されない
+        assert_no_event(
+            &mut client,
+            |e| matches!(e, Event::StreamReset { .. }),
+            "リセット済みストリームへのデコードエラーで Event::StreamReset が push されてはならない",
+        );
+    }
+
+    /// GOAWAY 送信後にリセット済みストリームへ遅延レスポンス HEADERS が到着しても
+    /// 接続エラーにならず破棄される
+    ///
+    /// `handle_headers` の GOAWAY 送信後チェックは `closed_streams` を考慮するため、
+    /// リセット済みストリームへの遅延 HEADERS を新規ストリームとして
+    /// 接続エラーに昇格しない。
+    /// RFC 9113 Section 5.1: RST_STREAM 送信で closed 状態になったストリームへの
+    /// 遅延フレームは最小処理して破棄する。
+    #[test]
+    fn test_reset_stream_delayed_headers_after_goaway() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+        client
+            .reset_stream(client_stream_id(1), ErrorCode::Cancel)
+            .expect("reset_stream should succeed");
+        client
+            .send_goaway(ErrorCode::NoError, vec![])
+            .expect("send_goaway should succeed");
+
+        // リセット済みストリームへの遅延レスポンス HEADERS を受信しても接続は維持される
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_response_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        let headers_bytes = encode_frame(&Frame::Headers(headers));
+        client.feed(&headers_bytes).expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        // 破棄されたヘッダーは HeadersReceived イベントにならない
+        assert_no_event(
+            &mut client,
+            |e| matches!(e, Event::HeadersReceived { .. }),
+            "リセット済みストリームへの遅延 HEADERS は破棄されるべき",
+        );
+    }
+
+    /// リセット時に送信バッファに残データがあるストリームが、接続レベル WINDOW_UPDATE 受信で
+    /// DATA を送信されない
+    ///
+    /// リセット済みストリームは `streams` から即時削除されるため、
+    /// `flush_all_stream_data` の対象にならない。修正前は Closed 状態のまま残り、
+    /// 接続レベル WINDOW_UPDATE 受信時に RST_STREAM 送信後に DATA を送信する
+    /// (RFC 9113 Section 5.4.2 の「RST_STREAM はそのストリームに送信できる最後のフレーム」
+    /// 違反) バグがあった。
+    #[test]
+    fn test_reset_stream_send_buffer_not_flushed() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+
+        // 接続レベルの送信ウィンドウ (65535) を枯渇させ、ストリーム 5 の送信バッファに
+        // 残データを残す (ストリーム 5 の送信ウィンドウは 61000 残っている)
+        client
+            .send_data(client_stream_id(1), vec![0u8; 1000], false)
+            .expect("send_data should succeed");
+        client
+            .send_data(client_stream_id(3), vec![0u8; 60000], false)
+            .expect("send_data should succeed");
+        client
+            .send_data(client_stream_id(5), vec![0u8; 4535], false)
+            .expect("send_data should succeed");
+        client
+            .send_data(client_stream_id(5), vec![0u8; 10000], false)
+            .expect("send_data should succeed");
+
+        // 送信バッファに残データがある状態でリセットする
+        client
+            .reset_stream(client_stream_id(5), ErrorCode::Cancel)
+            .expect("reset_stream should succeed");
+
+        // リセットまでの出力 (HEADERS / DATA / RST_STREAM) を消費してから、
+        // 接続レベル WINDOW_UPDATE 受信後の出力のみを検査する
+        let _ = client.poll_output();
+
+        // 接続レベル WINDOW_UPDATE を受信しても、リセット済みストリームの
+        // 残データは送信されない
+        let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::for_connection(
+            WindowIncrement::from_static(5000),
+        ));
+        let wu_bytes = encode_frame(&wu_frame);
+        client.feed(&wu_bytes).expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        // WINDOW_UPDATE は処理されている (接続レベル WINDOW_UPDATE の受信イベントが通知される)
+        assert!(
+            find_event(&mut client, |e| matches!(
+                e,
+                Event::WindowUpdateReceived {
+                    stream_id: shiguredo_http2::StreamId::Connection,
+                    ..
+                }
+            )),
+            "接続レベル WINDOW_UPDATE で WindowUpdateReceived が通知されるべき"
+        );
+
+        let output = client.poll_output();
+        let mut saw_data = false;
+        if let Some(bytes) = output {
+            let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+            decoder.feed(&bytes);
+            while let Some(frame) = decoder.decode().expect("decode should succeed") {
+                if matches!(frame, Frame::Data(_)) {
+                    saw_data = true;
+                }
+            }
+        }
+        assert!(
+            !saw_data,
+            "リセット済みストリームの残データは送信されてはならない"
+        );
+    }
+
+    /// リセット済みストリームへの遅延 WINDOW_UPDATE (正常値) のウィンドウ更新効果は破棄され、
+    /// 接続が維持される
+    ///
+    /// リセット済みストリームは `streams` に存在しないため、ストリーム向け WINDOW_UPDATE の
+    /// ウィンドウ更新効果は破棄されるが、`Event::WindowUpdateReceived` は通知される
+    /// (受信 RST_STREAM で削除されたストリームと同じ既存の挙動。
+    /// RFC 9113 Section 6.9: closed 状態のストリームへの WINDOW_UPDATE 受信はエラーと
+    /// してはならない (MUST NOT))。
+    #[test]
+    fn test_reset_stream_delayed_window_update_received() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+        client
+            .reset_stream(client_stream_id(1), ErrorCode::Cancel)
+            .expect("reset_stream should succeed");
+        // 明示リセット由来の Event::StreamReset を消費する
+        while client.poll_event().is_some() {}
+
+        // リセット済みストリームへのストリーム向け WINDOW_UPDATE を受信しても接続は維持される
+        let wu_frame = Frame::WindowUpdate(WindowUpdateFrame::for_stream(
+            NonZeroStreamId::from_static(1),
+            WindowIncrement::from_static(100),
+        ));
+        let wu_bytes = encode_frame(&wu_frame);
+        client.feed(&wu_bytes).expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        // WindowUpdateReceived は通知される
+        assert!(
+            find_event(&mut client, |e| matches!(
+                e,
+                Event::WindowUpdateReceived {
+                    stream_id: shiguredo_http2::StreamId::Client(_),
+                    ..
+                }
+            )),
+            "リセット済みストリームへの WINDOW_UPDATE で WindowUpdateReceived が通知されるべき"
+        );
+    }
+
+    /// リセット済みストリームへの遅延 RST_STREAM は無視され、接続が維持される
+    ///
+    /// `handle_rst_stream` は `check_not_idle_stream` を通過した後、`streams` に存在しない
+    /// ストリームへの RST_STREAM を無視する (RFC 9113 Section 5.1 の closed 状態への
+    /// 遅延フレームの扱い)。
+    #[test]
+    fn test_reset_stream_delayed_rst_stream_ignored() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+        client
+            .reset_stream(client_stream_id(1), ErrorCode::Cancel)
+            .expect("reset_stream should succeed");
+        // 明示リセット由来の Event::StreamReset を消費する
+        while client.poll_event().is_some() {}
+
+        // リセット済みストリームへの遅延 RST_STREAM を受信しても接続は維持される
+        let rst_frame = Frame::RstStream(RstStreamFrame::new(
+            NonZeroStreamId::from_static(1),
+            ErrorCode::Cancel.as_u32(),
+        ));
+        let rst_bytes = encode_frame(&rst_frame);
+        client.feed(&rst_bytes).expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        // 遅延 RST_STREAM 由来の Event::StreamReset は通知されない
+        assert_no_event(
+            &mut client,
+            |e| matches!(e, Event::StreamReset { .. }),
+            "リセット済みストリームへの遅延 RST_STREAM で Event::StreamReset が push されてはならない",
+        );
+    }
+
+    /// GOAWAY 送信後に未開設ストリームの HEADERS が届くと接続エラーになる
+    ///
+    /// `handle_headers` の GOAWAY 送信後チェックは、リセット済みストリーム (closed_streams に
+    /// 登録済み) を新規ストリームとして扱わない。逆に、一度も開かれていないストリームへの
+    /// HEADERS は従来どおり PROTOCOL_ERROR の接続エラーになる (RFC 9113 Section 5.1.1 の
+    /// unexpected stream identifier の扱いを準用した実装判断)。
+    #[test]
+    fn test_new_stream_headers_after_goaway_is_error() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+        client
+            .send_goaway(ErrorCode::NoError, vec![])
+            .expect("send_goaway should succeed");
+
+        // GOAWAY 送信後に未開設ストリーム (stream 3) の HEADERS を受信
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(3),
+            encode_valid_request_headers(),
+        )
+        .with_end_headers(true);
+        let headers_bytes = encode_frame(&Frame::Headers(headers));
+        client.feed(&headers_bytes).expect("feed should succeed");
+
+        let result = client.process();
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.is_connection_error());
+            assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
         }
     }
 }
