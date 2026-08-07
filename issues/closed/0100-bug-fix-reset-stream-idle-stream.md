@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-08-07
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-08-07
 - Branch: feature/fix-reset-stream-idle-stream
 - Polished: 2026-08-07
 
@@ -42,6 +42,18 @@
 3. issue 0099 で追加された「クローズ済み・idle ストリームへの明示 `reset_stream` で `Event::StreamReset` が push されないこと」を検証するテストのうち、idle ケースが検証対象とする実装挙動は本修正で Err を返す挙動に変わる。0099 実装時は idle ケースで `reset_stream` の成功 (Ok) や RST_STREAM 送信を assert しないこととし、assert していた場合は本修正で Err 前提のテストへ修正する。なお、0099 の「リセット済みストリームへの遅延 DATA 破棄」テストはリセット対象が `streams` に存在するストリームであり、本修正 (idle 検査) の影響を受けない
 4. `CHANGES.md` の `## develop` に `[FIX]` エントリを追加する (shiguredo-changelog スキルを参照)
 5. `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` を実行する
+
+## 解決方法
+
+1. `src/connection.rs` の `Connection::reset_stream` に idle ストリームの検査を追加した。検査は `StreamId::Connection` 拒否の後、RST_STREAM 送信の前に配置し、idle と判定された場合は RST_STREAM を送信せず `Error::stream_error` (PROTOCOL_ERROR) を返す。公開 doc にエラー条件と既知の限界を追記した
+2. `tests/test_connection.rs` の `mod reset_stream` に単体テストを追加・修正した:
+   - `test_reset_stream_on_idle_stream_is_error`: idle ストリーム (last_recv_stream_id 超過の奇数 ID) への明示リセットがエラーになり、RST_STREAM が送信されず `Event::StreamReset` も push されないこと (0099 のテストを Err 前提に書き換え)
+   - `test_reset_stream_on_even_stream_id_is_error`: 偶数ストリーム ID (常に idle) への明示リセットがエラーになること
+   - `test_reset_stream_on_connection_id_is_error`: `StreamId::Connection` が従来どおり接続エラー (PROTOCOL_ERROR) を返すこと (idle 検査の配置による退行の防止)
+   - `test_reset_stream_twice_sends_rst`: リセット済みストリーム (closed_streams 登録済み) への再リセットが既存挙動 (RST_STREAM 送信のみ) を維持すること
+   - `test_reset_stream_closed_no_event` / `test_reset_stream_implicitly_closed_stream_sends_rst`: クローズ済み・暗黙的クローズ済みストリームへの明示リセットが RST_STREAM 送信を維持することを検証
+3. `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した (0099 のエントリの行連結破損も修正)
+4. `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通ることを確認した
 
 ## 参照
 
