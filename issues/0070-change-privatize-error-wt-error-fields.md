@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-06-11
-- Polished: 2026-07-31
+- Polished: 2026-08-08
 - Model: deepseek-v4-pro
 - Branch: feature/change-error-field-privatization
 
@@ -19,7 +19,7 @@
 
 ## 現状の問題
 
-`src/error.rs` の `Error` 構造体定義 (現行 line 185-199):
+`src/error.rs` の `Error` 構造体定義 (`pub struct Error`):
 
 ```rust
 pub struct Error {
@@ -30,7 +30,7 @@ pub struct Error {
 }
 ```
 
-`src/webtransport/error.rs` の `WtError` 構造体定義 (現行 line 56-70):
+`src/webtransport/error.rs` の `WtError` 構造体定義 (`pub struct WtError`):
 
 ```rust
 pub struct WtError {
@@ -62,11 +62,11 @@ private 化により次の不変条件を保証する:
 `Limits` / `Settings` の getter パターンに揃える:
 
 - `ErrorKind` / `WtErrorKind` は `#[derive(Copy)]` 済みなので値返し
-- `reason()` も `pub const fn reason(&self) -> &str { self.reason.as_str() }` で実装する (`String::as_str` は Rust 1.84.0 で const stable 化済み。本リポジトリの MSRV を上回るため利用可能)
+- `reason()` も `pub const fn reason(&self) -> &str { self.reason.as_str() }` で実装する (`String::as_str` は Rust 1.87.0 で const stable 化済み。本リポジトリの MSRV を上回るため利用可能)
 - 全 getter に `#[must_use]` を付与する (`Limits` / `Settings` の getter と整合)
 - `location()` は `&'static Location<'static>` を返す (`Location<'static>` は `Copy` だが慣例的に参照を返す)
 - `backtrace()` は `&Backtrace` を返す (`Backtrace` は非 `Copy`)
-- doc コメントは名詞句で揃える (`Settings` 先行事例 `src/settings.rs:246-249` の形式に整合)
+- doc コメントは名詞句で揃える (`Settings` の getter 群 (`header_table_size` 等) の形式に整合)
 
 ### setter は提供しない
 
@@ -74,7 +74,7 @@ private 化により次の不変条件を保証する:
 
 ### impl ブロック内のフィールド直接アクセスは維持
 
-`src/error.rs` の `impl Error` ブロック内 (各コンストラクタ、`is_connection_error` / `is_stream_error` / `error_code`、`Debug` / `Display` 実装) は同一モジュール内なのでフィールド可視性に関係なく直接アクセス可能。これらは getter 経由に書き換えず、`self.kind` / `self.reason` / `self.location` / `self.backtrace` のままにする (`src/webtransport/error.rs` の `impl WtError` も同様)。
+`src/error.rs` の `impl Error` ブロック (各コンストラクタ、`is_connection_error` / `is_stream_error` / `error_code`) および同モジュール内の `impl std::fmt::Debug` / `impl std::fmt::Display` / `impl std::error::Error` / `From<DecodeError>` は同一モジュール内なのでフィールド可視性に関係なく直接アクセス可能。これらは getter 経由に書き換えず、`self.kind` / `self.reason` / `self.location` / `self.backtrace` のままにする (`src/webtransport/error.rs` の `impl WtError` と同モジュール内の各 impl も同様)。
 
 ### `Error::source()` / `WtError::source()` の挙動は変更しない
 
@@ -92,7 +92,7 @@ private 化により次の不変条件を保証する:
 - 両者とも `#[track_caller]` + `Backtrace::capture()` という構築パターンが同一
 - 追加する getter のシグネチャ (`kind()` / `reason()` / `location()` / `backtrace()`) が同一
 - カテゴリは両方 `change` で、レビュー観点・テスト戦略・リスク評価が同一
-- 分割しても両 issue が `tests/test_webtransport/` と `tests/test_error.rs` の getter 書き換えを完全対称に行うだけで、独立性のメリットがない
+- 分割しても両者の変更対象は `tests/test_webtransport/` と `tests/test_error.rs` の getter 書き換えを中心に重なり合い、`src/connection/headers.rs` / `crates/tokio-http2/src/webtransport.rs` / `skills/shiguredo-http2/SKILL.md` の変更も共通の 1 ブランチで同時に検証する必要があるため、独立性のメリットがない
 - `CHANGES.md` には 2 件の `[CHANGE]` エントリに分けて記載することで、変更単位の追跡可能性は確保する
 
 ## 他 issue との関係
@@ -118,33 +118,35 @@ issue 0072 (`refactor-remove-unused-code`) で削除予定の API:
 
 ### `Error` / `WtError` 構造体定義の private 化
 
-- `src/error.rs` の `Error` 構造体定義 (現行 line 185-199): 全フィールドから `pub` を削除、getter 4 個を追加
-- `src/webtransport/error.rs` の `WtError` 構造体定義 (現行 line 56-70): 全フィールドから `pub` を削除、getter 4 個を追加
+- `src/error.rs` の `Error` 構造体定義 (`pub struct Error`): 全フィールドから `pub` を削除、getter 4 個を追加
+- `src/webtransport/error.rs` の `WtError` 構造体定義 (`pub struct WtError`): 全フィールドから `pub` を削除、getter 4 個を追加
 
 ### 外部からのフィールド直接アクセスを getter 経由に置換
 
-`Error` / `WtError` の `pub` フィールドへの直接アクセスを grep で網羅した結果、以下のファイル群で合計約 50 箇所を確認した。これらを getter 呼び出しに置き換える:
+`Error` / `WtError` の `pub` フィールドへの直接アクセスを grep で網羅した結果、以下のファイル群で合計 54 箇所を確認した。これらを getter 呼び出しに置き換える:
 
 - `tests/test_error.rs` — `err.reason.contains(...)` → `err.reason().contains(...)` (3 箇所)
 - `tests/test_webtransport/root.rs` — `err.kind` → `err.kind()` (2 箇所)
-- `tests/test_webtransport/integration.rs` — `err.kind` → `err.kind()` / `err.reason.contains(...)` → `err.reason().contains(...)` (約 20 箇所)
+- `tests/test_webtransport/integration.rs` — `err.kind` → `err.kind()` / `err.reason.contains(...)` → `err.reason().contains(...)` (27 箇所)
 - `tests/test_webtransport/protocols.rs` — `err.kind` → `err.kind()` (10 箇所)
 - `tests/test_webtransport/exporter.rs` — `err.kind` → `err.kind()` (2 箇所)
-- `tests/test_webtransport/capsule.rs` — `err.kind` → `err.kind()` / `err.reason.contains(...)` → `err.reason().contains(...)` (約 6 箇所)
+- `tests/test_webtransport/capsule.rs` — `err.kind` → `err.kind()` / `err.reason.contains(...)` → `err.reason().contains(...)` (5 箇所)
 - `src/webtransport/capsule.rs` — `e.kind == WtErrorKind::Incomplete` → `e.kind() == WtErrorKind::Incomplete` (別モジュールなので private 化後はアクセス不可、getter 経由が必要、2 箇所)
+- `src/connection/headers.rs` — `e.reason` → `e.reason()` (`map_err` クロージャ内の `e` は `crate::error::Error` 型。別モジュールからのアクセスなので private 化後はアクセス不可、2 箇所)
+- `crates/tokio-http2/src/webtransport.rs` — `abort_session_with_wt_error` 内の `wt_http2_error_code(e.kind)` → `wt_http2_error_code(e.kind())` (別クレートからのアクセスなので private 化後はアクセス不可、1 箇所)
+- `skills/shiguredo-http2/SKILL.md` — `Error` の説明に getter (`kind()` / `reason()` / `location()` / `backtrace()`) 経由で読み取る旨を追記し、`HpackError` の説明中「詳細は `Error::reason`」を getter 形式 (`Error::reason()` 経由) に更新する (private 化後はフィールド直接アクセスができなくなるため)
 
 ### 除外対象 (本 issue と無関係)
 
-- `src/connection/headers.rs:287,615` の `e.reason` は HPACK の `HpackError` のフィールドで本 issue とは別型。スコープ外
-- `crates/tokio-http2/src/webtransport.rs` の `Capsule::WtCloseSession { reason }` は draft-ietf-webtrans-http2-14 capsule の reason フィールドで別物。スコープ外
-- `crates/tokio-http2/src/webtransport.rs:1053-1055` の `wt_err` 関数は `format!("webtransport: {e}")` で `WtError::Display` を呼ぶのみ。Display 経由のため private 化の影響なし
+- `src/webtransport/capsule.rs` の `Capsule::WtCloseSession { reason }` は draft-ietf-webtrans-http2-15 Section 6.12 の `Application Error Message` に対応する実装フィールド名で、`WtError::reason` とは別物。スコープ外
 - `pbt/tests/prop_error.rs` の `error_kind_strategy` 等は `ErrorKind` enum を生成する関数で、`Error` 構造体のフィールドアクセスではない
 - `fuzz/fuzz_targets/` には `Error` / `WtError` のフィールド直接アクセスは存在しない (grep 確認済み)
 - `examples/` 配下にも `Error` / `WtError` のフィールド直接アクセスは存在しない
 
 ## テスト方針
 
-- 既存テスト (`tests/test_error.rs` / `tests/test_webtransport/root.rs` / `tests/test_webtransport/integration.rs`) のフィールド直接アクセスを getter 呼び出しに書き換える。assert 意図 (左右の値) は変更しない
+- 既存テスト (`tests/test_error.rs` / `tests/test_webtransport/root.rs` / `tests/test_webtransport/integration.rs` / `tests/test_webtransport/protocols.rs` / `tests/test_webtransport/exporter.rs` / `tests/test_webtransport/capsule.rs`) のフィールド直接アクセスを getter 呼び出しに書き換える。assert 意図 (左右の値) は変更しない
+- 製品コード (`src/webtransport/capsule.rs` / `src/connection/headers.rs` / `crates/tokio-http2/src/webtransport.rs`) のフィールド直接アクセスも getter 呼び出しに書き換える (private 化後は同一クレート内の別モジュール・別クレートからはアクセス不可のため)
 - getter ラウンドトリップ用の新規 PBT (`prop_error_getter_roundtrip` 等) は本 issue では **追加しない**。`Settings` private 化 (issue 0043) と同方針。理由: `Error` / `WtError` の `location` / `backtrace` は `#[track_caller]` / `Backtrace::capture()` 由来で、property test で任意値を与えて確認できる対象ではない。getter ラウンドトリップ可能なのは `kind` / `reason` のみで、その動作は impl が trivial (フィールドそのまま返却) なので個別 unit test なしでも既存テスト経由で十分検証される
 
 ## 対応手順
@@ -210,19 +212,20 @@ issue 0072 (`refactor-remove-unused-code`) で削除予定の API:
    }
    ```
 
-4. 「変更対象ファイル一覧」セクションの「外部からのフィールド直接アクセスを getter 経由に置換」で挙げた 15 箇所を順次 getter 呼び出しに書き換える。テスト本体の assert 意図は変更しない
-5. `CHANGES.md` の `## develop` セクション内の既存 `[CHANGE]` 群の末尾に以下 2 件のエントリを追加する。担当者行は親アイテム本文先頭 (`[` カラム) と同じ位置にネストする:
+4. 「変更対象ファイル一覧」セクションの「外部からのフィールド直接アクセスを getter 経由に置換」で挙げた全 54 箇所を順次 getter 呼び出しに書き換える。テスト本体の assert 意図は変更しない
+5. `skills/shiguredo-http2/SKILL.md` の `Error` の説明に getter 経由の読み取りを追記し、`HpackError` の説明中「詳細は `Error::reason`」を `Error::reason()` getter 経由の参照に更新する
+6. `CHANGES.md` の `## develop` セクション内の既存 `[CHANGE]` 群の末尾に以下 2 件のエントリを追加する。担当者行は親アイテム本文先頭 (`[` カラム) と同じ位置にネストする:
 
    ```markdown
-   - [CHANGE] `Error` のフィールドを private 化し、getter `kind()` / `reason()` / `location()` / `backtrace()` を追加する (issue 0070)
+   - [CHANGE] `Error` のフィールドを private 化し、getter `kind()` / `reason()` / `location()` / `backtrace()` を追加する
      - @voluntas
-   - [CHANGE] `WtError` のフィールドを private 化し、getter `kind()` / `reason()` / `location()` / `backtrace()` を追加する (issue 0070)
+   - [CHANGE] `WtError` のフィールドを private 化し、getter `kind()` / `reason()` / `location()` / `backtrace()` を追加する
      - @voluntas
    ```
 
-6. `cargo fmt --all -- --check` で整形違反がないことを確認する
-7. `cargo test --workspace` で全テスト通過を確認する (既存の `tests/test_error.rs` / `tests/test_webtransport/*` が getter 書き換え後も意図通り通ること、`pbt/` / `fuzz/` の既存ビルドが退行しないこと)
-8. `cargo clippy --workspace --all-targets -- -D warnings` で警告がないことを確認する。clippy 警告が出た場合は `#[allow(...)]` で抑制せず、コード自体を修正する
+7. `cargo fmt --all -- --check` で整形違反がないことを確認する
+8. `cargo test --workspace` で全テスト通過を確認する (既存の `tests/test_error.rs` / `tests/test_webtransport/*` が getter 書き換え後も意図通り通ること、`pbt/` の既存ビルドが退行しないこと。`fuzz/` は workspace から exclude されているため `cargo test --workspace` では検証されないが、`cargo check --manifest-path fuzz/Cargo.toml` でビルド可能なことを確認する)
+9. `cargo clippy --workspace --all-targets -- -D warnings` で警告がないことを確認する。clippy 警告が出た場合は `#[allow(...)]` で抑制せず、コード自体を修正する
 
 ## 完了条件
 
@@ -231,10 +234,12 @@ issue 0072 (`refactor-remove-unused-code`) で削除予定の API:
 - 全 getter に `#[must_use]` が付与され、`pub const fn` で実装されている
 - `Error` / `WtError` への setter は提供されていない (ミューテーション経路は既存コンストラクタのみ)
 - `impl std::error::Error for Error` / `impl std::error::Error for WtError` は空 impl のまま (source override 追加なし)
-- 既存のフィールド直接アクセス約 50 箇所 (`tests/test_error.rs` / `tests/test_webtransport/*` / `src/webtransport/capsule.rs`) が getter 呼び出しに置き換えられている
+- 既存のフィールド直接アクセス全 54 箇所 (`tests/test_error.rs` / `tests/test_webtransport/*` / `src/webtransport/capsule.rs` / `src/connection/headers.rs` / `crates/tokio-http2/src/webtransport.rs`) が getter 呼び出しに置き換えられている
+- `skills/shiguredo-http2/SKILL.md` の `Error` の説明に getter 経由の読み取りが追記され、`HpackError` の説明が `Error::reason()` 形式に更新されている
 - `CHANGES.md` の `## develop` に 2 件の `[CHANGE]` エントリ (`Error` 用と `WtError` 用) と担当者行が追加されている
 - `cargo fmt --all -- --check` が通過する
 - `cargo test --workspace` が通過する
+- `cargo check --manifest-path fuzz/Cargo.toml` が通過する
 - `cargo clippy --workspace --all-targets -- -D warnings` が通過する
 
 ## 参照
