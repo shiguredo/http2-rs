@@ -758,12 +758,39 @@ mod reset_stream {
         buf
     }
 
+    /// Content-Length 付きのリクエストヘッダーを HPACK エンコードする
+    fn encode_request_headers_with_content_length(content_length: &str) -> Vec<u8> {
+        let mut encoder = HpackEncoder::new(4096);
+        let mut headers = request_headers();
+        headers
+            .push(HeaderField::new("content-length", content_length).expect("valid header field"));
+        let mut buf = Vec::new();
+        encoder.encode(&mut buf, &headers);
+        buf
+    }
+
+    /// :status 204 のレスポンスヘッダーを HPACK エンコードする
+    ///
+    /// 204 はコンテンツを持たないレスポンスであり (RFC 9110 Section 15.3.5)、
+    /// クライアントロールで受信すると no-content 違反の検出対象になる。
+    fn encode_no_content_response_headers() -> Vec<u8> {
+        let mut encoder = HpackEncoder::new(4096);
+        let headers = vec![HeaderField::new(":status", "204").expect("valid header field")];
+        let mut buf = Vec::new();
+        encoder.encode(&mut buf, &headers);
+        buf
+    }
+
     /// クライアント開始ストリーム ID を生成する
     fn client_stream_id(id: u32) -> shiguredo_http2::StreamId {
         shiguredo_http2::StreamId::Client(shiguredo_http2::ClientStreamId::from_static(id))
     }
 
     /// イベントキューから条件に一致するイベントを探す
+    ///
+    /// 注意: 検査済みイベントは消費されるため、「存在検証」と「非存在検証」を
+    /// 同じキューに対して順次行うと、後者の検証が恒真になる。
+    /// 複数の条件を同時に検証する場合は [`collect_events`] を使うこと。
     fn find_event<F>(conn: &mut Connection, mut pred: F) -> bool
     where
         F: FnMut(&Event) -> bool,
@@ -774,6 +801,17 @@ mod reset_stream {
             }
         }
         false
+    }
+
+    /// イベントキュー全体を取り出す
+    ///
+    /// 複数の条件 (存在と非存在) を同じイベント集合に対して同時に検証するために使う。
+    fn collect_events(conn: &mut Connection) -> Vec<Event> {
+        let mut events = Vec::new();
+        while let Some(event) = conn.poll_event() {
+            events.push(event);
+        }
+        events
     }
 
     /// イベントキューに条件に一致するイベントが無いことを検証する
@@ -787,7 +825,21 @@ mod reset_stream {
     /// 指定したストリーム ID の RST_STREAM フレームが出力に含まれることを検証する
     ///
     /// 出力バッファ全体を消費するため、検査対象の出力がすべて揃った後に呼ぶこと。
+    /// エラーコードまで検証したい場合は [`assert_rst_stream_sent_with_code`] を使うこと。
     fn assert_rst_stream_sent(conn: &mut Connection, stream_id: u32, message: &str) {
+        assert_rst_stream_sent_with_code(conn, stream_id, None, message);
+    }
+
+    /// 指定したストリーム ID の RST_STREAM フレームが出力に含まれることを検証する
+    ///
+    /// `error_code` に `Some` を指定した場合は、ワイヤ上のエラーコードの一致も検証する。
+    /// 出力バッファ全体を消費するため、検査対象の出力がすべて揃った後に呼ぶこと。
+    fn assert_rst_stream_sent_with_code(
+        conn: &mut Connection,
+        stream_id: u32,
+        error_code: Option<ErrorCode>,
+        message: &str,
+    ) {
         let output = conn
             .poll_output()
             .expect("RST_STREAM フレームが出力されるべき");
@@ -803,11 +855,51 @@ mod reset_stream {
         while let Some(frame) = decoder.decode().expect("decode should succeed") {
             if let Frame::RstStream(rst) = frame
                 && rst.stream_id.as_u32() == stream_id
+                && error_code.is_none_or(|code| rst.error_code == code.as_u32())
             {
                 found_rst = true;
             }
         }
         assert!(found_rst, "{}", message);
+    }
+
+    /// ストリームエラーによる内部リセットの結果をまとめて検証する
+    ///
+    /// 指定したエラーコードの `Event::StreamReset` の通知・RST_STREAM フレームの出力
+    /// (エラーコード込み)・違反した DATA が `Event::DataReceived` にならないことを
+    /// 検証する。出力バッファ全体を消費するため、検査対象の出力がすべて揃った後に呼ぶこと。
+    ///
+    /// イベントの「存在」と「非存在」は同じイベント集合に対して検証する
+    /// (`find_event` は検査済みイベントを消費するため、順次検証すると非存在検証が恒真になる)。
+    fn assert_internal_reset(
+        conn: &mut Connection,
+        stream_id: u32,
+        error_code: ErrorCode,
+        label: &str,
+    ) {
+        let events = collect_events(conn);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::StreamReset {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    error_code: code,
+                } if id.as_u32() == stream_id && *code == error_code
+            )),
+            "{label}で Event::StreamReset が通知されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::DataReceived { .. })),
+            "{label}の DATA は DataReceived イベントになってはならない"
+        );
+        assert_rst_stream_sent_with_code(
+            conn,
+            stream_id,
+            Some(error_code),
+            &format!("{label}で RST_STREAM フレームが出力されるべき"),
+        );
     }
 
     /// ストリームレベルのフロー制御違反 (受信ウィンドウ超過の DATA) による内部リセットで
@@ -1452,6 +1544,304 @@ mod reset_stream {
             &mut server,
             3,
             "暗黙的クローズ済みストリームへの RST_STREAM は送信されるべき",
+        );
+    }
+
+    /// Content-Length 超過の DATA による内部リセットで `Event::StreamReset` が通知され、
+    /// 接続が維持される
+    ///
+    /// RFC 9113 Section 8.1.1: Content-Length と DATA ペイロード長の合計が一致しない
+    /// メッセージは malformed であり、PROTOCOL_ERROR のストリームエラーとして
+    /// 処理しなければならない (MUST)。ストリームエラーは RST_STREAM で処理され
+    /// (RFC 9113 Section 5.4.2)、接続は維持される。
+    #[test]
+    fn test_content_length_exceeded_pushes_stream_reset() {
+        let mut server = setup_server();
+
+        // Content-Length: 5 のリクエストヘッダーを受信する
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_request_headers_with_content_length("5"),
+        )
+        .with_end_headers(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        // ヘッダー受信由来の既存イベントを消費する
+        while server.poll_event().is_some() {}
+
+        // Content-Length 5 を超える 6 バイトの DATA を送信する
+        let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![0u8; 6],
+        )));
+        server.feed(&data_bytes).expect("feed should succeed");
+        // ストリームエラーが接続エラーとして伝播せず、process は成功する
+        server.process().expect("process should succeed");
+
+        assert_internal_reset(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            "Content-Length 超過",
+        );
+    }
+
+    /// END_STREAM 時の Content-Length 不一致による内部リセットで `Event::StreamReset` が
+    /// 通知され、接続が維持される
+    ///
+    /// RFC 9113 Section 8.1.1: END_STREAM で受信が完了した時点の DATA ペイロード長の合計が
+    /// Content-Length と一致しないメッセージは malformed であり、PROTOCOL_ERROR の
+    /// ストリームエラーとして処理しなければならない (MUST)。
+    #[test]
+    fn test_content_length_mismatch_on_end_stream_pushes_stream_reset() {
+        let mut server = setup_server();
+
+        // Content-Length: 5 のリクエストヘッダーを受信する
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_request_headers_with_content_length("5"),
+        )
+        .with_end_headers(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        // ヘッダー受信由来の既存イベントを消費する
+        while server.poll_event().is_some() {}
+
+        // Content-Length 5 に対して 3 バイトのみの DATA を END_STREAM 付きで送信する
+        let data_frame =
+            DataFrame::new(NonZeroStreamId::from_static(1), vec![0u8; 3]).with_end_stream(true);
+        let data_bytes = encode_frame(&Frame::Data(data_frame));
+        server.feed(&data_bytes).expect("feed should succeed");
+        // ストリームエラーが接続エラーとして伝播せず、process は成功する
+        server.process().expect("process should succeed");
+
+        assert_internal_reset(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            "END_STREAM 時の Content-Length 不一致",
+        );
+    }
+
+    /// Content-Length と受信データがちょうど一致する正常系で DATA が受理される
+    ///
+    /// RFC 9113 Section 8.1.1: Content-Length と DATA ペイロード長の合計が一致する
+    /// メッセージは正常であり、ストリームエラーにならない。
+    /// 複数 DATA フレームに分割された累積一致と、END_STREAM 時一致の境界値を検証する。
+    #[test]
+    fn test_content_length_exact_match_accepts_data() {
+        let mut server = setup_server();
+
+        // Content-Length: 5 のリクエストヘッダーを受信する
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_request_headers_with_content_length("5"),
+        )
+        .with_end_headers(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        // ヘッダー受信由来の既存イベントを消費する
+        while server.poll_event().is_some() {}
+
+        // Content-Length 5 ちょうどを 2 + 3 バイトの 2 つの DATA に分割して送信する
+        let data1 = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![0u8; 2],
+        )));
+        server.feed(&data1).expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        let data2 =
+            DataFrame::new(NonZeroStreamId::from_static(1), vec![0u8; 3]).with_end_stream(true);
+        let data2 = encode_frame(&Frame::Data(data2));
+        server.feed(&data2).expect("feed should succeed");
+        // 正常系のためストリームエラーにならず、process は成功する
+        server.process().expect("process should succeed");
+
+        // 2 つの DATA がそれぞれ DataReceived イベントとして通知されている
+        let events = collect_events(&mut server);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataReceived {
+                    stream_id: shiguredo_http2::StreamId::Client(_),
+                    data,
+                    end_stream: false,
+                } if data.len() == 2
+            )),
+            "1 つ目の DATA が DataReceived イベントとして通知されるべき"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataReceived {
+                    stream_id: shiguredo_http2::StreamId::Client(_),
+                    data,
+                    end_stream: true,
+                } if data.len() == 3
+            )),
+            "2 つ目の DATA が DataReceived イベントとして通知されるべき"
+        );
+
+        // ストリームエラーは発生しない (同じイベント集合に対して同時に検証する)
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "Content-Length 一致の正常系で Event::StreamReset が push されてはならない"
+        );
+    }
+
+    /// no-content レスポンス (204) への DATA による内部リセットで `Event::StreamReset` が
+    /// 通知され、接続が維持される
+    ///
+    /// RFC 9113 Section 8.1.1: 204/304/HEAD はコンテンツを持たない (RFC 9110
+    /// Section 6.4.1)。内容を持つ DATA を受信したメッセージは malformed であり、
+    /// PROTOCOL_ERROR のストリームエラーとして処理しなければならない (MUST)。
+    /// `no_content` はクライアントロールのレスポンス受信時のみ設定される。
+    #[test]
+    fn test_no_content_violation_pushes_stream_reset() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+        // リクエスト送信由来のイベントと出力を消費する
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        // :status 204 のレスポンスヘッダーを受信する
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_no_content_response_headers(),
+        )
+        .with_end_headers(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+        // ヘッダー受信由来の既存イベントを消費する
+        while client.poll_event().is_some() {}
+
+        // no-content レスポンスへの内容を持つ DATA を送信する
+        let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![1, 2, 3],
+        )));
+        client.feed(&data_bytes).expect("feed should succeed");
+        // ストリームエラーが接続エラーとして伝播せず、process は成功する
+        client.process().expect("process should succeed");
+
+        assert_internal_reset(&mut client, 1, ErrorCode::ProtocolError, "no-content 違反");
+    }
+
+    /// HalfClosedRemote 状態のストリームへの DATA による内部リセットで
+    /// `Event::StreamReset` が通知され、接続が維持される
+    ///
+    /// RFC 9113 Section 5.1: half-closed (remote) 状態のストリームへの DATA は
+    /// STREAM_CLOSED のストリームエラーとして処理しなければならない (MUST)。
+    #[test]
+    fn test_data_on_half_closed_remote_pushes_stream_reset() {
+        let mut server = setup_server();
+
+        // END_STREAM 付きのリクエストヘッダーを受信して HalfClosedRemote にする
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_request_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        // ヘッダー受信由来の既存イベントを消費する
+        while server.poll_event().is_some() {}
+
+        // HalfClosedRemote 状態のストリームへの DATA を送信する
+        let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![1, 2, 3],
+        )));
+        server.feed(&data_bytes).expect("feed should succeed");
+        // ストリームエラーが接続エラーとして伝播せず、process は成功する
+        server.process().expect("process should succeed");
+
+        assert_internal_reset(
+            &mut server,
+            1,
+            ErrorCode::StreamClosed,
+            "HalfClosedRemote 状態への DATA",
+        );
+    }
+
+    /// ストリームエラーでリセットされたストリームへの遅延 DATA は破棄され、接続が維持される
+    ///
+    /// Content-Length 超過でリセットされたストリーム (streams から削除済み) への
+    /// 遅延 DATA は `handle_data` のクローズ済みチェックで破棄され、接続は維持される
+    /// (RFC 9113 Section 5.1: closed 状態への遅延フレームは最小処理して破棄する)。
+    /// 遅延 DATA が再度リセットを発生させないことも検証する。
+    #[test]
+    fn test_stream_error_reset_delayed_data_discarded() {
+        let mut server = setup_server();
+
+        // Content-Length: 5 のリクエストヘッダーを受信する
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_request_headers_with_content_length("5"),
+        )
+        .with_end_headers(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        // ヘッダー受信由来の既存イベントを消費する
+        while server.poll_event().is_some() {}
+
+        // Content-Length 5 を超える DATA でリセットを発生させる
+        let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![0u8; 6],
+        )));
+        server.feed(&data_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+        // リセット由来の Event::StreamReset と出力を消費する
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // リセット済みストリームへの遅延 DATA を受信しても接続は維持される
+        let delayed_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![9, 9, 9],
+        )));
+        server.feed(&delayed_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        // 破棄されたデータは DataReceived イベントにならず、リセットも再発しない
+        // (同じイベント集合に対して同時に検証する)
+        let events = collect_events(&mut server);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::DataReceived { .. })),
+            "リセット済みストリームへの遅延 DATA は破棄されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "リセット済みストリームへの遅延 DATA で Event::StreamReset が再発してはならない"
+        );
+
+        // 遅延 DATA で RST_STREAM が再出力されないことも検証する
+        assert!(
+            server.poll_output().is_none(),
+            "リセット済みストリームへの遅延 DATA で RST_STREAM が再出力されてはならない"
         );
     }
 }

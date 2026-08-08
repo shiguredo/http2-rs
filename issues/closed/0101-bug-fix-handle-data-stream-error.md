@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-08-08
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-08-08
 - Branch: feature/fix-handle-data-stream-error
 - Polished: 2026-08-08
 
@@ -63,3 +63,20 @@ RFC 9113 Section 8.1.1 は「Malformed requests or responses that are detected M
 - `src/error.rs` — `Error` (stream_id を含まない)
 - `issues/closed/0099-bug-fix-internal-reset-stream-event.md` — 本 issue の経路を対象外とした issue
 - 残課題: `src/connection/headers.rs` のヘッダー検証エラー経路と、`Connection::handle_frame` の未知フレーム処理 (CONNECT 確立済みストリームへの unknown frame) も同様に `Err(stream_error)` を返して接続終了を引き起こすが、本 issue では対象外とする (別 issue で対応)
+
+## 解決方法
+
+1. `src/connection.rs` の `Connection::handle_data` 内の 4 箇所の `Err(Error::stream_error(...))` を、フロー制御違反処理と同じパターン (`self.reset_stream(...)?; return Ok(())`) に置き換えた:
+   - `recv_data` の状態遷移違反: `.is_err()` で捕捉し、`reset_stream` を `ErrorCode::StreamClosed` で呼ぶ (RFC 9113 Section 5.1)
+   - no-content 違反 / Content-Length 超過 / END_STREAM 時不一致: `reset_stream` を `ErrorCode::ProtocolError` で呼ぶ (RFC 9113 Section 8.1.1)
+   - リセット時は `Event::DataReceived` を push しない
+2. `tests/test_connection.rs` の `mod reset_stream` に単体テスト 6 件とヘルパーを追加した:
+   - `test_content_length_exceeded_pushes_stream_reset`: Content-Length 超過で RST_STREAM (PROTOCOL_ERROR) + `Event::StreamReset`、接続維持 (サーバーロール)
+   - `test_content_length_mismatch_on_end_stream_pushes_stream_reset`: END_STREAM 時不一致で同様 (サーバーロール)
+   - `test_content_length_exact_match_accepts_data`: Content-Length ちょうど一致の正常系 (境界値。2 + 3 バイトの分割送信で累積一致も検証)
+   - `test_no_content_violation_pushes_stream_reset`: no-content 違反 (204) で同様 (クライアントロール)
+   - `test_data_on_half_closed_remote_pushes_stream_reset`: HalfClosedRemote 状態への DATA で RST_STREAM (STREAM_CLOSED) (サーバーロール)
+   - `test_stream_error_reset_delayed_data_discarded`: リセット後の遅延 DATA 破棄と再リセット・RST_STREAM 再出力の非発生
+   - ヘルパー: `encode_request_headers_with_content_length` / `encode_no_content_response_headers` / `assert_rst_stream_sent_with_code` / `assert_internal_reset` / `collect_events` (イベントの存在・非存在を同一イベント集合で同時検証する)
+3. `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
+4. `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通ることを確認した

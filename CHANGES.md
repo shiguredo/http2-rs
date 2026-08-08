@@ -118,6 +118,8 @@
   - @voluntas
 - [ADD] `shiguredo_http2::webtransport` に WebTransport-Init ヘッダー (RFC 8941 Dictionary) パーサー `WtInit` と `WtConfig::apply_init` を追加し、`tokio_http2::WtServerRequest::accept()` で SETTINGS とのマージ・パース失敗時の `:status=400` 拒否を自動化する (draft-ietf-webtrans-http2-14 §4.3 / §4.3.2) (issue 0064)
   - @voluntas
+- [FIX] `Connection::handle_data` のストリームエラー経路 (Content-Length 不一致、no-content 違反、状態遷移違反) が `Err` として伝播して接続全体が終了する問題を修正する。ストリームエラーは RST_STREAM (PROTOCOL_ERROR / STREAM_CLOSED) 送信 + `Event::StreamReset` 通知に変換し、接続を維持する (RFC 9113 Section 5.1 / Section 5.4.2 / Section 8.1.1)
+  - @voluntas
 - [FIX] `Connection::reset_stream` が一度も開かれていない idle ストリームへの明示呼び出しで RST_STREAM フレームを送信し、受信したピアがそのストリームを idle とみなす場合に PROTOCOL_ERROR の接続エラーにしてしまう問題を修正する。idle ストリームへの明示リセットは RST_STREAM を送信せずエラーを返すようにする (RFC 9113 Section 6.4)
   - @voluntas
 - [FIX] ライブラリ内部からのストリームリセット時に `Event::StreamReset` が通知されずストリーム状態が残留する問題を修正する。RST_STREAM 送信時にも受信パスと対称に終了イベントの通知と `streams` からの即時削除を行うようにし、リセット済みストリームへの遅延フレームの idle 誤判定による接続エラー昇格 (RFC 9113 Section 5.1) と、送信バッファ残データの RST_STREAM 後送信 (RFC 9113 Section 5.4.2 違反) を併せて解消する

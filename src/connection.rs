@@ -1051,7 +1051,17 @@ impl Connection {
                 .get_mut(&sid)
                 .ok_or_else(|| Error::stream_error(ErrorCode::StreamClosed, "stream not found"))?;
 
-            stream.state_machine_mut().recv_data(frame.end_stream)?;
+            // RFC 9113 Section 5.1: half-closed (remote) 状態のストリームへの
+            // DATA は STREAM_CLOSED のストリームエラーで応答しなければならない (MUST)。
+            // 状態遷移違反は RST_STREAM(STREAM_CLOSED) で処理し、接続を維持する。
+            if stream
+                .state_machine_mut()
+                .recv_data(frame.end_stream)
+                .is_err()
+            {
+                self.reset_stream(StreamId::from(frame.stream_id), ErrorCode::StreamClosed)?;
+                return Ok(());
+            }
 
             // RFC 9113 Section 6.9: フロー制御違反の受信者は FLOW_CONTROL_ERROR のストリームエラーまたは接続エラーで応答してよい (MAY)。
             // 本実装はストリームレベル違反を RST_STREAM(FLOW_CONTROL_ERROR) で処理する (接続エラーに昇格しない実装判断)。
@@ -1064,17 +1074,19 @@ impl Connection {
                 return Ok(());
             }
 
-            // RFC 9113 Section 8.1.1: コンテンツを持たないレスポンス (204/304/HEAD) に
-            // 内容を持つ DATA フレームが含まれている場合は malformed として扱う
-            // (no-content の定義は RFC 9110 Section 6.4.1)
+            // RFC 9113 Section 8.1.1: コンテンツを持たないレスポンス (204/304/HEAD) への
+            // DATA フレーム (空 DATA を含む) は malformed として扱う
+            // (no-content の定義は RFC 9110 Section 6.4.1)。
+            // malformed は PROTOCOL_ERROR のストリームエラーで処理しなければ
+            // ならない (MUST)。RST_STREAM を送信して接続を維持する。
             if stream.no_content() {
-                return Err(Error::stream_error(
-                    ErrorCode::ProtocolError,
-                    "DATA received on response defined as having no content (204/304/HEAD)",
-                ));
+                self.reset_stream(StreamId::from(frame.stream_id), ErrorCode::ProtocolError)?;
+                return Ok(());
             }
 
-            // RFC 9113 Section 8.1.1: Content-Length とボディサイズの一貫性チェック
+            // RFC 9113 Section 8.1.1: Content-Length とボディサイズの一貫性チェック。
+            // 不一致は malformed であり、PROTOCOL_ERROR のストリームエラーで
+            // 処理しなければならない (MUST)。RST_STREAM を送信して接続を維持する。
             let data_len = frame.data.len() as u64;
             stream.add_received_content_length(data_len);
 
@@ -1082,23 +1094,13 @@ impl Connection {
                 let received = stream.received_content_length();
                 // 受信データが Content-Length を超過
                 if received > expected {
-                    return Err(Error::stream_error(
-                        ErrorCode::ProtocolError,
-                        format!(
-                            "content-length mismatch: received {} exceeds expected {}",
-                            received, expected
-                        ),
-                    ));
+                    self.reset_stream(StreamId::from(frame.stream_id), ErrorCode::ProtocolError)?;
+                    return Ok(());
                 }
                 // END_STREAM 時に Content-Length と一致しない
                 if frame.end_stream && received != expected {
-                    return Err(Error::stream_error(
-                        ErrorCode::ProtocolError,
-                        format!(
-                            "content-length mismatch: received {} but expected {}",
-                            received, expected
-                        ),
-                    ));
+                    self.reset_stream(StreamId::from(frame.stream_id), ErrorCode::ProtocolError)?;
+                    return Ok(());
                 }
             }
 
