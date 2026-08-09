@@ -62,7 +62,7 @@ impl WtInit {
 
             // RFC 8941 Section 4.2.2 step 2.2/2.3: "=" の有無で値を決める
             let value = if parser.consume_if_eq(b'=') {
-                // Parse a Bare Item or Inner List
+                // Bare Item または Inner List をパースする
                 parser.parse_value()?
             } else {
                 // "=" 省略時は Boolean true (本実装は値そのものを使わないのでタグだけ立てる)

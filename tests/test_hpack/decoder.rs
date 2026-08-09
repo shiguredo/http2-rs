@@ -63,8 +63,8 @@ fn test_roundtrip() {
 fn test_decode_size_update() {
     let mut decoder = Decoder::new(4096);
 
-    // Size update to 1024 = 0x3f (5-bit prefix) + continuation
-    // 0x20 | (31 & 0x1f) = 0x3f, then 1024 - 31 = 993 = 0xe1 0x07
+    // サイズを 1024 に更新 = 0x3f (5-bit prefix) + 継続バイト
+    // 0x20 | (31 & 0x1f) = 0x3f 、続いて 1024 - 31 = 993 = 0xe1 0x07
     let data = [0x3f, 0xe1, 0x07];
     let headers = decoder.decode(&data).expect("decode should succeed");
 

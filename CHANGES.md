@@ -207,6 +207,8 @@
 
 ### misc
 
+- [UPDATE] 英語コメント・テスト用 `println!` ログを日本語に翻訳し、CLAUDE.md 規約 (コメント・テストログは日本語) に準拠させる
+  - @voluntas
 - [UPDATE] webtransport モジュール内の `is_tchar` 重複を解消し、共通実装に集約する
   - @voluntas
 - [UPDATE] ソースコード内の issue 番号参照を削除し shiguredo-issues 規約に準拠させる

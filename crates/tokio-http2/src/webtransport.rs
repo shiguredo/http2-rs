@@ -281,7 +281,7 @@ impl WtServerRequest {
         let mut wt_session = WtSession::server(config, peer_config);
         wt_session.initiate()?;
 
-        // Actor channels
+        // Actor チャネル
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let (bidi_tx, bidi_rx) = mpsc::unbounded_channel();
         let (uni_tx, uni_rx) = mpsc::unbounded_channel();

@@ -2,6 +2,7 @@
 
 - Priority: Low
 - Created: 2026-06-11
+- Completed: 2026-08-09
 - Polished: 2026-08-08
 - Model: deepseek-v4-pro
 - Branch: feature/refactor-translate-english-comments
@@ -158,3 +159,24 @@ CLAUDE.md 規約:
 - `crates/tokio-http2/src/webtransport.rs` の `WtServerRequest::accept` メソッド内コメント
 - `tests/test_hpack/decoder.rs` の `test_decode_size_update` 内コメント
 - `crates/shiguredo_nghttp2/src/lib.rs` のテスト関数内 `println!`
+
+## 解決方法
+
+### 翻訳対象 10 箇所の日本語化
+
+「現状の問題」セクションで明示列挙した 10 箇所 (コメント 4 箇所 + テスト用 `println!` 6 件) を、設計方針の翻訳ルール (RFC 固有名詞・16 進値・パターン表現は英語維持、それ以外を日本語化) に従って日本語に翻訳した。翻訳内容は翻訳例テーブルと完全一致。
+
+- `src/webtransport/init.rs` の `WtInit::parse` 内コメント
+- `crates/tokio-http2/src/webtransport.rs` の `WtServerRequest::accept` 内コメント
+- `tests/test_hpack/decoder.rs` の `test_decode_size_update` 内コメント 2 件
+- `crates/shiguredo_nghttp2/src/lib.rs` のテスト関数内 `println!` 6 件
+
+スコープ外として明記した RFC 7541 セクション名コメント・バイト列注釈・`Never Indexed` 系コメント・`table.rs` のインデックス注釈は英語のまま維持し、closed issue 0080 の完了条件と衝突しないことを確認した。
+
+### CHANGES.md
+
+`## develop` の `### misc` サブセクションに `[UPDATE]` エントリを追加した。追加位置は既存の misc エントリの並び (新しい変更が上) に合わせて先頭とした。
+
+### 検証
+
+`cargo fmt --all -- --check` / `cargo build --workspace` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` のすべてが通過することを確認した。
