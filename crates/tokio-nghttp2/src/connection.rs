@@ -1,5 +1,7 @@
 //! HTTP/2 コネクション
 
+use std::pin::Pin;
+
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use shiguredo_nghttp2::{
@@ -13,7 +15,7 @@ use crate::error::{Error, Result};
 /// Sans I/O の Session をラップし、非同期 I/O を提供する。
 pub struct Connection<S> {
     stream: S,
-    session: Session,
+    session: Pin<Box<Session>>,
     recv_buf: Vec<u8>,
 }
 
