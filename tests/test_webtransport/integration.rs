@@ -39,7 +39,7 @@ fn grow_stream_recv_window_unknown_stream_errors() {
 
     let err = session.grow_stream_recv_window(0, 1024).unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::InvalidStreamId,
         "unexpected error kind: {err:?}"
     );
@@ -63,7 +63,7 @@ fn send_max_stream_data_after_stop_sending_errors() {
         .send_max_stream_data(stream_id, 1_000_000)
         .expect_err("STOP_SENDING 後の MAX_STREAM_DATA は拒否されるはず");
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::StreamStateError,
         "unexpected error kind: {err}"
     );
@@ -72,7 +72,7 @@ fn send_max_stream_data_after_stop_sending_errors() {
         .grow_stream_recv_window(stream_id, 1024)
         .expect_err("STOP_SENDING 後の grow も拒否されるはず");
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::StreamStateError,
         "unexpected error kind: {err}"
     );
@@ -125,7 +125,7 @@ fn received_wt_max_data_decrease_errors() {
     session.feed(&bytes).expect("feed should succeed");
     let err = session.process().unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::FlowControlError
     );
 }
@@ -142,13 +142,13 @@ fn send_after_close_errors() {
     // draft-ietf-webtrans-http2-15 Section 6.12: WT_CLOSE_SESSION 送信後は END_STREAM で half-close するため送信不可
     let err = session.send_stream_data(bidi_id, b"x", false).unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::SessionStateError
     );
 
     let err = session.send_datagram(b"x").unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::SessionStateError
     );
 }
@@ -169,10 +169,10 @@ fn wt_stream_data_blocked_unknown_stream_errors() {
     session.feed(&encoder.take()).expect("feed should succeed");
     let err = session.process().unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::StreamStateError
     );
-    assert!(err.reason.contains("unknown stream"));
+    assert!(err.reason().contains("unknown stream"));
 }
 
 /// 受信側が終端状態のストリームに WT_STREAM_DATA_BLOCKED を受信した場合に
@@ -212,10 +212,10 @@ fn wt_stream_data_blocked_recv_terminal_state_errors() {
     session.feed(&encoder2.take()).expect("feed should succeed");
     let err = session.process().unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::StreamStateError
     );
-    assert!(err.reason.contains("not in valid state"));
+    assert!(err.reason().contains("not in valid state"));
 }
 
 /// `open_bidi_stream` がローカルのストリーム上限で `flow_control_error`
@@ -232,7 +232,7 @@ fn open_bidi_stream_over_limit_errors() {
     let _ = session.open_bidi_stream().expect("initiate should succeed");
     let err = session.open_bidi_stream().unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::FlowControlError
     );
 }
@@ -487,7 +487,7 @@ fn stop_sending_duplicate_errors() {
     session.feed(&encoder.take()).expect("feed should succeed");
     let err = session.process().unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::StreamStateError
     );
 }
@@ -509,10 +509,10 @@ fn wt_reset_stream_unknown_stream_id_errors() {
     let err = session.process().unwrap_err();
 
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::StreamStateError
     );
-    assert!(err.reason.contains("unknown stream"));
+    assert!(err.reason().contains("unknown stream"));
 }
 
 // draft-ietf-webtrans-http2-15 Section 6.2: Reliable Size は送信済み総量と
@@ -616,10 +616,10 @@ fn wt_reset_stream_reliable_size_too_large_errors() {
     session.feed(&encoder.take()).expect("feed should succeed");
     let err = session.process().unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::StreamStateError
     );
-    assert!(err.reason.contains("does not match"));
+    assert!(err.reason().contains("does not match"));
 }
 
 /// reliable_size < recv_offset (過小) でセッションエラーになる
@@ -649,10 +649,10 @@ fn wt_reset_stream_reliable_size_too_small_errors() {
     session.feed(&encoder.take()).expect("feed should succeed");
     let err = session.process().unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::StreamStateError
     );
-    assert!(err.reason.contains("does not match"));
+    assert!(err.reason().contains("does not match"));
 }
 
 /// ストリームレベルのフロー制御違反時に output_buffer が汚染されないことを確認する
@@ -675,10 +675,10 @@ fn send_stream_data_stream_flow_control_violation_does_not_pollute_buffer() {
         .send_stream_data(stream_id, b"0123456789", false)
         .unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::FlowControlError
     );
-    assert!(err.reason.contains("stream send limit exceeded"));
+    assert!(err.reason().contains("stream send limit exceeded"));
 
     // 違反時に output_buffer にデータが残っていないこと
     assert!(
@@ -707,10 +707,10 @@ fn send_stream_data_session_flow_control_violation_does_not_pollute_buffer() {
         .send_stream_data(stream_id, b"0123456789", false)
         .unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::FlowControlError
     );
-    assert!(err.reason.contains("send window exhausted"));
+    assert!(err.reason().contains("send window exhausted"));
 
     // 違反時に output_buffer にデータが残っていないこと
     assert!(
@@ -785,10 +785,10 @@ fn asymmetric_flow_control_send_uses_peer_value() {
         .send_stream_data(stream_id, b"x", false)
         .unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::FlowControlError
     );
-    assert!(err.reason.contains("send window exhausted"));
+    assert!(err.reason().contains("send window exhausted"));
 }
 
 /// 非対称なフロー制御値: ストリームレベルの送信制限がピアの広告値に従うことを確認する
@@ -814,10 +814,10 @@ fn asymmetric_flow_control_stream_send_uses_peer_value() {
         .send_stream_data(stream_id, b"0123456789", false)
         .unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::FlowControlError
     );
-    assert!(err.reason.contains("stream send limit exceeded"));
+    assert!(err.reason().contains("stream send limit exceeded"));
 }
 
 /// 双方向ストリームが FIN 送受信で完全に閉じた後に HashMap から削除されることを確認する
@@ -934,7 +934,7 @@ fn flow_control_cumulative_count_works_after_stream_removal() {
     // 累積カウントにより 3 つ目のストリームは制限に達する
     let err = session.open_bidi_stream().unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::FlowControlError
     );
 }

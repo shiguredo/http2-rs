@@ -2,10 +2,10 @@
 
 - Priority: High
 - Created: 2026-06-11
+- Completed: 2026-08-09
 - Polished: 2026-08-08
 - Model: deepseek-v4-pro
 - Branch: feature/change-error-field-privatization
-
 ## 目的
 
 `Error` (`src/error.rs`) と `WtError` (`src/webtransport/error.rs`) の全フィールド (`kind`, `reason`, `location`, `backtrace`) が `pub` で公開されており、外部コードがフィールドに直接代入することで `#[track_caller]` で記録した `Location` や `Backtrace::capture()` で取得したスタック情報を上書き可能になっている。専用コンストラクタ (`new`, `with_reason`, `connection_error` 等) で構築する設計の前提を構造的に保証するため、フィールドを private 化し getter 経由でのみ読み取れるようにする。
@@ -249,3 +249,17 @@ issue 0072 (`refactor-remove-unused-code`) で削除予定の API:
 - `issues/closed/0024-change-header-field-construct-time-validation.md` — `HeaderField` のフィールド private 化先行事例
 - `src/settings.rs` の `Settings` の getter 群 — `#[must_use]` + `pub const fn` + 名詞句 doc コメントのシグネチャ参考
 - `src/limits.rs` の `Limits` の getter 群 — 同上
+
+## 解決方法
+
+### フィールド private 化と getter 追加
+
+`src/error.rs` の `Error` と `src/webtransport/error.rs` の `WtError` の全フィールド (`kind` / `reason` / `location` / `backtrace`) から `pub` を削除し、`kind()` / `reason()` / `location()` / `backtrace()` の 4 getter を追加した。全 getter は `#[must_use]` + `pub const fn` で実装し、`backtrace()` は `std::backtrace::Backtrace` が `#[must_use]` 済みのため clippy `double_must_use` を回避するメッセージ付き `#[must_use = "returns the captured backtrace"]` とした。
+
+### 既存アクセスの getter 化
+
+`tests/test_error.rs` / `tests/test_webtransport/` 配下 6 ファイル / `src/webtransport/capsule.rs` / `src/connection/headers.rs` / `crates/tokio-http2/src/webtransport.rs` のフィールド直接アクセス 54 箇所を getter 呼び出しに置き換えた。assert の意図 (左右の値) は変更していない。`skills/shiguredo-http2/SKILL.md` の `Error` の説明に getter 経由の読み取りを追記し、`HpackError` の説明を `Error::reason()` 形式に更新した。
+
+### 検証
+
+`cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo check --manifest-path fuzz/Cargo.toml` のすべてが通過することを確認した。

@@ -291,7 +291,7 @@ impl Connection {
                 .map_err(|e| {
                     Error::connection_error(
                         ErrorCode::CompressionError,
-                        format!("HPACK decode error: {}", e.reason),
+                        format!("HPACK decode error: {}", e.reason()),
                     )
                 })?;
 
@@ -619,7 +619,7 @@ impl Connection {
                 .map_err(|e| {
                     Error::connection_error(
                         ErrorCode::CompressionError,
-                        format!("HPACK decode error: {}", e.reason),
+                        format!("HPACK decode error: {}", e.reason()),
                     )
                 })?;
             self.header_block_fragment.clear();

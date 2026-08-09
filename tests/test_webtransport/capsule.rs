@@ -554,7 +554,7 @@ fn test_wt_reset_stream_error_code_exceeds_u32_is_session_error() {
         .decode()
         .expect_err("0xffffffff 超過の error_code はエラーになるはず");
     assert_eq!(
-        err.kind,
+        err.kind(),
         WtErrorKind::SessionStateError,
         "WT_ERROR 相当として SessionStateError であること、実際: {err}"
     );
@@ -588,7 +588,7 @@ fn test_wt_stop_sending_error_code_exceeds_u32_is_session_error() {
         .decode()
         .expect_err("0xffffffff 超過の error_code はエラーになるはず");
     assert_eq!(
-        err.kind,
+        err.kind(),
         WtErrorKind::SessionStateError,
         "WT_ERROR 相当として SessionStateError であること、実際: {err}"
     );
@@ -607,8 +607,8 @@ fn test_feed_buffer_limit_exceeded() {
 
     // 上限超過はエラー
     let err = decoder.feed(&[0u8; 1]).unwrap_err();
-    assert_eq!(err.kind, WtErrorKind::InvalidInput);
-    assert!(err.reason.contains("buffer limit exceeded"));
+    assert_eq!(err.kind(), WtErrorKind::InvalidInput);
+    assert!(err.reason().contains("buffer limit exceeded"));
 }
 
 /// デフォルトのバッファ上限 (16 MiB) が適用されることを確認する
@@ -624,5 +624,5 @@ fn test_feed_default_buffer_limit() {
 
     // 1 バイトでも超過するとエラー
     let err = decoder.feed(&[0u8; 1]).unwrap_err();
-    assert_eq!(err.kind, WtErrorKind::InvalidInput);
+    assert_eq!(err.kind(), WtErrorKind::InvalidInput);
 }

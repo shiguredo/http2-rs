@@ -88,7 +88,7 @@ fn test_close_double_call_errors() {
 
     let err = session.close(1, "second close").unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::SessionStateError
     );
 }
@@ -245,7 +245,7 @@ fn test_send_max_streams_exceeds_2_60() {
         .send_max_streams((1u64 << 60) + 1, true)
         .unwrap_err();
     assert_eq!(
-        err.kind,
+        err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::FlowControlError
     );
 }

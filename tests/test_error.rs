@@ -33,8 +33,8 @@ fn from_decode_error_buffer_too_short() {
     let err: Error = decode_err.into();
     assert!(err.is_connection_error());
     assert_eq!(err.error_code(), Some(ErrorCode::FrameSizeError));
-    assert!(err.reason.contains("9"));
-    assert!(err.reason.contains("4"));
+    assert!(err.reason().contains("9"));
+    assert!(err.reason().contains("4"));
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn from_decode_error_incomplete() {
     let err: Error = decode_err.into();
     assert!(err.is_connection_error());
     assert_eq!(err.error_code(), Some(ErrorCode::FrameSizeError));
-    assert!(err.reason.contains("incomplete"));
+    assert!(err.reason().contains("incomplete"));
 }
 
 #[test]

@@ -1097,7 +1097,7 @@ impl DriverState {
         &mut self,
         e: shiguredo_http2::webtransport::WtError,
     ) -> Error {
-        if let Some(code) = wt_http2_error_code(e.kind) {
+        if let Some(code) = wt_http2_error_code(e.kind()) {
             let _ = self.conn.reset_stream(self.connect_stream_id, code).await;
         }
         Error::from(e)

@@ -187,21 +187,47 @@ impl std::fmt::Display for ErrorKind {
 /// HTTP/2 エラー型
 pub struct Error {
     /// 発生したエラーの種類
-    pub kind: ErrorKind,
+    kind: ErrorKind,
 
     /// エラーが発生した理由
-    pub reason: String,
+    reason: String,
 
     /// エラーが作成されたソースコードの場所
-    pub location: &'static Location<'static>,
+    location: &'static Location<'static>,
 
     /// エラー発生箇所を示すバックトレース
     ///
     /// バックトレースは `RUST_BACKTRACE` 環境変数が設定されていない場合には取得されない
-    pub backtrace: Backtrace,
+    backtrace: Backtrace,
 }
 
 impl Error {
+    /// エラー種別
+    #[must_use]
+    pub const fn kind(&self) -> ErrorKind {
+        self.kind
+    }
+
+    /// エラー理由
+    #[must_use]
+    pub const fn reason(&self) -> &str {
+        self.reason.as_str()
+    }
+
+    /// エラー発生位置
+    #[must_use]
+    pub const fn location(&self) -> &'static Location<'static> {
+        self.location
+    }
+
+    /// バックトレース
+    ///
+    /// `RUST_BACKTRACE` 環境変数が設定されていない場合には取得されない
+    #[must_use = "returns the captured backtrace"]
+    pub const fn backtrace(&self) -> &Backtrace {
+        &self.backtrace
+    }
+
     /// [`Error`] インスタンスを生成する
     #[track_caller]
     pub fn new(kind: ErrorKind) -> Self {
