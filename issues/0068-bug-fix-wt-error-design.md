@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-06-11
+- Completed: 2026-08-09
 - Polished: 2026-08-08
 - Model: deepseek-v4-pro
 - Branch: feature/fix-wt-error-display-info-leak
@@ -113,6 +114,8 @@ impl std::fmt::Display for WtError {
 ## 解決方法
 
 ### `WtError::Debug` / `WtError::Display` の修正 (`src/webtransport/error.rs`)
+
+上記の設計に従い、`src/webtransport/error.rs` の `impl Debug for WtError` を `Display` 委譲から独立した実装に、`impl Display for WtError` から `location` / `backtrace` の出力を削除して `kind` / `reason` のみの出力に変更した。実装は本セクションの設計どおり完了し、`cargo fmt` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通過することを確認した。`RUST_BACKTRACE=1` 設定時と未設定時の両方で新規テスト 4 件が通過することを確認済み。
 
 `Error` 型 (`src/error.rs` の `impl Debug for Error` / `impl Display for Error`) と同じパターンで以下に置き換える。`Debug` 実装内で `write!(f, "{self}")` ではなく `write!(f, "{}", self.kind)` を使うのは、前者だと `Debug` 出力が `Display` の形式 (kind と reason のみ) に暗黙に結合され、将来 `Display` の形式が変わると `Debug` 出力も連動して変わるため。`Debug` を `Display` から独立させるのが本 issue の目的の一つであり、責務分離を構造的に保つ。
 
