@@ -2,6 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-11
+- Completed: 2026-08-09
 - Polished: 2026-08-08
 - Model: deepseek-v4-pro
 - Branch: feature/change-rfc9297-allow-non-minimal-varint
@@ -151,3 +152,21 @@ if encoded_len(value) != len {
 - `src/webtransport/capsule.rs` — `varint::decode` の呼び出し元 (Capsule Type / Length / 各種 WT_* フィールド、変更不要)
 - `tests/test_webtransport/varint.rs` の `test_decode_non_minimal_encoding` — 書き換え対象
 - `pbt/tests/prop_webtransport/main.rs` — varint 関連 prop (影響なし)
+
+## 解決方法
+
+### `varint::decode` の非最小エンコーディング拒否を解除
+
+`src/webtransport/varint.rs` の `decode` 関数内の非最小エンコーディング検査ブロック (`if encoded_len(value) != len { ... }`) を削除し、RFC 9297 Section 1.1 / RFC 9000 Section 16 に従って非最小エンコーディングを受け入れるようにした。`decode` の doc コメントの「非最小エンコーディングの場合」エラー項目を削除し、受入方針の 1 行を追記した。モジュール冒頭 doc コメントも「RFC 9000 Section 16 で定義され、RFC 9297 Section 1.1 で非最小エンコーディングが許容される。本実装も非最小エンコーディングを受け入れる」に更新した。`encode` 側は引き続き最小バイト数でエンコードする。
+
+### テスト書き換え
+
+`tests/test_webtransport/varint.rs` の `test_decode_non_minimal_encoding` を `test_decode_non_minimal_encoding_accepts_rfc9297` にリネームし、6 ケースの受入テスト（`decode(...)` が `Ok((value, len))` を返し、value / len が期待値と一致すること）に書き換えた。各ケースの期待値は本 issue の対応手順どおり。
+
+### CHANGES.md
+
+`## develop` の `[CHANGE]` 群の先頭に `varint::decode` の挙動変更を記載したエントリを追加した。
+
+### 検証
+
+`cargo fmt --all -- --check` / `cargo build --workspace` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo check --manifest-path fuzz/Cargo.toml` のすべてが通過することを確認した。RFC 9297 Section 3.3 の「redundant length encodings MUST be verified to be self-consistent」は Capsule Length と実ペイロード長の整合性の要件であり、`capsule.rs` の既存検証により維持されている。

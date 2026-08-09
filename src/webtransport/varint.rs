@@ -1,5 +1,8 @@
 //! QUIC 形式の可変長整数エンコーディング (RFC 9000 Section 16)
 //!
+//! RFC 9000 Section 16 で定義され、RFC 9297 Section 1.1 で非最小エンコーディングが
+//! 許容される。本実装も非最小エンコーディングを受け入れる。
+//!
 //! 先頭 2 ビットでエンコード長を示す:
 //!
 //! | 2MSB | Length | Usable Bits | Range                    |
@@ -125,6 +128,8 @@ pub fn encode_to_vec(value: u64) -> WtResult<Vec<u8>> {
 
 /// 可変長整数をデコードする
 ///
+/// RFC 9297 Section 1.1 に従い、非最小エンコーディングも受け入れる。
+///
 /// # 引数
 ///
 /// - `buf`: 入力バッファ
@@ -136,8 +141,6 @@ pub fn encode_to_vec(value: u64) -> WtResult<Vec<u8>> {
 /// # エラー
 ///
 /// - 入力データが不足している場合 (`Incomplete`)
-/// - 非最小エンコーディングの場合 (`InvalidInput`)
-///   - RFC 9000 Section 16 はこれを要求しないが、本実装独自の厳格化として拒否する
 #[track_caller]
 pub fn decode(buf: &[u8]) -> WtResult<(u64, usize)> {
     if buf.is_empty() {
@@ -188,18 +191,6 @@ pub fn decode(buf: &[u8]) -> WtResult<(u64, usize)> {
         }
         _ => unreachable!(),
     };
-
-    // RFC 9000 Section 16 は Frame Type を除き最小エンコーディングを要求しないが、
-    // 本実装は独自方針として非最小エンコーディングを拒否する
-    if encoded_len(value) != len {
-        return Err(WtError::with_reason(
-            WtErrorKind::InvalidInput,
-            format!(
-                "non-minimal varint encoding: value {value} encoded in {len} bytes, minimum is {}",
-                encoded_len(value)
-            ),
-        ));
-    }
 
     Ok((value, len))
 }
