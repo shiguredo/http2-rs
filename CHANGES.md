@@ -132,6 +132,8 @@
   - @voluntas
 - [ADD] `shiguredo_http2::webtransport` に WebTransport-Init ヘッダー (RFC 8941 Dictionary) パーサー `WtInit` と `WtConfig::apply_init` を追加し、`tokio_http2::WtServerRequest::accept()` で SETTINGS とのマージ・パース失敗時の `:status=400` 拒否を自動化する (draft-ietf-webtrans-http2-14 §4.3 / §4.3.2) (issue 0064)
   - @voluntas
+- [FIX] no-content レスポンス (204/304/HEAD) への空 DATA を違反として扱わず許容するように修正する。内容を持つ DATA のみを PROTOCOL_ERROR のストリームエラーで処理し、非ゼロ Content-Length を持つ no-content レスポンスへの空 DATA + END_STREAM も許容する (RFC 9113 Section 6.1 / Section 8.1.1 / RFC 9110 Section 6.4.1)
+  - @voluntas
 - [FIX] `Connection::handle_data` のストリームエラー経路 (Content-Length 不一致、no-content 違反、状態遷移違反) が `Err` として伝播して接続全体が終了する問題を修正する。ストリームエラーは RST_STREAM (PROTOCOL_ERROR / STREAM_CLOSED) 送信 + `Event::StreamReset` 通知に変換し、接続を維持する (RFC 9113 Section 5.1 / Section 5.4.2 / Section 8.1.1)
   - @voluntas
 - [FIX] `Connection::reset_stream` が一度も開かれていない idle ストリームへの明示呼び出しで RST_STREAM フレームを送信し、受信したピアがそのストリームを idle とみなす場合に PROTOCOL_ERROR の接続エラーにしてしまう問題を修正する。idle ストリームへの明示リセットは RST_STREAM を送信せずエラーを返すようにする (RFC 9113 Section 6.4)
