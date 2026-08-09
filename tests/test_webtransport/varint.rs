@@ -101,27 +101,41 @@ fn test_decode_incomplete() {
 }
 
 #[test]
-fn test_decode_non_minimal_encoding() {
-    // RFC 9000 Section 16 / RFC 9297 は非最小エンコーディングを許容するが、本実装は方針として拒否する
+fn test_decode_non_minimal_encoding_accepts_rfc9297() {
+    // RFC 9297 Section 1.1 に従い非最小エンコーディングを受け入れる
 
     // 値 10 を 2 バイトでエンコード (最小は 1 バイト)
-    // 0x40 | (10 >> 8) = 0x40, buf[1] = 10
-    assert!(decode(&[0x40, 0x0a]).is_err());
+    let (value, len) = decode(&[0x40, 0x0a]).expect("RFC 9297 は非最小エンコーディングを許容する");
+    assert_eq!(value, 10);
+    assert_eq!(len, 2);
 
     // 値 0 を 2 バイトでエンコード (最小は 1 バイト)
-    assert!(decode(&[0x40, 0x00]).is_err());
+    let (value, len) = decode(&[0x40, 0x00]).expect("RFC 9297 は非最小エンコーディングを許容する");
+    assert_eq!(value, 0);
+    assert_eq!(len, 2);
 
     // 値 63 を 2 バイトでエンコード (最小は 1 バイト)
-    assert!(decode(&[0x40, 0x3f]).is_err());
+    let (value, len) = decode(&[0x40, 0x3f]).expect("RFC 9297 は非最小エンコーディングを許容する");
+    assert_eq!(value, 63);
+    assert_eq!(len, 2);
 
     // 値 64 を 4 バイトでエンコード (最小は 2 バイト)
-    assert!(decode(&[0x80, 0x00, 0x00, 0x40]).is_err());
+    let (value, len) =
+        decode(&[0x80, 0x00, 0x00, 0x40]).expect("RFC 9297 は非最小エンコーディングを許容する");
+    assert_eq!(value, 64);
+    assert_eq!(len, 4);
 
     // 値 16383 を 4 バイトでエンコード (最小は 2 バイト)
-    assert!(decode(&[0x80, 0x00, 0x3f, 0xff]).is_err());
+    let (value, len) =
+        decode(&[0x80, 0x00, 0x3f, 0xff]).expect("RFC 9297 は非最小エンコーディングを許容する");
+    assert_eq!(value, 16383);
+    assert_eq!(len, 4);
 
     // 値 16384 を 8 バイトでエンコード (最小は 4 バイト)
-    assert!(decode(&[0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00]).is_err());
+    let (value, len) = decode(&[0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00])
+        .expect("RFC 9297 は非最小エンコーディングを許容する");
+    assert_eq!(value, 16384);
+    assert_eq!(len, 8);
 }
 
 #[test]

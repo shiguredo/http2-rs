@@ -8,6 +8,8 @@
 
 ## develop
 
+- [CHANGE] `varint::decode` が非最小エンコーディングを拒否していた独自方針を取りやめ、RFC 9297 Section 1.1 / RFC 9000 Section 16 に従って受け入れるように変更する。`encode` 側は引き続き最小バイト数でエンコードする
+  - @voluntas
 - [CHANGE] 最小サポート Rust バージョン (MSRV) を 1.88 から 1.93 に引き上げる
   - @voluntas
 - [CHANGE] `WtServerRequest::accept()` に `selected_protocol` 引数を追加し、`:scheme` が `https` でない場合は `RST_STREAM(PROTOCOL_ERROR)` で拒否するように変更する (draft-ietf-webtrans-http2-15 Section 3.2 / Section 3.3)
