@@ -515,7 +515,6 @@ RFC 9113 §7 の HTTP/2 エラーコードに加え、draft-ietf-webtrans-http2-
 ### その他
 
 - `DecodeError`: フレームデコード時のバイト列エラー
-- `SendError`: 送信側 API 用のエラー型 (現状 `Connection::send_*` には未統合で `Error` を返す)
 - `FrameError`: フレーム構造エラー
 - `SettingError`: SETTINGS 値検証エラー
 - `LimitsError`: `Limits` 構築時のエラー (`WebtransportRequiresConnectProtocol` / `WebtransportRequiresWtEnabled`)

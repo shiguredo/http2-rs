@@ -2,6 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-11
+- Completed: 2026-08-09
 - Polished: 2026-08-08
 - Model: deepseek-v4-pro
 - Branch: feature/change-remove-send-error
@@ -120,3 +121,21 @@ pub use send_error::SendError;
 - `issues/closed/0027-change-frame-construct-time-validation.md` — `SendError` 型定義の追加と「Connection::send_* への統合は別 issue 化」の判断元
 - `issues/closed/0029-change-split-error-types.md` — エラー型分割の経緯
 - `issues/closed/0019-chore-remove-dead-code.md` — 過去の公開 API 削除事例 (`pub use` された API の削除は `[CHANGE]` 区分)
+
+## 解決方法
+
+### `SendError` 型一式の削除
+
+`src/send_error.rs`（型定義・`Display` 実装・`std::error::Error` 実装）と `tests/test_send_error.rs`（`Display` 出力 5 ケースのテスト）を削除し、`src/lib.rs` から `pub mod send_error;` と `pub use send_error::SendError;` を削除した。`skills/shiguredo-http2/SKILL.md` の `SendError` 説明行も削除した。
+
+`Connection::send_*` 系 API は従来どおり `Error` 型を返しており、`SendError` は製品コード・`crates/*` / `pbt/` / `fuzz/` / `examples/` のどこからも参照されていないことを grep で確認済み。
+
+なお、本 issue の本文では公開済みリリースを canary.3〜canary.9 と記載しているが、実際には canary.10 の `src/lib.rs` にも `send_error` が含まれていた。`CHANGES.md` の `[CHANGE]` エントリは公開 API 削除の告知として十分であり、表記ズレは本 issue の記録上のもの。
+
+### CHANGES.md の更新
+
+`[CHANGE]` 群の末尾に `SendError` 削除のエントリを追加し、既存 `[ADD]` エントリの括弧内列挙から `SendError` を除去して 6 種（`HeaderFieldError` / `FrameError` / `StreamIdError` / `SettingError` / `LimitsError` / `DecodeError`）に縮めた。
+
+### 検証
+
+`cargo fmt --all -- --check` / `cargo build --workspace` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo check --manifest-path fuzz/Cargo.toml` のすべてが通過することを確認した。
