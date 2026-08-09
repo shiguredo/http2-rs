@@ -1060,6 +1060,7 @@ async fn test_wt_tls12_rejected() {
             if let Event::StreamReset {
                 stream_id,
                 error_code,
+                ..
             } = ev
                 && stream_id == connect_stream
             {

@@ -749,6 +749,23 @@ mod reset_stream {
         server.process().expect("process should succeed");
     }
 
+    /// Content-Length: 5 のリクエストヘッダーを受信して既存イベントを消費する
+    ///
+    /// ヘッダー受信由来のイベント (HeadersReceived 等) を消費してから返すため、
+    /// 呼び出し後は DATA 送信によるイベントだけを検証できる。
+    fn receive_content_length_request(server: &mut Connection) {
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_request_headers_with_content_length("5"),
+        )
+        .with_end_headers(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+    }
+
     /// 有効なレスポンスヘッダー (:status 200) を HPACK エンコードする
     fn encode_valid_response_headers() -> Vec<u8> {
         let mut encoder = HpackEncoder::new(4096);
@@ -776,6 +793,20 @@ mod reset_stream {
     fn encode_no_content_response_headers() -> Vec<u8> {
         let mut encoder = HpackEncoder::new(4096);
         let headers = vec![HeaderField::new(":status", "204").expect("valid header field")];
+        let mut buf = Vec::new();
+        encoder.encode(&mut buf, &headers);
+        buf
+    }
+
+    /// :status 100 の情報レスポンスヘッダーを HPACK エンコードする
+    ///
+    /// 1xx 情報レスポンスに END_STREAM を付けたものは malformed であり
+    /// (RFC 9113 Section 8.1 の規則、Section 8.1.1 の定義)、`process_headers` が
+    /// 状態遷移 (状態機械 `recv_headers`) を完了させた後にエラーを返すため、
+    /// ストリームが Closed 状態のまま `streams` に残る。
+    fn encode_informational_response_headers() -> Vec<u8> {
+        let mut encoder = HpackEncoder::new(4096);
+        let headers = vec![HeaderField::new(":status", "100").expect("valid header field")];
         let mut buf = Vec::new();
         encoder.encode(&mut buf, &headers);
         buf
@@ -865,16 +896,22 @@ mod reset_stream {
 
     /// ストリームエラーによる内部リセットの結果をまとめて検証する
     ///
-    /// 指定したエラーコードの `Event::StreamReset` の通知・RST_STREAM フレームの出力
-    /// (エラーコード込み)・違反した DATA が `Event::DataReceived` にならないことを
-    /// 検証する。出力バッファ全体を消費するため、検査対象の出力がすべて揃った後に呼ぶこと。
+    /// 指定したエラーコードの `Event::StreamReset` の通知 (接続ウィンドウ消費量込み)・
+    /// RST_STREAM フレームの出力 (エラーコード込み)・違反した DATA が
+    /// `Event::DataReceived` にならないことを検証する。出力バッファ全体を消費するため、
+    /// 検査対象の出力がすべて揃った後に呼ぶこと。
     ///
     /// イベントの「存在」と「非存在」は同じイベント集合に対して検証する
     /// (`find_event` は検査済みイベントを消費するため、順次検証すると非存在検証が恒真になる)。
+    ///
+    /// 破棄経路 (DataDiscarded) と違反処理経路 (StreamReset) は排他であり、
+    /// 同じ DATA フレームで両方が通知されることはない (二重通知はアプリの二重補充を招く)
+    /// ため、DataDiscarded が生成されていないことも併せて検証する。
     fn assert_internal_reset(
         conn: &mut Connection,
         stream_id: u32,
         error_code: ErrorCode,
+        expected_consumed: usize,
         label: &str,
     ) {
         let events = collect_events(conn);
@@ -884,15 +921,25 @@ mod reset_stream {
                 Event::StreamReset {
                     stream_id: shiguredo_http2::StreamId::Client(id),
                     error_code: code,
-                } if id.as_u32() == stream_id && *code == error_code
+                    connection_window_consumed,
+                    ..
+                } if id.as_u32() == stream_id
+                    && *code == error_code
+                    && *connection_window_consumed == expected_consumed
             )),
-            "{label}で Event::StreamReset が通知されるべき"
+            "{label}で Event::StreamReset が通知されるべき (接続ウィンドウ消費量 {expected_consumed})"
         );
         assert!(
             !events
                 .iter()
                 .any(|e| matches!(e, Event::DataReceived { .. })),
             "{label}の DATA は DataReceived イベントになってはならない"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::DataDiscarded { .. })),
+            "{label}の DATA で DataDiscarded が生成されてはならない (StreamReset と排他)"
         );
         assert_rst_stream_sent_with_code(
             conn,
@@ -921,7 +968,9 @@ mod reset_stream {
         let mut server = setup_server_with_limits(limits);
         open_stream_on_server(&mut server, 1);
 
-        // 受信ウィンドウ 4096 を超過する DATA (4097 バイト)
+        // 受信ウィンドウ 4096 を超過する DATA (4097 バイト) で内部リセットされる
+        // (StreamReset 通知 (接続ウィンドウ消費量 4097 込み)・RST_STREAM 出力・
+        // DataReceived 非生成を一括検証する)
         let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
             NonZeroStreamId::from_static(1),
             vec![0u8; 4097],
@@ -929,23 +978,12 @@ mod reset_stream {
         server.feed(&data_bytes).expect("feed should succeed");
         server.process().expect("process should succeed");
 
-        // Event::StreamReset (FLOW_CONTROL_ERROR) が通知されている
-        assert!(
-            find_event(&mut server, |e| matches!(
-                e,
-                Event::StreamReset {
-                    stream_id: shiguredo_http2::StreamId::Client(_),
-                    error_code: ErrorCode::FlowControlError,
-                }
-            )),
-            "Event::StreamReset が通知されるべき"
-        );
-
-        // 違反した DATA は DataReceived イベントにならない (RST_STREAM で早期 return される)
-        assert_no_event(
+        assert_internal_reset(
             &mut server,
-            |e| matches!(e, Event::DataReceived { .. }),
-            "フロー制御違反の DATA は DataReceived イベントになってはならない",
+            1,
+            ErrorCode::FlowControlError,
+            4097,
+            "フロー制御違反",
         );
     }
 
@@ -972,6 +1010,7 @@ mod reset_stream {
                 Event::StreamReset {
                     stream_id: shiguredo_http2::StreamId::Client(_),
                     error_code: ErrorCode::ProtocolError,
+                    ..
                 }
             )),
             "Event::StreamReset が通知されるべき"
@@ -1004,6 +1043,7 @@ mod reset_stream {
                 Event::StreamReset {
                     stream_id: shiguredo_http2::StreamId::Client(_),
                     error_code: ErrorCode::FlowControlError,
+                    ..
                 }
             )),
             "Event::StreamReset が通知されるべき"
@@ -1026,15 +1066,18 @@ mod reset_stream {
             .expect("reset_stream should succeed");
 
         // Event::StreamReset (CANCEL) が通知されている
+        // 公開 API の reset_stream は接続ウィンドウ消費量を知らないため 0 が通知される
         assert!(
             find_event(&mut server, |e| matches!(
                 e,
                 Event::StreamReset {
                     stream_id: shiguredo_http2::StreamId::Client(_),
                     error_code: ErrorCode::Cancel,
+                    connection_window_consumed: 0,
+                    ..
                 }
             )),
-            "Event::StreamReset が通知されるべき"
+            "Event::StreamReset が接続ウィンドウ消費量 0 で通知されるべき"
         );
 
         // RST_STREAM フレームが出力されている
@@ -1045,6 +1088,40 @@ mod reset_stream {
             &mut server,
             |e| matches!(e, Event::StreamClosed { .. }),
             "明示リセットで Event::StreamClosed が push されてはならない",
+        );
+    }
+
+    /// ピアからの RST_STREAM 受信で `Event::StreamReset` が通知される
+    ///
+    /// `handle_rst_stream` は受信した RST_STREAM をそのまま `Event::StreamReset` として
+    /// 通知する。RST_STREAM 受信自体は DATA の破棄ではないため、
+    /// `connection_window_consumed` は 0 で通知される。
+    #[test]
+    fn test_peer_rst_stream_pushes_event() {
+        let mut server = setup_server();
+        open_stream_on_server(&mut server, 1);
+
+        let rst_frame = Frame::RstStream(RstStreamFrame::new(
+            NonZeroStreamId::from_static(1),
+            ErrorCode::Cancel.as_u32(),
+        ));
+        server
+            .feed(&encode_frame(&rst_frame))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        // ピア RST_STREAM がそのまま Event::StreamReset (CANCEL) として通知される
+        assert!(
+            find_event(&mut server, |e| matches!(
+                e,
+                Event::StreamReset {
+                    stream_id: shiguredo_http2::StreamId::Client(_),
+                    error_code: ErrorCode::Cancel,
+                    connection_window_consumed: 0,
+                    ..
+                }
+            )),
+            "ピア RST_STREAM で Event::StreamReset が接続ウィンドウ消費量 0 で通知されるべき"
         );
     }
 
@@ -1557,19 +1634,7 @@ mod reset_stream {
     #[test]
     fn test_content_length_exceeded_pushes_stream_reset() {
         let mut server = setup_server();
-
-        // Content-Length: 5 のリクエストヘッダーを受信する
-        let headers = HeadersFrame::new(
-            NonZeroStreamId::from_static(1),
-            encode_request_headers_with_content_length("5"),
-        )
-        .with_end_headers(true);
-        server
-            .feed(&encode_frame(&Frame::Headers(headers)))
-            .expect("feed should succeed");
-        server.process().expect("process should succeed");
-        // ヘッダー受信由来の既存イベントを消費する
-        while server.poll_event().is_some() {}
+        receive_content_length_request(&mut server);
 
         // Content-Length 5 を超える 6 バイトの DATA を送信する
         let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
@@ -1584,6 +1649,7 @@ mod reset_stream {
             &mut server,
             1,
             ErrorCode::ProtocolError,
+            6,
             "Content-Length 超過",
         );
     }
@@ -1597,19 +1663,7 @@ mod reset_stream {
     #[test]
     fn test_content_length_mismatch_on_end_stream_pushes_stream_reset() {
         let mut server = setup_server();
-
-        // Content-Length: 5 のリクエストヘッダーを受信する
-        let headers = HeadersFrame::new(
-            NonZeroStreamId::from_static(1),
-            encode_request_headers_with_content_length("5"),
-        )
-        .with_end_headers(true);
-        server
-            .feed(&encode_frame(&Frame::Headers(headers)))
-            .expect("feed should succeed");
-        server.process().expect("process should succeed");
-        // ヘッダー受信由来の既存イベントを消費する
-        while server.poll_event().is_some() {}
+        receive_content_length_request(&mut server);
 
         // Content-Length 5 に対して 3 バイトのみの DATA を END_STREAM 付きで送信する
         let data_frame =
@@ -1623,6 +1677,7 @@ mod reset_stream {
             &mut server,
             1,
             ErrorCode::ProtocolError,
+            3,
             "END_STREAM 時の Content-Length 不一致",
         );
     }
@@ -1635,19 +1690,7 @@ mod reset_stream {
     #[test]
     fn test_content_length_exact_match_accepts_data() {
         let mut server = setup_server();
-
-        // Content-Length: 5 のリクエストヘッダーを受信する
-        let headers = HeadersFrame::new(
-            NonZeroStreamId::from_static(1),
-            encode_request_headers_with_content_length("5"),
-        )
-        .with_end_headers(true);
-        server
-            .feed(&encode_frame(&Frame::Headers(headers)))
-            .expect("feed should succeed");
-        server.process().expect("process should succeed");
-        // ヘッダー受信由来の既存イベントを消費する
-        while server.poll_event().is_some() {}
+        receive_content_length_request(&mut server);
 
         // Content-Length 5 ちょうどを 2 + 3 バイトの 2 つの DATA に分割して送信する
         let data1 = encode_frame(&Frame::Data(DataFrame::new(
@@ -1737,7 +1780,13 @@ mod reset_stream {
         // ストリームエラーが接続エラーとして伝播せず、process は成功する
         client.process().expect("process should succeed");
 
-        assert_internal_reset(&mut client, 1, ErrorCode::ProtocolError, "no-content 違反");
+        assert_internal_reset(
+            &mut client,
+            1,
+            ErrorCode::ProtocolError,
+            3,
+            "no-content 違反",
+        );
     }
 
     /// HalfClosedRemote 状態のストリームへの DATA による内部リセットで
@@ -1776,6 +1825,7 @@ mod reset_stream {
             &mut server,
             1,
             ErrorCode::StreamClosed,
+            3,
             "HalfClosedRemote 状態への DATA",
         );
     }
@@ -1789,19 +1839,7 @@ mod reset_stream {
     #[test]
     fn test_stream_error_reset_delayed_data_discarded() {
         let mut server = setup_server();
-
-        // Content-Length: 5 のリクエストヘッダーを受信する
-        let headers = HeadersFrame::new(
-            NonZeroStreamId::from_static(1),
-            encode_request_headers_with_content_length("5"),
-        )
-        .with_end_headers(true);
-        server
-            .feed(&encode_frame(&Frame::Headers(headers)))
-            .expect("feed should succeed");
-        server.process().expect("process should succeed");
-        // ヘッダー受信由来の既存イベントを消費する
-        while server.poll_event().is_some() {}
+        receive_content_length_request(&mut server);
 
         // Content-Length 5 を超える DATA でリセットを発生させる
         let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
@@ -1842,6 +1880,434 @@ mod reset_stream {
         assert!(
             server.poll_output().is_none(),
             "リセット済みストリームへの遅延 DATA で RST_STREAM が再出力されてはならない"
+        );
+    }
+
+    /// 攻撃シナリオの経路遷移を検証する
+    ///
+    /// 1 回目の違反 DATA (Content-Length 超過) で `Event::StreamReset` の
+    /// `connection_window_consumed` が通知され、その後同一ストリーム ID への
+    /// 遅延 DATA で `Event::DataDiscarded` が通知される。
+    ///
+    /// ストリームエラーでリセットされたストリームは `streams` から削除されるため、
+    /// 遅延 DATA は「`streams` マップに存在しない場合」の `DataDiscarded` 経路に入る。
+    #[test]
+    fn test_stream_error_then_delayed_data_reports_discarded() {
+        let mut server = setup_server();
+        receive_content_length_request(&mut server);
+
+        // 1 回目の違反 DATA (Content-Length 超過、6 バイト) で内部リセットされる
+        // (StreamReset 通知・RST_STREAM 出力・DataReceived 非生成を一括検証する)
+        let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![0u8; 6],
+        )));
+        server.feed(&data_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+        assert_internal_reset(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            6,
+            "Content-Length 超過",
+        );
+
+        // 同一ストリーム ID への遅延 DATA (3 バイト) は破棄され、DataDiscarded が通知される
+        let delayed_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![9, 9, 9],
+        )));
+        server.feed(&delayed_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        let events = collect_events(&mut server);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataDiscarded {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    connection_window_consumed: 3,
+                } if id.as_u32() == 1
+            )),
+            "遅延 DATA 破棄で DataDiscarded が接続ウィンドウ消費量つきで通知されるべき"
+        );
+    }
+
+    /// 通常クローズ (END_STREAM 受信) 後にストリームが `streams` から削除され、
+    /// そのストリームへの遅延 DATA で `Event::DataDiscarded` が通知される
+    ///
+    /// クライアントが END_STREAM 付きリクエストを送信 (HalfClosedLocal) した後に
+    /// サーバーから END_STREAM 付きレスポンス HEADERS を受信するとストリームは
+    /// Closed 状態になり、`recv_headers` のクローズ処理で即座に `streams` から
+    /// 削除される。この削除済みストリームへの遅延 DATA は「`streams` マップに
+    /// 存在しない場合」の `DataDiscarded` 経路で破棄され、接続ウィンドウ消費量が
+    /// 通知される。
+    #[test]
+    fn test_data_discarded_after_normal_close() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), true)
+            .expect("start_stream should succeed");
+        // リクエスト送信由来のイベントと出力を消費する
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        // END_STREAM 付きレスポンス HEADERS を受信して Closed にする
+        let response = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_response_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(response)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+        while client.poll_event().is_some() {}
+
+        // Closed 状態のストリームへの遅延 DATA (4 バイト) は破棄される
+        let delayed_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![1, 2, 3, 4],
+        )));
+        client.feed(&delayed_bytes).expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        let events = collect_events(&mut client);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataDiscarded {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    connection_window_consumed: 4,
+                } if id.as_u32() == 1
+            )),
+            "クローズ済みストリームへの遅延 DATA で DataDiscarded が通知されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::DataReceived { .. })),
+            "クローズ済みストリームへの遅延 DATA は破棄されるべき"
+        );
+    }
+
+    /// エラー経路でマップ内に Closed 状態のストリームが残る場合、
+    /// そのストリームへの遅延 DATA で `Event::DataDiscarded` が通知される
+    ///
+    /// `recv_headers` は状態遷移を完了させてから (HalfClosedLocal + END_STREAM で
+    /// Closed に遷移) 情報レスポンス (1xx) の END_STREAM 違反を検出してエラーを返す
+    /// (RFC 9113 Section 8.1.1: malformed)。エラー経路では `streams` からの削除処理に
+    /// 到達しないため、Closed 状態のストリームがマップ内に残る。このストリームへの
+    /// 遅延 DATA は破棄され、`Event::DataDiscarded` で接続ウィンドウ消費量が通知される。
+    #[test]
+    fn test_data_discarded_on_closed_stream_in_map() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), true)
+            .expect("start_stream should succeed");
+        // リクエスト送信由来のイベントと出力を消費する
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        // END_STREAM 付き情報レスポンス (1xx) は malformed であり、
+        // 状態遷移 (HalfClosedLocal + END_STREAM → Closed) 後にエラーが返る
+        let response = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_informational_response_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(response)))
+            .expect("feed should succeed");
+        let result = client.process();
+        assert!(
+            result.is_err(),
+            "END_STREAM 付き情報レスポンスはエラーになるべき"
+        );
+        // エラー処理由来のイベントと出力を消費する
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        // Closed 状態のままマップに残ったストリームへの遅延 DATA (4 バイト) は破棄される
+        let delayed_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![1, 2, 3, 4],
+        )));
+        client.feed(&delayed_bytes).expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        let events = collect_events(&mut client);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataDiscarded {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    connection_window_consumed: 4,
+                } if id.as_u32() == 1
+            )),
+            "マップ内 Closed 状態ストリームへの遅延 DATA で DataDiscarded が通知されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "マップ内 Closed 状態ストリームへの遅延 DATA で StreamReset が再発してはならない"
+        );
+    }
+
+    /// 空 DATA の破棄では `Event::DataDiscarded` が生成されないこと
+    #[test]
+    fn test_empty_data_discarded_no_event() {
+        let mut server = setup_server();
+        receive_content_length_request(&mut server);
+
+        // Content-Length 超過でリセットする
+        let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![0u8; 6],
+        )));
+        server.feed(&data_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // クローズ済みストリームへの空 DATA は破棄されるが DataDiscarded は通知されない
+        let empty_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            Vec::new(),
+        )));
+        server.feed(&empty_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_no_event(
+            &mut server,
+            |e| matches!(e, Event::DataDiscarded { .. }),
+            "空 DATA の破棄で DataDiscarded が生成されてはならない",
+        );
+    }
+
+    /// パディング付き遅延 DATA の破棄で接続ウィンドウ消費量に
+    /// ペイロード全体 (Pad Length フィールド + データ + パディング) が計上されること
+    ///
+    /// RFC 9113 Section 6.1: フロー制御は DATA フレームのペイロード全体に適用され、
+    /// Pad Length フィールドとパディングを含む。破棄経路でも同じ計上量が
+    /// `Event::DataDiscarded` の `connection_window_consumed` で通知される。
+    #[test]
+    fn test_padded_data_discarded_counts_padding() {
+        let mut server = setup_server();
+        receive_content_length_request(&mut server);
+
+        // Content-Length 超過でリセットする
+        let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![0u8; 6],
+        )));
+        server.feed(&data_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // パディング付き遅延 DATA (データ 2 バイト + パディング 5 バイト) は破棄される。
+        // 接続ウィンドウ消費量は Pad Length フィールド (1) + データ (2) + パディング (5) = 8
+        let padded_bytes = encode_frame(&Frame::Data(
+            DataFrame::new(NonZeroStreamId::from_static(1), vec![1, 2]).with_padding(5),
+        ));
+        server.feed(&padded_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        let events = collect_events(&mut server);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataDiscarded {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    connection_window_consumed: 8,
+                } if id.as_u32() == 1
+            )),
+            "パディング付き DATA の破棄で Pad Length 込みの接続ウィンドウ消費量が通知されるべき"
+        );
+    }
+
+    /// パディング付き違反 DATA の内部リセットで `Event::StreamReset` の
+    /// `connection_window_consumed` にペイロード全体 (Pad Length フィールド +
+    /// データ + パディング) が計上されること
+    ///
+    /// RFC 9113 Section 6.1: フロー制御は DATA フレームのペイロード全体に適用される。
+    /// ストリームエラー経路の `Event::StreamReset` も `DataDiscarded` と同じ
+    /// `flow_control_size` で計上する。
+    #[test]
+    fn test_padded_violation_data_counts_padding_in_stream_reset() {
+        let mut server = setup_server();
+        receive_content_length_request(&mut server);
+
+        // Content-Length 5 を超過するパディング付き違反 DATA。
+        // データ 6 バイト (Content-Length 超過、RFC 9113 Section 8.1.1) + パディング 5 バイト。
+        // ペイロード全体は Pad Length フィールド (1) + データ (6) + パディング (5) = 12
+        let padded_bytes = encode_frame(&Frame::Data(
+            DataFrame::new(NonZeroStreamId::from_static(1), vec![0u8; 6]).with_padding(5),
+        ));
+        server.feed(&padded_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_internal_reset(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            12,
+            "パディング付き Content-Length 超過",
+        );
+    }
+
+    /// データ 0 + パディングのみの遅延 DATA の破棄で `Event::DataDiscarded` が通知されること
+    ///
+    /// 破棄判定は「data が空か」ではなく「`flow_control_size` が 0 か」で行う
+    /// (RFC 9113 Section 6.1: フロー制御は Pad Length フィールドとパディングも含む)。
+    /// パディングのみ DATA は `flow_control_size = 1 + 0 + 5 = 6` で通知される。
+    #[test]
+    fn test_padding_only_data_discarded_notifies_consumed() {
+        let mut server = setup_server();
+        receive_content_length_request(&mut server);
+
+        // Content-Length 超過でリセットする
+        let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![0u8; 6],
+        )));
+        server.feed(&data_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // パディングのみ (データ 0 + パディング 5) の遅延 DATA は破棄され、
+        // 接続ウィンドウ消費量 6 (Pad Length フィールド 1 + パディング 5) が通知される
+        let padding_only_bytes = encode_frame(&Frame::Data(
+            DataFrame::new(NonZeroStreamId::from_static(1), Vec::new()).with_padding(5),
+        ));
+        server
+            .feed(&padding_only_bytes)
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        let events = collect_events(&mut server);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataDiscarded {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    connection_window_consumed: 6,
+                } if id.as_u32() == 1
+            )),
+            "パディングのみ DATA の破棄で接続ウィンドウ消費量が通知されるべき"
+        );
+    }
+
+    /// 接続ウィンドウを補充しない場合、破棄 DATA の消費で接続ウィンドウが枯渇し
+    /// `FLOW_CONTROL_ERROR` の接続エラーになること (動機の再現)
+    #[test]
+    fn test_connection_window_exhaustion_without_replenishment() {
+        let mut server = setup_server();
+        receive_content_length_request(&mut server);
+
+        // 接続ウィンドウ (デフォルト 65535) を枯渇させるため、大きな DATA で違反を繰り返す。
+        // 1 回目は Content-Length 超過で StreamReset、2 回目以降は遅延 DATA 破棄。
+        // どちらの経路も接続ウィンドウを消費する (RFC 9113 Section 6.9 の MUST)。
+        // 16384 バイト × 4 回 = 65536 > 65535 のため 4 回目で枯渇し、
+        // ループ回数 (5 回) は 4 回目までの累積が必ず上限を超える根拠に依存している。
+        let payload_size = 16_384usize;
+        let mut exhausted = false;
+        let mut iteration = 0;
+        for _ in 0..5 {
+            iteration += 1;
+            let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
+                NonZeroStreamId::from_static(1),
+                vec![0u8; payload_size],
+            )));
+            server.feed(&data_bytes).expect("feed should succeed");
+            if let Err(e) = server.process() {
+                // 接続ウィンドウ枯渇で FLOW_CONTROL_ERROR の接続エラー
+                assert!(e.is_connection_error(), "枯渇時は接続エラーになるべき");
+                assert_eq!(e.error_code(), Some(ErrorCode::FlowControlError));
+                exhausted = true;
+                break;
+            }
+            while server.poll_event().is_some() {}
+            let _ = server.poll_output();
+        }
+        assert!(
+            exhausted,
+            "接続ウィンドウを補充しないと FLOW_CONTROL_ERROR で遮断されるべき"
+        );
+        assert_eq!(
+            iteration, 4,
+            "16384 バイト × 4 回で接続ウィンドウ (65535) を超過するため 4 回目で枯渇するべき"
+        );
+    }
+
+    /// 接続ウィンドウを補充した場合、破棄 DATA の消費を補充して
+    /// 正当なストリームの DATA 受信が継続できること (修正の効果)
+    #[test]
+    fn test_connection_window_replenishment_keeps_connection() {
+        let mut server = setup_server();
+        receive_content_length_request(&mut server);
+
+        // 違反 DATA と補充を繰り返しても接続が維持されること
+        let payload_size = 16_384usize;
+        for _ in 0..5 {
+            let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
+                NonZeroStreamId::from_static(1),
+                vec![0u8; payload_size],
+            )));
+            server.feed(&data_bytes).expect("feed should succeed");
+            server.process().expect("process should succeed");
+
+            // 通知された接続ウィンドウ消費量を補充する
+            let consumed = collect_events(&mut server)
+                .iter()
+                .filter_map(|e| match e {
+                    Event::StreamReset {
+                        connection_window_consumed,
+                        ..
+                    }
+                    | Event::DataDiscarded {
+                        connection_window_consumed,
+                        ..
+                    } => Some(*connection_window_consumed),
+                    _ => None,
+                })
+                .sum::<usize>();
+            assert!(
+                consumed > 0,
+                "破棄 DATA の接続ウィンドウ消費量が通知されるべき"
+            );
+            let _ = server.poll_output();
+
+            server
+                .send_window_update(shiguredo_http2::StreamId::Connection, consumed as u32)
+                .expect("send_window_update should succeed");
+            while server.poll_event().is_some() {}
+            let _ = server.poll_output();
+        }
+
+        // 接続が維持され、正当なストリーム (ID 3) の DATA 受信が継続できる
+        open_stream_on_server(&mut server, 3);
+        let ok_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(3),
+            vec![1, 2, 3],
+        )));
+        server.feed(&ok_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert!(
+            find_event(&mut server, |e| matches!(
+                e,
+                Event::DataReceived {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    ..
+                } if id.as_u32() == 3
+            )),
+            "補充後は正当なストリーム (ID 3) の DATA が受信できるべき"
         );
     }
 }

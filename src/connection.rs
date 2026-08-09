@@ -820,6 +820,9 @@ impl Connection {
 
     /// ストリームをリセットする
     ///
+    /// 生成される `Event::StreamReset` の `connection_window_consumed` は常に 0 であり、
+    /// 補充は不要である (非ゼロになるのは DATA 違反の内部処理経路のみ)。
+    ///
     /// # Errors
     ///
     /// - `StreamId::Connection` (stream_id = 0) → [`ErrorKind::ConnectionError`] (PROTOCOL_ERROR)
@@ -830,6 +833,20 @@ impl Connection {
     /// 既存挙動どおり RST_STREAM が送信される (closed_streams の上限超過で追い出された
     /// ストリームのうち last_recv_stream_id を超えるものは idle と判定される既知の限界あり)。
     pub fn reset_stream(&mut self, stream_id: StreamId, error_code: ErrorCode) -> Result<()> {
+        // 公開 API の呼び出し側は接続ウィンドウ消費バイト数を知らないため 0 を渡す
+        self.reset_stream_internal(stream_id, error_code, 0)
+    }
+
+    /// ストリームをリセットする (接続ウィンドウ消費バイト数付き)
+    ///
+    /// `connection_window_consumed` はストリームエラーで破棄された DATA の
+    /// 接続フロー制御ウィンドウ計上量。`handle_data` の違反処理経路から渡される。
+    fn reset_stream_internal(
+        &mut self,
+        stream_id: StreamId,
+        error_code: ErrorCode,
+        connection_window_consumed: usize,
+    ) -> Result<()> {
         // RFC 9113 Section 6.4: RST_STREAM は非ゼロストリーム ID に関連付けなければならない
         let nz_stream_id = stream_id.non_zero().ok_or_else(|| {
             Error::connection_error(
@@ -877,6 +894,7 @@ impl Connection {
             self.events.push_back(Event::StreamReset {
                 stream_id,
                 error_code,
+                connection_window_consumed,
             });
             self.closed_streams.insert(sid);
             self.streams.remove(&sid);
@@ -1039,9 +1057,26 @@ impl Connection {
         self.flow_control.consume_recv(flow_control_size)?;
 
         // RFC 9113 Section 5.1: Closed 状態のストリームへの DATA は最小処理して破棄する。
+        // (Section 6.1 の「open / half-closed (local) にないストリームへの DATA は
+        // STREAM_CLOSED のストリームエラーで応答 (MUST)」は RST_STREAM 未送信の
+        // 両 END_STREAM クローズにも形式的には及ぶが、本実装は closed 状態への
+        // 最小処理破棄 (Section 5.1) を優先する実装判断 (0101 で確立した設計)。
         // 接続フロー制御ウィンドウへの計上は上記で完了済み。
-        // check_not_idle_stream を通過してマップにないストリームは暗黙的にクローズ済み。
+        // 破棄された DATA の接続ウィンドウ消費量は Event::DataDiscarded で通知し、
+        // アプリが補充できるようにする (空 DATA は消費 0 のため通知しない)。
+        // Closed 判定は「マップに存在しない場合」に加えて「マップ内で Closed 状態の場合」を
+        // 含む。後者は process_headers のエラー経路 (状態機械 recv_headers による
+        // HalfClosedLocal + END_STREAM → Closed 遷移の後に 1xx + END_STREAM 等の malformed を
+        // 検出して Err を返し、streams からの削除処理に到達しないケース) で発生し、
+        // このストリームへの遅延 DATA も同様に破棄する (RST_STREAM 送信・Event::StreamReset
+        // 再発を防ぐ)。
         if self.is_stream_closed(sid) || !self.streams.contains_key(&sid) {
+            if flow_control_size > 0 {
+                self.events.push_back(Event::DataDiscarded {
+                    stream_id: StreamId::from(frame.stream_id),
+                    connection_window_consumed: flow_control_size,
+                });
+            }
             return Ok(());
         }
 
@@ -1059,7 +1094,11 @@ impl Connection {
                 .recv_data(frame.end_stream)
                 .is_err()
             {
-                self.reset_stream(StreamId::from(frame.stream_id), ErrorCode::StreamClosed)?;
+                self.reset_stream_internal(
+                    StreamId::from(frame.stream_id),
+                    ErrorCode::StreamClosed,
+                    flow_control_size,
+                )?;
                 return Ok(());
             }
 
@@ -1070,7 +1109,11 @@ impl Connection {
                 .consume_recv(flow_control_size)
                 .is_err()
             {
-                self.reset_stream(StreamId::from(frame.stream_id), ErrorCode::FlowControlError)?;
+                self.reset_stream_internal(
+                    StreamId::from(frame.stream_id),
+                    ErrorCode::FlowControlError,
+                    flow_control_size,
+                )?;
                 return Ok(());
             }
 
@@ -1080,7 +1123,11 @@ impl Connection {
             // malformed は PROTOCOL_ERROR のストリームエラーで処理しなければ
             // ならない (MUST)。RST_STREAM を送信して接続を維持する。
             if stream.no_content() {
-                self.reset_stream(StreamId::from(frame.stream_id), ErrorCode::ProtocolError)?;
+                self.reset_stream_internal(
+                    StreamId::from(frame.stream_id),
+                    ErrorCode::ProtocolError,
+                    flow_control_size,
+                )?;
                 return Ok(());
             }
 
@@ -1094,12 +1141,20 @@ impl Connection {
                 let received = stream.received_content_length();
                 // 受信データが Content-Length を超過
                 if received > expected {
-                    self.reset_stream(StreamId::from(frame.stream_id), ErrorCode::ProtocolError)?;
+                    self.reset_stream_internal(
+                        StreamId::from(frame.stream_id),
+                        ErrorCode::ProtocolError,
+                        flow_control_size,
+                    )?;
                     return Ok(());
                 }
                 // END_STREAM 時に Content-Length と一致しない
                 if frame.end_stream && received != expected {
-                    self.reset_stream(StreamId::from(frame.stream_id), ErrorCode::ProtocolError)?;
+                    self.reset_stream_internal(
+                        StreamId::from(frame.stream_id),
+                        ErrorCode::ProtocolError,
+                        flow_control_size,
+                    )?;
                     return Ok(());
                 }
             }
@@ -1136,6 +1191,8 @@ impl Connection {
                 self.events.push_back(Event::StreamReset {
                     stream_id: StreamId::from(frame.stream_id),
                     error_code: ErrorCode::from_u32(frame.error_code),
+                    // RST_STREAM 受信自体は DATA ではないため接続ウィンドウ消費は 0
+                    connection_window_consumed: 0,
                 });
                 self.closed_streams.insert(sid);
                 self.streams.remove(&sid);

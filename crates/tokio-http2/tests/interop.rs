@@ -636,6 +636,7 @@ async fn test_http2_client_nghttp2_server_rst_stream() {
         if let Http2Event::StreamReset {
             stream_id: reset_stream_id,
             error_code,
+            ..
         } = event
         {
             assert_eq!(reset_stream_id, stream_id);
@@ -2422,6 +2423,7 @@ async fn test_http2_client_nghttp2_server_rst_stream_refused() {
         if let Http2Event::StreamReset {
             stream_id: reset_stream_id,
             error_code,
+            ..
         } = event
         {
             assert_eq!(reset_stream_id, stream_id);
@@ -2690,6 +2692,7 @@ async fn test_nghttp2_client_rst_stream_to_http2_server() {
                 Ok(Ok(Http2Event::StreamReset {
                     stream_id: _,
                     error_code,
+                    ..
                 })) => {
                     // クライアントからの RST_STREAM を受信
                     assert_eq!(error_code, Http2ErrorCode::Cancel);
@@ -5033,6 +5036,7 @@ async fn test_http2_client_nghttp2_server_rst_one_stream_continue_other() {
             Http2Event::StreamReset {
                 stream_id: rst_stream_id,
                 error_code,
+                ..
             } => {
                 if rst_stream_id == reset_stream_id {
                     assert_eq!(error_code, Http2ErrorCode::Cancel);
@@ -8115,6 +8119,7 @@ async fn test_http2_client_nghttp2_server_rst_stream_internal_error() {
         if let Http2Event::StreamReset {
             stream_id: reset_stream_id,
             error_code,
+            ..
         } = event
         {
             assert_eq!(reset_stream_id, stream_id);

@@ -8,6 +8,8 @@
 
 ## develop
 
+- [CHANGE] `Event::StreamReset` に接続ウィンドウ消費バイト数を追加し、`Event::DataDiscarded` を新設する。ストリームエラー / 遅延 DATA 破棄で消費された接続ウィンドウのバイト数をアプリが認識して補充できるようにする (RFC 9113 Section 6.9)
+  - @voluntas
 - [CHANGE] `shiguredo_nghttp2::Session` のコンストラクタ戻り値を `Result<Pin<Box<Session>>>` に変更し、`nghttp2_session_set_user_data` への登録をコンストラクタ内の 1 回に集約する。`set_user_data` を private 化し、`recv` / `send` の冒頭の重複呼び出しを削除する (move 後 dangling ポインタのリスク低減)
   - @voluntas
 - [CHANGE] `varint::decode` が非最小エンコーディングを拒否していた独自方針を取りやめ、RFC 9297 Section 1.1 / RFC 9000 Section 16 に従って受け入れるように変更する。`encode` 側は引き続き最小バイト数でエンコードする
