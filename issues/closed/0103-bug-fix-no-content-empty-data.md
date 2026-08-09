@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-08-08
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-08-09
 - Branch: feature/fix-no-content-empty-data
 - Polished: 2026-08-08
 
@@ -79,3 +79,18 @@ no-content レスポンスへの DATA チェックにデータ長の条件を追
 ## 残課題 (本 issue のスコープ外)
 
 - CONNECT 2xx (tunnel 確立) レスポンスは RFC 9110 Section 6.4.1 の no-content に含まれるが、現行実装では `no_content` が設定されず (204/304/HEAD のみ)、Content-Length 付きの CONNECT 2xx で tunnel データが超過すると PROTOCOL_ERROR でリセットされる。RFC 9110 Section 8.6 により CL 付き CONNECT 2xx は送信側 MUST NOT 違反であり実影響は小さいが、本 issue の対象外として明記する (別途対応)
+
+## 解決方法
+
+1. `src/connection.rs` の `Connection::handle_data` の no-content チェックにデータ長の条件を追加した: `if stream.no_content() && !frame.data.is_empty()`。空 DATA (0 バイト) とパディングのみ DATA (デコード後 data が空) を許容し、内容を持つ DATA (1 バイト以上) のみ RST_STREAM (PROTOCOL_ERROR) + `Event::StreamReset` で処理する
+2. `src/connection.rs` の `handle_data` 内の Content-Length チェックに no-content のスキップを追加した (`!stream.no_content()` ガード)。ヘッダー処理側 (`src/connection/headers.rs`) の対称の実装に揃え、RFC 9113 Section 8.1.1 の「MAY have a non-zero content-length header field」を根拠とするコメントを追記した
+3. `src/connection.rs` の no-content チェックのコメントを修正した (「(空 DATA を含む) は malformed として扱う」→ 空 DATA は許容する内容。RFC 9113 Section 6.1 のゼロ長 DATA + END_STREAM の記述と、原文「STREAM frame」が DATA frame の誤記であること (RFC Editor errata EID 7013)、END_STREAM なしのゼロ長 DATA も禁止規定がないため許容 (permissive) であることを明記)
+4. `tests/test_connection.rs` に単体テストを追加した:
+   - `test_no_content_empty_data_with_end_stream_accepted`: 204 への空 DATA + END_STREAM が許容され、`Event::DataReceived` + `Event::StreamClosed` が通知されること (イベント集合はちょうど 2 件)
+   - `test_no_content_empty_data_without_end_stream_accepted`: 204 への空 DATA (END_STREAM なし) が許容され、`Event::DataReceived` のみ通知されること (イベント集合はちょうど 1 件)
+   - `test_no_content_head_with_content_length_empty_data_accepted`: HEAD + Content-Length: 5 への空 DATA + END_STREAM が許容され、Content-Length チェックでリセットされないこと (イベント集合はちょうど 1 件)
+   - `test_no_content_padding_only_data_accepted`: 204 へのパディングのみ DATA (データ長 0 + パディング 5) が許容されること
+   - `test_no_content_padding_only_data_with_end_stream_closes_stream`: 204 へのパディングのみ DATA + END_STREAM が許容され、`Event::StreamClosed` が通知されること (イベント集合はちょうど 2 件)
+   - ヘルパー: `head_request_headers` (HEAD リクエストヘッダー) / `encode_response_headers_with_content_length` (Content-Length 付きレスポンス)
+5. `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
+6. `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通ることを確認した

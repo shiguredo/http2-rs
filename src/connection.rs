@@ -1118,11 +1118,19 @@ impl Connection {
             }
 
             // RFC 9113 Section 8.1.1: コンテンツを持たないレスポンス (204/304/HEAD) への
-            // DATA フレーム (空 DATA を含む) は malformed として扱う
-            // (no-content の定義は RFC 9110 Section 6.4.1)。
+            // 内容を持つ DATA フレームは malformed として扱う
+            // (no-content の定義は RFC 9110 Section 6.4.1。204 は
+            // 「cannot contain content or trailers」であり RFC 9110 Section 15.3.5)。
+            // 空 DATA (0 バイト) はコンテンツを形成せず許容する。
+            // ゼロ長 DATA + END_STREAM はストリーム終端の合法的な手段であり
+            // (RFC 9113 Section 6.1。原文は「STREAM frame」とあるが DATA frame の誤記、
+            // RFC Editor errata EID 7013 で確認済み)、END_STREAM なしのゼロ長 DATA も
+            // RFC 9113 に禁止規定がないため許容する (permissive)。
+            // パディングのみの DATA はフレームデコード後の data が空になり許容される
+            // (フロー制御の計上はパディング込みで行われる)。
             // malformed は PROTOCOL_ERROR のストリームエラーで処理しなければ
             // ならない (MUST)。RST_STREAM を送信して接続を維持する。
-            if stream.no_content() {
+            if stream.no_content() && !frame.data.is_empty() {
                 self.reset_stream_internal(
                     StreamId::from(frame.stream_id),
                     ErrorCode::ProtocolError,
@@ -1134,10 +1142,16 @@ impl Connection {
             // RFC 9113 Section 8.1.1: Content-Length とボディサイズの一貫性チェック。
             // 不一致は malformed であり、PROTOCOL_ERROR のストリームエラーで
             // 処理しなければならない (MUST)。RST_STREAM を送信して接続を維持する。
+            // コンテンツを持たないレスポンス (204/304/HEAD) は非ゼロ Content-Length を
+            // 持つことが合法である (「MAY have a non-zero content-length header
+            // field」) ため、no-content の場合はチェックをスキップする
+            // (ヘッダー処理側の対称の実装に揃える)。
             let data_len = frame.data.len() as u64;
             stream.add_received_content_length(data_len);
 
-            if let Some(expected) = stream.expected_content_length() {
+            if !stream.no_content()
+                && let Some(expected) = stream.expected_content_length()
+            {
                 let received = stream.received_content_length();
                 // 受信データが Content-Length を超過
                 if received > expected {

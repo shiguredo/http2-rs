@@ -812,6 +812,31 @@ mod reset_stream {
         buf
     }
 
+    /// HEAD リクエストヘッダーを生成する
+    ///
+    /// HEAD リクエストへのレスポンスはコンテンツを持たない (RFC 9110 Section 9.3.2)。
+    /// `request_headers()` の要素 0 が `:method` であることを前提とする。
+    fn head_request_headers() -> Vec<HeaderField> {
+        let mut headers = request_headers();
+        headers[0] = HeaderField::new(":method", "HEAD").expect("valid header field");
+        headers
+    }
+
+    /// Content-Length 付きレスポンスヘッダーを HPACK エンコードする
+    ///
+    /// コンテンツを持たないレスポンスは非ゼロ Content-Length を持つことが合法である
+    /// (RFC 9113 Section 8.1.1 の「MAY have a non-zero content-length header field」)。
+    fn encode_response_headers_with_content_length(status: &str, content_length: &str) -> Vec<u8> {
+        let mut encoder = HpackEncoder::new(4096);
+        let headers = vec![
+            HeaderField::new(":status", status).expect("valid header field"),
+            HeaderField::new("content-length", content_length).expect("valid header field"),
+        ];
+        let mut buf = Vec::new();
+        encoder.encode(&mut buf, &headers);
+        buf
+    }
+
     /// クライアント開始ストリーム ID を生成する
     fn client_stream_id(id: u32) -> shiguredo_http2::StreamId {
         shiguredo_http2::StreamId::Client(shiguredo_http2::ClientStreamId::from_static(id))
@@ -1786,6 +1811,344 @@ mod reset_stream {
             ErrorCode::ProtocolError,
             3,
             "no-content 違反",
+        );
+    }
+
+    /// no-content レスポンス (204) への空 DATA (END_STREAM 付き) が許容され、
+    /// `Event::DataReceived` が通知されること
+    ///
+    /// ストリームは Closed に遷移し `Event::StreamClosed` も通知される
+    /// (END_STREAM 付きリクエスト送信で HalfClosedLocal → 空 DATA + END_STREAM 受信で Closed)。
+    ///
+    /// RFC 9113 Section 6.1: ゼロ長 DATA + END_STREAM はストリーム終端の合法的な手段。
+    /// RFC 9110 Section 6.4.1: no-content (204) はコンテンツの不在であり、
+    /// 0 バイト DATA はコンテンツを形成しない。
+    #[test]
+    fn test_no_content_empty_data_with_end_stream_accepted() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), true)
+            .expect("start_stream should succeed");
+        // リクエスト送信由来のイベントと出力を消費する
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        // :status 204 のレスポンスヘッダーを受信する
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_no_content_response_headers(),
+        )
+        .with_end_headers(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+        while client.poll_event().is_some() {}
+
+        // no-content レスポンスへの空 DATA + END_STREAM は許容される
+        let data_frame =
+            DataFrame::new(NonZeroStreamId::from_static(1), Vec::new()).with_end_stream(true);
+        let data_bytes = encode_frame(&Frame::Data(data_frame));
+        client.feed(&data_bytes).expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        let events = collect_events(&mut client);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataReceived {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    data,
+                    end_stream: true,
+                } if id.as_u32() == 1 && data.is_empty()
+            )),
+            "no-content レスポンスへの空 DATA (END_STREAM 付き) は DataReceived として通知されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "no-content レスポンスへの空 DATA で StreamReset が push されてはならない"
+        );
+        // ゼロ長 DATA + END_STREAM はストリーム終端の合法的な手段であり (RFC 9113 Section 6.1)、
+        // ストリームは Closed に遷移して StreamClosed が通知される
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::StreamClosed {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                } if id.as_u32() == 1
+            )),
+            "no-content レスポンスへの空 DATA + END_STREAM で StreamClosed が通知されるべき"
+        );
+        // イベント集合は DataReceived + StreamClosed のちょうど 2 件である
+        assert_eq!(
+            events.len(),
+            2,
+            "no-content レスポンスへの空 DATA + END_STREAM で通知されるのは DataReceived と StreamClosed のみであるべき"
+        );
+    }
+
+    /// no-content レスポンス (204) への空 DATA (END_STREAM なし) が許容され、
+    /// `Event::DataReceived` のみ通知されること
+    #[test]
+    fn test_no_content_empty_data_without_end_stream_accepted() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+        // リクエスト送信由来のイベントと出力を消費する
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        // :status 204 のレスポンスヘッダーを受信する
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_no_content_response_headers(),
+        )
+        .with_end_headers(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+        while client.poll_event().is_some() {}
+
+        // no-content レスポンスへの空 DATA (END_STREAM なし) は許容される
+        let data_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            Vec::new(),
+        )));
+        client.feed(&data_bytes).expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        let events = collect_events(&mut client);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataReceived {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    data,
+                    end_stream: false,
+                } if id.as_u32() == 1 && data.is_empty()
+            )),
+            "no-content レスポンスへの空 DATA (END_STREAM なし) は DataReceived として通知されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "no-content レスポンスへの空 DATA で StreamReset が push されてはならない"
+        );
+        // イベント集合は DataReceived のみである (ストリームは Open のまま)
+        assert_eq!(
+            events.len(),
+            1,
+            "no-content レスポンスへの空 DATA (END_STREAM なし) で通知されるのは DataReceived のみであるべき"
+        );
+    }
+
+    /// 非ゼロ Content-Length を持つ no-content レスポンス (HEAD + `Content-Length: N`) への
+    /// 空 DATA + END_STREAM が許容され、Content-Length チェックでリセットされないこと
+    ///
+    /// RFC 9113 Section 8.1.1: コンテンツを持たないレスポンスは非ゼロ Content-Length を
+    /// 持つことが合法 (「MAY have a non-zero content-length header field」)。
+    /// HEAD レスポンスはコンテンツを持たない (RFC 9110 Section 6.4.1 / Section 9.3.2)。
+    #[test]
+    fn test_no_content_head_with_content_length_empty_data_accepted() {
+        let mut client = setup_client();
+        client
+            .start_stream(head_request_headers(), false)
+            .expect("start_stream should succeed");
+        // リクエスト送信由来のイベントと出力を消費する
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        // HEAD リクエストへの :status 200 + Content-Length: 5 のレスポンスヘッダーを受信する
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_response_headers_with_content_length("200", "5"),
+        )
+        .with_end_headers(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+        while client.poll_event().is_some() {}
+
+        // 空 DATA + END_STREAM は許容され、Content-Length 不一致でリセットされない
+        let data_frame =
+            DataFrame::new(NonZeroStreamId::from_static(1), Vec::new()).with_end_stream(true);
+        let data_bytes = encode_frame(&Frame::Data(data_frame));
+        client.feed(&data_bytes).expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        let events = collect_events(&mut client);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataReceived {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    data,
+                    end_stream: true,
+                } if id.as_u32() == 1 && data.is_empty()
+            )),
+            "HEAD + Content-Length: N への空 DATA (END_STREAM 付き) は DataReceived として通知されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "HEAD + Content-Length: N への空 DATA で StreamReset が push されてはならない"
+        );
+        // イベント集合は DataReceived のみである
+        // (リクエストが END_STREAM なしのため、空 DATA + END_STREAM 受信では
+        // HalfClosedRemote に遷移し StreamClosed は通知されない)
+        assert_eq!(
+            events.len(),
+            1,
+            "HEAD + Content-Length: N への空 DATA で通知されるのは DataReceived のみであるべき"
+        );
+    }
+
+    /// no-content レスポンス (204) へのパディングのみの DATA (データ長 0 + パディング) が
+    /// 許容されること
+    ///
+    /// フレームデコード後の `frame.data` が空になるため、no-content チェックは
+    /// コンテンツの有無のみを判定する (RFC 9113 Section 6.1 のフロー制御は
+    /// パディングを含むペイロード全体に適用される)。
+    #[test]
+    fn test_no_content_padding_only_data_accepted() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+        // リクエスト送信由来のイベントと出力を消費する
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        // :status 204 のレスポンスヘッダーを受信する
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_no_content_response_headers(),
+        )
+        .with_end_headers(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+        while client.poll_event().is_some() {}
+
+        // パディングのみの DATA (データ長 0 + パディング 5) は許容される。
+        // フレームデコード後の data が空のため no-content チェックを通過する。
+        // なお、接続ウィンドウはペイロード全体 (1 + 5 = 6 バイト) 消費されるが、
+        // アプリは data.len() (0) しか知覚できず補充できない (0102 の残課題であり、
+        // 本テストではウィンドウ消費量の検証は対象外)。
+        let padding_only_bytes = encode_frame(&Frame::Data(
+            DataFrame::new(NonZeroStreamId::from_static(1), Vec::new()).with_padding(5),
+        ));
+        client
+            .feed(&padding_only_bytes)
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        let events = collect_events(&mut client);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataReceived {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    data,
+                    end_stream: false,
+                } if id.as_u32() == 1 && data.is_empty()
+            )),
+            "no-content レスポンスへのパディングのみ DATA は DataReceived として通知されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "no-content レスポンスへのパディングのみ DATA で StreamReset が push されてはならない"
+        );
+        // イベント集合は DataReceived のみである (ストリームは Open のまま)
+        assert_eq!(
+            events.len(),
+            1,
+            "no-content レスポンスへのパディングのみ DATA で通知されるのは DataReceived のみであるべき"
+        );
+    }
+
+    /// no-content レスポンス (204) へのパディングのみの DATA (データ長 0 + パディング) +
+    /// END_STREAM が許容され、ストリームが Closed に遷移して `Event::StreamClosed` が
+    /// 通知されること
+    ///
+    /// ゼロ長 DATA + END_STREAM はストリーム終端の合法的な手段であり
+    /// (RFC 9113 Section 6.1)、パディングはコンテンツを形成しない
+    /// (RFC 9110 Section 6.4.1)。
+    #[test]
+    fn test_no_content_padding_only_data_with_end_stream_closes_stream() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), true)
+            .expect("start_stream should succeed");
+        // リクエスト送信由来のイベントと出力を消費する
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        // :status 204 のレスポンスヘッダーを受信する
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_no_content_response_headers(),
+        )
+        .with_end_headers(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+        while client.poll_event().is_some() {}
+
+        // パディングのみ DATA (データ長 0 + パディング 5) + END_STREAM は許容される
+        let padding_only_bytes = encode_frame(&Frame::Data(
+            DataFrame::new(NonZeroStreamId::from_static(1), Vec::new())
+                .with_padding(5)
+                .with_end_stream(true),
+        ));
+        client
+            .feed(&padding_only_bytes)
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        let events = collect_events(&mut client);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataReceived {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    data,
+                    end_stream: true,
+                } if id.as_u32() == 1 && data.is_empty()
+            )),
+            "no-content レスポンスへのパディングのみ DATA + END_STREAM は DataReceived として通知されるべき"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::StreamClosed {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                } if id.as_u32() == 1
+            )),
+            "no-content レスポンスへのパディングのみ DATA + END_STREAM で StreamClosed が通知されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "no-content レスポンスへのパディングのみ DATA で StreamReset が push されてはならない"
+        );
+        // イベント集合は DataReceived + StreamClosed のちょうど 2 件である
+        assert_eq!(
+            events.len(),
+            2,
+            "no-content レスポンスへのパディングのみ DATA + END_STREAM で通知されるのは DataReceived と StreamClosed のみであるべき"
         );
     }
 
