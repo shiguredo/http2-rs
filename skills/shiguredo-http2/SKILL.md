@@ -520,7 +520,7 @@ RFC 9113 §7 の HTTP/2 エラーコードに加え、draft-ietf-webtrans-http2-
 - `LimitsError`: `Limits` 構築時のエラー (`WebtransportRequiresConnectProtocol` / `WebtransportRequiresWtEnabled`)
 - `StreamIdError`: ストリーム ID 構築エラー
 - `HeaderFieldError`: HPACK ヘッダー構築エラー (CRLF/NUL 拒否)
-- `WtError` / `WtErrorKind`: WebTransport 層のエラー (`Incomplete`, `BufferTooShort`, `InvalidInput`, `CapsuleDecode`, `InvalidStreamId`, `StreamStateError`, `FlowControlError`, `SessionStateError`, `SessionClosed`)
+- `WtError` / `WtErrorKind`: WebTransport 層のエラー (`Incomplete`, `BufferTooShort`, `InvalidInput`, `CapsuleDecode`, `InvalidStreamId`, `StreamStateError`, `FlowControlError`, `SessionStateError`)
 
 ## 対応仕様
 

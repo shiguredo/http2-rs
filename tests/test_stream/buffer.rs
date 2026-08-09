@@ -26,7 +26,8 @@ fn test_recv_buffer_push_pop() {
     assert!(buf.push(b"hello"));
     assert_eq!(buf.len(), 5);
 
-    let data = buf.take();
+    let len = buf.len();
+    let data = buf.pop(len);
     assert_eq!(data, b"hello");
     assert!(buf.is_empty());
 }
@@ -51,8 +52,10 @@ fn test_recv_buffer_push_uses_saturating_add() {
     // 空のバッファにデータ追加は成功する
     assert!(buf.push(&[0u8; 1]));
 
-    // バッファが空であれば再度 push も成功
-    let mut buf2 = RecvBuffer::new(usize::MAX);
-    buf2.take(); // 空にする
-    assert!(buf2.push(&[0u8; 1]));
+    // 全データ取り出し後に再度 push も成功する
+    let len = buf.len();
+    let data = buf.pop(len);
+    assert_eq!(data, &[0u8; 1]);
+    assert!(buf.is_empty());
+    assert!(buf.push(&[0u8; 1]));
 }

@@ -303,9 +303,3 @@ impl WtFlowControl {
         self.opened_streams_uni
     }
 }
-
-impl Default for WtFlowControl {
-    fn default() -> Self {
-        Self::new(1_048_576, 1_048_576, 100, 100, 100, 100)
-    }
-}
