@@ -370,7 +370,7 @@ impl CapsuleDecoder {
         // Type をデコード
         let (capsule_type, type_len) = match varint::decode(&self.buffer[offset..]) {
             Ok(v) => v,
-            Err(e) if e.kind == WtErrorKind::Incomplete => return Ok(None),
+            Err(e) if e.kind() == WtErrorKind::Incomplete => return Ok(None),
             Err(e) => return Err(e),
         };
         offset += type_len;
@@ -381,7 +381,7 @@ impl CapsuleDecoder {
         }
         let (payload_len, len_len) = match varint::decode(&self.buffer[offset..]) {
             Ok(v) => v,
-            Err(e) if e.kind == WtErrorKind::Incomplete => return Ok(None),
+            Err(e) if e.kind() == WtErrorKind::Incomplete => return Ok(None),
             Err(e) => return Err(e),
         };
         offset += len_len;

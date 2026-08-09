@@ -465,13 +465,13 @@ nghttp2 C ライブラリを使う系統。`shiguredo_nghttp2::Session` を中�
 
 ### `Error` (HTTP/2 接続エラー)
 
-`Error` は `ErrorKind` と `reason` / `location` / `backtrace` を内包する。`Error::connection_error(ErrorCode, reason)` / `Error::stream_error(ErrorCode, reason)` / `Error::hpack_error(reason)` / `Error::protocol_error(reason)` / `Error::frame_size_error(reason)` で作成する。`is_connection_error()` / `is_stream_error()` / `error_code()` で分類できる。
+`Error` は `ErrorKind` と `reason` / `location` / `backtrace` を内包する。フィールドは private のため、`kind()` / `reason()` / `location()` / `backtrace()` の getter 経由でのみ読み取れる。`Error::connection_error(ErrorCode, reason)` / `Error::stream_error(ErrorCode, reason)` / `Error::hpack_error(reason)` / `Error::protocol_error(reason)` / `Error::frame_size_error(reason)` で作成する。`is_connection_error()` / `is_stream_error()` / `error_code()` で分類できる。
 
 | `ErrorKind` バリアント | 説明 |
 |--------------------|------|
 | `ConnectionError(ErrorCode)` | 接続レベルエラー (GOAWAY 送信対象) |
 | `StreamError(ErrorCode)` | ストリームレベルエラー (RST_STREAM 送信対象) |
-| `HpackError` | HPACK デコードエラー (RFC 7541)。詳細は `Error::reason` |
+| `HpackError` | HPACK デコードエラー (RFC 7541)。詳細は `Error::reason()` で読み取る |
 
 `protocol_error` / `frame_size_error` はいずれも `ConnectionError` を構築するヘルパー。
 

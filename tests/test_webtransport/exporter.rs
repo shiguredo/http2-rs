@@ -57,7 +57,7 @@ fn test_serialize_rejects_label_over_255() {
     let err = serialize_exporter_context(0, &label, b"")
         .expect_err("256 バイトの label は拒否されるはず");
     assert_eq!(
-        err.kind,
+        err.kind(),
         WtErrorKind::InvalidInput,
         "エラー種別は InvalidInput であること、実際: {err}"
     );
@@ -70,7 +70,7 @@ fn test_serialize_rejects_context_over_255() {
     let err = serialize_exporter_context(0, b"", &context)
         .expect_err("256 バイトの context は拒否されるはず");
     assert_eq!(
-        err.kind,
+        err.kind(),
         WtErrorKind::InvalidInput,
         "エラー種別は InvalidInput であること、実際: {err}"
     );
