@@ -52,17 +52,6 @@ impl SendBuffer {
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
-
-    /// バッファの残り容量を取得する
-    #[must_use]
-    pub fn remaining(&self) -> usize {
-        self.max_size.saturating_sub(self.data.len())
-    }
-
-    /// バッファをクリアする
-    pub fn clear(&mut self) {
-        self.data.clear();
-    }
 }
 
 /// 受信バッファ
@@ -101,11 +90,6 @@ impl RecvBuffer {
         self.data.drain(..size).collect()
     }
 
-    /// バッファの全データを取り出す
-    pub fn take(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.data).into()
-    }
-
     /// バッファのデータ長を取得する
     #[must_use]
     pub fn len(&self) -> usize {
@@ -116,16 +100,5 @@ impl RecvBuffer {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
-    }
-
-    /// バッファの残り容量を取得する
-    #[must_use]
-    pub fn remaining(&self) -> usize {
-        self.max_size.saturating_sub(self.data.len())
-    }
-
-    /// バッファをクリアする
-    pub fn clear(&mut self) {
-        self.data.clear();
     }
 }

@@ -31,9 +31,6 @@ pub enum WtErrorKind {
 
     /// セッション状態エラー
     SessionStateError,
-
-    /// セッションがクローズされた
-    SessionClosed,
 }
 
 impl std::fmt::Display for WtErrorKind {
@@ -47,7 +44,6 @@ impl std::fmt::Display for WtErrorKind {
             Self::StreamStateError => write!(f, "StreamStateError"),
             Self::FlowControlError => write!(f, "FlowControlError"),
             Self::SessionStateError => write!(f, "SessionStateError"),
-            Self::SessionClosed => write!(f, "SessionClosed"),
         }
     }
 }
@@ -113,18 +109,6 @@ impl WtError {
         }
     }
 
-    /// 入力データ不足エラーを生成する
-    #[track_caller]
-    pub fn incomplete() -> Self {
-        Self::new(WtErrorKind::Incomplete)
-    }
-
-    /// バッファ不足エラーを生成する
-    #[track_caller]
-    pub fn buffer_too_short() -> Self {
-        Self::new(WtErrorKind::BufferTooShort)
-    }
-
     /// 無効な入力エラーを生成する
     #[track_caller]
     pub fn invalid_input<T: Into<String>>(reason: T) -> Self {
@@ -159,12 +143,6 @@ impl WtError {
     #[track_caller]
     pub fn session_state_error<T: Into<String>>(reason: T) -> Self {
         Self::with_reason(WtErrorKind::SessionStateError, reason)
-    }
-
-    /// セッションクローズエラーを生成する
-    #[track_caller]
-    pub fn session_closed<T: Into<String>>(reason: T) -> Self {
-        Self::with_reason(WtErrorKind::SessionClosed, reason)
     }
 }
 

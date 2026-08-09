@@ -94,6 +94,8 @@
   - @voluntas
 - [CHANGE] 未統合の公開 API `SendError` を削除する (`Connection::send_*` は従来どおり `Error` 型を返す)
   - @voluntas
+- [CHANGE] 未使用の公開 API を削除する (`WtError::incomplete` / `WtError::buffer_too_short` / `WtError::session_closed` / `WtErrorKind::SessionClosed` / `stream_id::stream_type` / `SendBuffer::clear` / `RecvBuffer::clear` / `SendBuffer::remaining` / `RecvBuffer::remaining` / `RecvBuffer::take` / `WtFlowControl` の `Default` 実装)。`RecvBuffer::take` を使用していたテストは `let len = buf.len(); buf.pop(len)` 形式に書き換える
+  - @voluntas
 - [ADD] `HeaderField::from_static` を追加し、リテラル定数の RFC 違反 (大文字 field-name、CR/LF 含む値、未知の疑似ヘッダー、不正な `:status` 値など) を `const fn` 経由でコンパイル時に検出可能にする (issue 0024)
   - @voluntas
 - [ADD] 構築時検査用の公開エラー型 (`HeaderFieldError`, `FrameError`, `StreamIdError`, `SettingError`, `LimitsError`, `DecodeError`) と補助型 (`Parity`, `WindowSize`, `MaxFrameSize`, `WindowIncrement`, `Weight`, `LastStreamId`, `ClientStreamId`, `ServerStreamId`, `NonZeroStreamId`) を追加する (issues 0024-0032)

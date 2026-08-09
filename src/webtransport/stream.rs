@@ -58,12 +58,6 @@ pub mod stream_id {
         let direction = if bidirectional { 0 } else { 2 };
         initiator | direction
     }
-
-    /// ストリームタイプを取得
-    #[must_use]
-    pub const fn stream_type(id: WtStreamId) -> u8 {
-        (id & 0x03) as u8
-    }
 }
 
 /// 送信側ストリーム状態 (RFC 9000 Section 3.1, Figure 2: States for Sending Parts of Streams)
