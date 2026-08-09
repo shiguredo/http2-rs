@@ -29,7 +29,6 @@ pub mod flow_control;
 pub mod frame;
 pub mod hpack;
 pub mod limits;
-pub mod send_error;
 pub mod settings;
 pub mod stream;
 pub mod stream_id;
@@ -51,7 +50,6 @@ pub use frame::{
 };
 pub use hpack::{Decoder as HpackDecoder, Encoder as HpackEncoder, HeaderField, HeaderFieldError};
 pub use limits::{Limits, LimitsBuilder, LimitsError};
-pub use send_error::SendError;
 pub use settings::{MaxFrameSize, Setting, SettingError, Settings, WindowSize};
 pub use stream::{Stream, StreamState};
 pub use stream_id::{ClientStreamId, NonZeroStreamId, Parity, ServerStreamId, StreamIdError};
