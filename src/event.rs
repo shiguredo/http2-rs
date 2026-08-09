@@ -59,6 +59,25 @@ pub enum Event {
         stream_id: StreamId,
         /// エラーコード
         error_code: ErrorCode,
+        /// 接続フロー制御ウィンドウに計上されたバイト数
+        ///
+        /// ストリームエラーで破棄された DATA の接続ウィンドウ消費量。
+        /// アプリはこの値ぶん `send_window_update` で補充する。
+        /// 累積補充により受信ウィンドウが 2^31-1 を超えると FLOW_CONTROL_ERROR の
+        /// 接続エラーになる (RFC 9113 Section 6.9.1) ため、補充量を適切に管理すること。
+        connection_window_consumed: usize,
+    },
+
+    /// クローズ済みストリームへの遅延 DATA が破棄された
+    DataDiscarded {
+        /// ストリーム ID
+        stream_id: StreamId,
+        /// 接続フロー制御ウィンドウに計上されたバイト数
+        ///
+        /// アプリはこの値ぶん `send_window_update` で補充する。
+        /// 累積補充により受信ウィンドウが 2^31-1 を超えると FLOW_CONTROL_ERROR の
+        /// 接続エラーになる (RFC 9113 Section 6.9.1) ため、補充量を適切に管理すること。
+        connection_window_consumed: usize,
     },
 
     /// ストリームがクローズされた
@@ -119,6 +138,7 @@ impl Event {
             | Self::DataReceived { stream_id, .. }
             | Self::TrailersReceived { stream_id, .. }
             | Self::StreamReset { stream_id, .. }
+            | Self::DataDiscarded { stream_id, .. }
             | Self::StreamClosed { stream_id }
             | Self::PriorityUpdateReceived { stream_id, .. } => Some(*stream_id),
             Self::WindowUpdateReceived { stream_id, .. }

@@ -511,6 +511,7 @@ async fn test_rst_stream() {
         if let Event::StreamReset {
             stream_id: reset_stream_id,
             error_code,
+            ..
         } = event
         {
             assert_eq!(reset_stream_id, stream_id);
@@ -2710,6 +2711,7 @@ async fn test_rst_stream_then_continue() {
         if let Event::StreamReset {
             stream_id,
             error_code,
+            ..
         } = event
         {
             assert_eq!(stream_id, stream1);
@@ -3226,6 +3228,7 @@ async fn test_send_data_after_reset() {
         if let Event::StreamReset {
             stream_id: sid,
             error_code,
+            ..
         } = event
         {
             assert_eq!(sid, stream_id);

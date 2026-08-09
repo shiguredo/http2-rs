@@ -71,12 +71,27 @@ fn stream_level_event() -> impl Strategy<Value = Event> {
                 }
             }),
         // StreamReset
-        (valid_stream_id(), error_code_strategy()).prop_map(|(stream_id, error_code)| {
-            Event::StreamReset {
-                stream_id,
-                error_code,
+        // connection_window_consumed は 0 もありうる (受信パス・公開 API は常に 0)。
+        // 上限 2^20 は接続ウィンドウ (最大 2^31-1) 内の十分大きな値としての試験用上限
+        (valid_stream_id(), error_code_strategy(), 0usize..=1_048_576).prop_map(
+            |(stream_id, error_code, connection_window_consumed)| {
+                Event::StreamReset {
+                    stream_id,
+                    error_code,
+                    connection_window_consumed,
+                }
             }
-        }),
+        ),
+        // DataDiscarded
+        // connection_window_consumed は 0 を生成しない (実装は flow_control_size > 0 の
+        // 場合のみ生成する。空 DATA の破棄ではイベント自体が生成されない)。
+        // 上限 2^20 は接続ウィンドウ (最大 2^31-1) 内の十分大きな値としての試験用上限
+        (valid_stream_id(), 1usize..=1_048_576).prop_map(
+            |(stream_id, connection_window_consumed)| Event::DataDiscarded {
+                stream_id,
+                connection_window_consumed,
+            },
+        ),
         // StreamClosed
         valid_stream_id().prop_map(|stream_id| { Event::StreamClosed { stream_id } }),
         // WindowUpdateReceived (stream_id != 0)
@@ -188,7 +203,10 @@ proptest! {
             Event::HeadersReceived { stream_id, headers: vec![], end_stream: false, protocol: None },
             Event::DataReceived { stream_id, data: data.clone(), end_stream: false },
             Event::TrailersReceived { stream_id, trailers: vec![] },
-            Event::StreamReset { stream_id, error_code: ErrorCode::NoError },
+            Event::StreamReset { stream_id, error_code: ErrorCode::NoError, connection_window_consumed: 0 },
+            // stream_id() の返却値の検証のみが目的の固定サンプルであり、
+            // connection_window_consumed は 0 でも実害はない (Strategy は 0 を生成しない)
+            Event::DataDiscarded { stream_id, connection_window_consumed: 0 },
             Event::StreamClosed { stream_id },
             Event::WindowUpdateReceived { stream_id, increment: 1000 },
             Event::PriorityUpdateReceived { stream_id, priority_field_value: vec![] },

@@ -85,7 +85,10 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 | `HeadersReceived` | `stream_id`, `headers: Vec<HeaderField>`, `end_stream: bool`, `protocol: Option<Vec<u8>>` (Extended CONNECT の `:protocol` 値、WebTransport では `Some(b"webtransport")`) |
 | `DataReceived` | `stream_id`, `data: Vec<u8>`, `end_stream: bool` |
 | `TrailersReceived` | `stream_id`, `trailers: Vec<HeaderField>` |
-| `StreamReset` | `stream_id`, `error_code: ErrorCode` |
+| `StreamReset` | `stream_id`, `error_code: ErrorCode`, `connection_window_consumed: usize` (ストリームエラーで破棄された DATA の接続ウィンドウ消費量。アプリはこの値ぶん `send_window_update` で補充する。受信パスと公開 API `reset_stream` は常に 0) |
+| `DataDiscarded` | `stream_id`, `connection_window_consumed: usize` (クローズ済みストリームへの遅延 DATA 破棄時の接続ウィンドウ消費量。アプリはこの値ぶん `send_window_update` で補充する。空 DATA では生成されない) |
+
+補充は RFC 9113 Section 6.9.1 の受信ウィンドウ上限 (2^31-1) を超えない範囲で行うこと (超過すると `FLOW_CONTROL_ERROR` の接続エラーになる)。
 | `StreamClosed` | `stream_id` |
 | `PingReceived` | `opaque_data: [u8; 8]`, `ack: bool` |
 | `GoawayReceived` | `last_stream_id`, `error_code`, `debug_data: Vec<u8>` |
