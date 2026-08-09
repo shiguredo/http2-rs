@@ -2,6 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-06-11
+- Completed: 2026-08-09
 - Polished: 2026-08-08
 - Model: deepseek-v4-pro
 - Branch: feature/change-remove-unused-code
@@ -203,3 +204,25 @@ pub const fn stream_type(id: WtStreamId) -> u8 {
 - `src/webtransport/flow_control.rs` — `WtFlowControl::Default` 実装
 - `tests/test_stream/buffer.rs` — `RecvBuffer::take` の唯一の使用箇所 (書き換え対象)
 - `skills/shiguredo-http2/SKILL.md` — `WtErrorKind` バリアント一覧の `SessionClosed` 除去対象
+
+## 解決方法
+
+### 削除対象 9 項目の削除
+
+`src/webtransport/error.rs` から `WtError::incomplete()` / `WtError::buffer_too_short()` / `WtError::session_closed()` ヘルパーと `WtErrorKind::SessionClosed` 列挙子 (Display arm 含む) を、`src/webtransport/stream.rs` から `stream_id::stream_type()` を、`src/stream/buffer.rs` から `SendBuffer::clear()` / `RecvBuffer::clear()` / `SendBuffer::remaining()` / `RecvBuffer::remaining()` / `RecvBuffer::take()` を、`src/webtransport/flow_control.rs` から `impl Default for WtFlowControl` を削除した。いずれも全コードベースで呼び出しが存在しないことを grep で確認済み。
+
+### テスト書き換え
+
+`tests/test_stream/buffer.rs` の `RecvBuffer::take()` 使用箇所を `let len = buf.len(); buf.pop(len)` 形式に書き換えた。`test_recv_buffer_push_pop` は全取り出し + 空化の検証を維持し、`test_recv_buffer_push_uses_saturating_add` は `push → pop で全取り出し → is_empty 確認 → 再度 push 成功` の経路を 1 つのバッファで検証する形に統合した。
+
+### SKILL.md と CHANGES.md
+
+`skills/shiguredo-http2/SKILL.md` の `WtErrorKind` バリアント一覧から `SessionClosed` を除去した (`WtEvent::SessionClosed` イベント variant は維持)。`CHANGES.md` の `## develop` に削除対象 11 個の API を列挙した `[CHANGE]` エントリを追加した。
+
+### 検証
+
+`cargo fmt --all -- --check` / `cargo build --workspace` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo check --manifest-path fuzz/Cargo.toml` のすべてが通過することを確認した。
+
+### 備考
+
+本 issue の本文では `WtFlowControl::default()` の値が `WtConfig::default()` の初期値を複製したものと記載しているが、実際の `WtConfig::default()` の値 (`initial_max_stream_data_* = 262_144`) とは一致しない。削除の妥当性 (呼び出しゼロ) には影響しない記録上のズレであり、むしろ将来 `WtConfig::default()` と異なる値になる潜在バグが除去された。
