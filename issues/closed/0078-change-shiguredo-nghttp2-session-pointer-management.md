@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-06-12
+- Completed: 2026-08-09
 - Polished: 2026-08-08
 - Model: Opus 4.7
 - Branch: feature/change-shiguredo-nghttp2-session-pointer-management
@@ -146,3 +147,29 @@ nghttp2 の callback API はセッション全体に対する `user_data` を 1 
 - `crates/tokio-nghttp2/src/connection.rs` — `Session` を保持する上流。設計変更時に追従が必要
 - `crates/tokio-nghttp2/src/client.rs` — `Client::connect()` 等の経路
 - nghttp2 公式ドキュメント (`nghttp2_session_set_user_data` / `nghttp2_session_resume_data` の挙動)
+
+## 解決方法
+
+### `Pin<Box<Session>>` 化と user_data 登録の集約
+
+`crates/shiguredo_nghttp2/src/session.rs` の 4 つのコンストラクタ (`client` / `server` / `client_with_options` / `server_with_options`) の戻り値を `Result<Pin<Box<Session>>>` に変更し、`Box::pin(Self::new(...)?)` してから `set_user_data()` を 1 回だけ呼ぶ形にした。`set_user_data` は private に変更し、`recv()` / `send()` の冒頭の重複呼び出しを削除した。各コンストラクタの doc コメントに「`Pin<Box<Session>>` を `Box` に戻して move しないこと、および `&mut Session` を取得して `std::mem::swap` / `std::mem::replace` しないこと」を明記した。`unsafe impl Send` の SAFETY コメントにも、user_data がヒープ固定されたアドレスを指すことと `Pin::into_inner` 経由の move 禁止を追記した。
+
+### `submit_data` / `submit_data_for_trailer` の doc 明記
+
+`nghttp2_session_resume_data` が stream 不存在・deferred DATA 不存在時に `NGHTTP2_ERR_INVALID_ARGUMENT` で決定的に失敗し、`send_buffers` に追加済みのデータが送信されずに残ること、再試行でデータが二重に追加されることを doc コメントに明記した。
+
+### 追従変更
+
+`crates/tokio-nghttp2/src/connection.rs` の `Connection` 構造体の `session` フィールドを `Pin<Box<Session>>` に変更した。メソッド呼び出しは `DerefMut` 経由でそのまま動作する。
+
+### 回帰テスト
+
+`tests/test_session.rs` に `test_user_data_registered_once_in_constructor_survives_move` を追加した。ヘルパー関数 `relocated_client_session()` を経由して関数境界を越える move を行った後に DATA 付き送信を実行し、`data_source_read_callback` 経由で送信が成功して `FrameSent` イベントが通知されることを検証する。コンストラクタ内の `set_user_data()` を一時的にコメントアウトすると新規テストを含む全テストが失敗することを確認した (有効性確認済み)。
+
+### CHANGES.md
+
+`## develop` の `[CHANGE]` 群の先頭にエントリを追加した。併せて、今回の変更で実質取り消される 0069 の FIX エントリ (「`Session::send()` の冒頭で `set_user_data()` を呼ぶように修正し...」) を削除した。0069 の修正 (recv 経由なしで send を呼んでも callback が正しく動く) は本変更によりコンストラクタ内 1 回登録でより根本的に解決され、0078 の `[CHANGE]` エントリに包含される。
+
+### 検証
+
+`cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` のすべてが通過することを確認した。

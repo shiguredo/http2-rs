@@ -5,6 +5,7 @@ use crate::options::SessionOptions;
 use crate::types::{ErrorCode, FrameType, Header, Http2Event, SettingsId, StreamId};
 use std::collections::{HashMap, VecDeque};
 use std::ffi::c_void;
+use std::pin::Pin;
 use std::ptr;
 
 /// セッションの役割
@@ -48,30 +49,58 @@ pub struct Session {
 
 // SAFETY: Session の所有権移転 (Send) は安全である。
 // nghttp2_session ポインタは Session が独占所有し、Drop で解放される。
-// 一方、Sync は実装しない。nghttp2 はスレッドセーフではなく、
+// user_data はコンストラクタで 1 回登録され、ヒープ固定された
+// Pin<Box<Session>> のアドレスを指すため、Pin<Box<Session>> の move では
+// 無効化しない。一方、Pin::into_inner 等で Session を値として取り出して
+// move すると dangling になる可能性があり、コンストラクタの doc で禁止している。
+// また Sync は実装しない。nghttp2 はスレッドセーフではなく、
 // &self メソッド (want_write, get_remote_settings 等) も内部の C 構造体を
 // 参照するため、複数スレッドからの同時呼び出しは UB となる。
 unsafe impl Send for Session {}
 
 impl Session {
     /// 新しいクライアントセッションを作成
-    pub fn client() -> Result<Self> {
-        Self::new(SessionRole::Client, None)
+    ///
+    /// 返された `Pin<Box<Session>>` を `Box` に戻して move しないこと、および
+    /// `&mut Session` を取得して `std::mem::swap` / `std::mem::replace` しないこと。
+    /// 登録済みの user_data ポインタが dangling になる、または別のセッションの値を指すようになる。
+    pub fn client() -> Result<Pin<Box<Session>>> {
+        let mut session = Box::pin(Self::new(SessionRole::Client, None)?);
+        session.set_user_data();
+        Ok(session)
     }
 
     /// 新しいサーバーセッションを作成
-    pub fn server() -> Result<Self> {
-        Self::new(SessionRole::Server, None)
+    ///
+    /// 返された `Pin<Box<Session>>` を `Box` に戻して move しないこと、および
+    /// `&mut Session` を取得して `std::mem::swap` / `std::mem::replace` しないこと。
+    /// 登録済みの user_data ポインタが dangling になる、または別のセッションの値を指すようになる。
+    pub fn server() -> Result<Pin<Box<Session>>> {
+        let mut session = Box::pin(Self::new(SessionRole::Server, None)?);
+        session.set_user_data();
+        Ok(session)
     }
 
     /// オプション付きでクライアントセッションを作成
-    pub fn client_with_options(options: &SessionOptions) -> Result<Self> {
-        Self::new(SessionRole::Client, Some(options))
+    ///
+    /// 返された `Pin<Box<Session>>` を `Box` に戻して move しないこと、および
+    /// `&mut Session` を取得して `std::mem::swap` / `std::mem::replace` しないこと。
+    /// 登録済みの user_data ポインタが dangling になる、または別のセッションの値を指すようになる。
+    pub fn client_with_options(options: &SessionOptions) -> Result<Pin<Box<Session>>> {
+        let mut session = Box::pin(Self::new(SessionRole::Client, Some(options))?);
+        session.set_user_data();
+        Ok(session)
     }
 
     /// オプション付きでサーバーセッションを作成
-    pub fn server_with_options(options: &SessionOptions) -> Result<Self> {
-        Self::new(SessionRole::Server, Some(options))
+    ///
+    /// 返された `Pin<Box<Session>>` を `Box` に戻して move しないこと、および
+    /// `&mut Session` を取得して `std::mem::swap` / `std::mem::replace` しないこと。
+    /// 登録済みの user_data ポインタが dangling になる、または別のセッションの値を指すようになる。
+    pub fn server_with_options(options: &SessionOptions) -> Result<Pin<Box<Session>>> {
+        let mut session = Box::pin(Self::new(SessionRole::Server, Some(options))?);
+        session.set_user_data();
+        Ok(session)
     }
 
     /// 新しいセッションを作成
@@ -173,7 +202,10 @@ impl Session {
     }
 
     /// ユーザーデータを設定
-    pub fn set_user_data(&mut self) {
+    ///
+    /// コンストラクタ内でのみ呼ばれる。`Pin<Box<Session>>` のヒープアドレスを
+    /// nghttp2 に登録し、callback から `Session` を復元するために使う。
+    fn set_user_data(&mut self) {
         unsafe {
             nghttp2_sys::nghttp2_session_set_user_data(
                 self.session,
@@ -184,7 +216,6 @@ impl Session {
 
     /// 入力データを処理
     pub fn recv(&mut self, data: &[u8]) -> Result<usize> {
-        self.set_user_data();
         let result = unsafe {
             nghttp2_sys::nghttp2_session_mem_recv(self.session, data.as_ptr(), data.len())
         };
@@ -198,7 +229,6 @@ impl Session {
 
     /// 出力データを生成
     pub fn send(&mut self) -> Result<Vec<u8>> {
-        self.set_user_data();
         self.output.clear();
 
         loop {
@@ -357,6 +387,17 @@ impl Session {
     ///
     /// send_buffers にデータを追加し、deferred 状態を解除する。
     /// 実際のデータ送信は次回の `send()` 呼び出し時に read callback 経由で行われる。
+    ///
+    /// # 注意
+    ///
+    /// `submit_request(headers, None, true)` の後に呼んだ場合、`nghttp2_session_resume_data`
+    /// は stream が存在しない、または deferred DATA が存在しないため
+    /// `NGHTTP2_ERR_INVALID_ARGUMENT` で決定的に失敗する。`send_buffers` に追加済みの
+    /// データは送信されずにキューに残る。`send_buffers` のエントリはピアがストリームを
+    /// クローズしたとき (`on_stream_close_callback`) にのみ削除されるため、ストリームが
+    /// クローズされない、またはクローズ済みの `stream_id` を指定した場合は残留し続ける
+    /// (メモリリークの可能性)。さらに、失敗後に同じ `stream_id` で再試行すると既存
+    /// データに追加で `extend` され、後に送信されるデータが二重になる。
     pub fn submit_data(
         &mut self,
         stream_id: StreamId,
@@ -393,6 +434,13 @@ impl Session {
     /// DATA フレームの末尾でトレーラーヘッダーを送信するモードに設定する。
     /// data_source_read_callback で NGHTTP2_DATA_FLAG_NO_END_STREAM を設定し、
     /// EOF 後に `submit_trailer()` でトレーラーを送信する。
+    ///
+    /// # 注意
+    ///
+    /// `submit_request(headers, None, true)` の後に呼んだ場合の挙動は `submit_data` と
+    /// 同じである。`nghttp2_session_resume_data` が `NGHTTP2_ERR_INVALID_ARGUMENT` で
+    /// 決定的に失敗し、`send_buffers` に追加済みのデータが送信されずに残る。失敗後に
+    /// 同じ `stream_id` で再試行するとデータが二重に追加される。
     pub fn submit_data_for_trailer(&mut self, stream_id: StreamId, data: &[u8]) -> Result<()> {
         let send_buf = self
             .send_buffers

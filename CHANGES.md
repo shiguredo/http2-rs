@@ -8,6 +8,8 @@
 
 ## develop
 
+- [CHANGE] `shiguredo_nghttp2::Session` のコンストラクタ戻り値を `Result<Pin<Box<Session>>>` に変更し、`nghttp2_session_set_user_data` への登録をコンストラクタ内の 1 回に集約する。`set_user_data` を private 化し、`recv` / `send` の冒頭の重複呼び出しを削除する (move 後 dangling ポインタのリスク低減)
+  - @voluntas
 - [CHANGE] `varint::decode` が非最小エンコーディングを拒否していた独自方針を取りやめ、RFC 9297 Section 1.1 / RFC 9000 Section 16 に従って受け入れるように変更する。`encode` 側は引き続き最小バイト数でエンコードする
   - @voluntas
 - [CHANGE] 最小サポート Rust バージョン (MSRV) を 1.88 から 1.93 に引き上げる
@@ -199,8 +201,6 @@
 - [FIX] WT_CLOSE_SESSION の reason が 1024 バイト超過時にエラーを返す (issue 0061)
   - @voluntas
 - [FIX] `WtServerRequest::accept()` で TLS 1.3 未達の WebTransport セッションを `RST_STREAM(PROTOCOL_ERROR)` で拒否する (draft-ietf-webtrans-http2-14 §7 / RFC 9113 §8.1.1) (issue 0063)
-  - @voluntas
-- [FIX] `shiguredo_nghttp2::Session::send()` の冒頭で `set_user_data()` を呼ぶように修正し、`recv()` を経由せずに `send()` を呼ぶ経路でも各コールバックが正しい `Session` ポインタを受け取れるようにする
   - @voluntas
 - [FIX] `WtError::Display` からファイルパス・行番号・バックトレースの出力を削除し、情報漏洩を防止する。`Debug` は kind・reason・location を出力し、alternate format かつ `Backtrace::Captured` のときのみバックトレースを出力する。`Debug` 実装を `Display` 委譲から独立させる
   - @voluntas
