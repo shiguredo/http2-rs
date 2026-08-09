@@ -192,6 +192,8 @@
   - @voluntas
 - [FIX] `shiguredo_nghttp2::Session::send()` の冒頭で `set_user_data()` を呼ぶように修正し、`recv()` を経由せずに `send()` を呼ぶ経路でも各コールバックが正しい `Session` ポインタを受け取れるようにする
   - @voluntas
+- [FIX] `WtError::Display` からファイルパス・行番号・バックトレースの出力を削除し、情報漏洩を防止する。`Debug` は kind・reason・location を出力し、alternate format かつ `Backtrace::Captured` のときのみバックトレースを出力する。`Debug` 実装を `Display` 委譲から独立させる
+  - @voluntas
 
 ### misc
 

@@ -1,4 +1,5 @@
 mod capsule;
+mod error;
 mod exporter;
 mod flow_control;
 mod init;
