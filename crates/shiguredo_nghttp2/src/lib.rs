@@ -45,7 +45,7 @@ mod tests {
         let version = nghttp2_version();
         assert!(!version.is_empty());
         assert!(version.starts_with("1."));
-        println!("nghttp2 version: {}", version);
+        println!("nghttp2 バージョン: {}", version);
     }
 
     #[test]
@@ -139,16 +139,16 @@ mod tests {
         let output = output.expect("should succeed");
         assert!(!output.is_empty());
         // HTTP/2 プリフェイスまたは SETTINGS フレームが含まれているはず
-        println!("Output length: {} bytes", output.len());
+        println!("出力長: {} バイト", output.len());
 
         // 最初の 24 バイトを確認
         let preface = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-        println!("First 24 bytes: {:?}", &output[..24.min(output.len())]);
-        println!("Expected preface: {:?}", preface);
+        println!("最初の 24 バイト: {:?}", &output[..24.min(output.len())]);
+        println!("期待する preface: {:?}", preface);
         if output.starts_with(preface) {
-            println!("nghttp2 includes connection preface automatically");
+            println!("nghttp2 は connection preface を自動で含める");
         } else {
-            println!("nghttp2 does NOT include connection preface");
+            println!("nghttp2 は connection preface を含めない (NOT)");
         }
     }
 }
