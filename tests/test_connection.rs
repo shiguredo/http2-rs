@@ -357,38 +357,6 @@ fn test_data_on_idle_stream_is_error() {
     }
 }
 
-/// RFC 9113 §8.3.1 + §8.1.1: 必須擬似ヘッダーを欠いたリクエストは malformed であり、
-/// PROTOCOL_ERROR (§8.1.1 では malformed はストリームエラーとして扱う MUST、実装上は
-/// HPACK デコードの段階で接続エラーに昇格する場合がある) で拒否される。
-#[test]
-fn test_initial_headers_without_pseudo_is_error() {
-    let mut server = Connection::server(Limits::default());
-    server.mark_preface_received();
-    server.initiate().expect("initiate should succeed");
-
-    let settings_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
-    server.feed(&settings_bytes).expect("feed should succeed");
-    server.process().expect("process should succeed");
-
-    // 擬似ヘッダーなしのヘッダーブロックを HPACK エンコード
-    let headers = vec![HeaderField::new("content-type", "text/html").expect("valid header field")];
-    let mut encoder = HpackEncoder::new(4096);
-    let mut encoded = Vec::new();
-    encoder.encode(&mut encoded, &headers);
-
-    let headers_frame = HeadersFrame::new(NonZeroStreamId::from_static(1), encoded)
-        .with_end_stream(true)
-        .with_end_headers(true);
-    let headers_bytes = encode_frame(&Frame::Headers(headers_frame));
-    server.feed(&headers_bytes).expect("feed should succeed");
-
-    let result = server.process();
-    assert!(result.is_err());
-    if let Err(e) = result {
-        assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
-    }
-}
-
 /// RFC 9113 Section 4.3: 不正な HPACK データは COMPRESSION_ERROR の接続エラーになる。
 #[test]
 fn test_invalid_hpack_causes_compression_error() {
@@ -976,8 +944,9 @@ mod reset_stream {
 
     /// HEADERS 経路のストリームエラーによるリセット結果をまとめて検証する
     ///
-    /// `process_headers` の状態遷移後の malformed 検出 (1xx + END_STREAM /
-    /// Content-Length 不一致) で、指定したエラーコードの `Event::StreamReset`
+    /// `process_headers` のストリームエラー経路 (状態遷移前のヘッダー検証エラー・
+    /// `recv_headers` 状態遷移エラー・状態遷移後の malformed 検出 (1xx + END_STREAM /
+    /// Content-Length 不一致)) で、指定したエラーコードの `Event::StreamReset`
     /// (接続ウィンドウ消費量 0) の通知・RST_STREAM フレームの出力 (エラーコード込み)・
     /// `Event::HeadersReceived` / `Event::TrailersReceived` / `Event::StreamClosed` の
     /// 非生成を一括検証する。出力バッファ全体を消費するため、
@@ -3128,5 +3097,781 @@ mod reset_stream {
             )),
             "補充後は正当なストリーム (ID 3) の DATA が受信できるべき"
         );
+    }
+
+    /// 疑似ヘッダーを含まないヘッダーブロックを HPACK エンコードする
+    ///
+    /// 初回 HEADERS の疑似ヘッダー欠如 (RFC 9113 Section 8.1 / 8.3.1: malformed) の
+    /// テストで使用する。
+    fn encode_headers_without_pseudo() -> Vec<u8> {
+        let mut encoder = HpackEncoder::new(4096);
+        let headers =
+            vec![HeaderField::new("content-type", "text/html").expect("valid header field")];
+        let mut buf = Vec::new();
+        encoder.encode(&mut buf, &headers);
+        buf
+    }
+
+    /// 有効なトレーラーヘッダーを HPACK エンコードする
+    fn encode_valid_trailer_headers() -> Vec<u8> {
+        let mut encoder = HpackEncoder::new(4096);
+        let headers = vec![HeaderField::new("x-trailer", "1").expect("valid header field")];
+        let mut buf = Vec::new();
+        encoder.encode(&mut buf, &headers);
+        buf
+    }
+
+    /// トレーラーで禁止されたヘッダー (te) を含むトレーラーを HPACK エンコードする
+    ///
+    /// RFC 9113 Section 8.2.2: TE ヘッダーの例外はリクエストのみであり、
+    /// トレーラーでは禁止される (validate_forbidden_header_for_response)。
+    fn encode_trailer_headers_with_forbidden() -> Vec<u8> {
+        let mut encoder = HpackEncoder::new(4096);
+        let headers = vec![HeaderField::new("te", "trailers").expect("valid header field")];
+        let mut buf = Vec::new();
+        encoder.encode(&mut buf, &headers);
+        buf
+    }
+
+    /// :method を欠いたリクエストヘッダーを HPACK エンコードする
+    ///
+    /// RFC 9113 Section 8.3.1: 必須疑似ヘッダー (:method) の欠如は malformed
+    /// (validate_request_headers が MissingPseudoHeader を返す)。
+    fn encode_request_headers_missing_method() -> Vec<u8> {
+        let mut encoder = HpackEncoder::new(4096);
+        let mut headers = request_headers();
+        headers.retain(|h| h.name() != b":method");
+        let mut buf = Vec::new();
+        encoder.encode(&mut buf, &headers);
+        buf
+    }
+
+    /// :status 101 のレスポンスヘッダーを HPACK エンコードする
+    ///
+    /// RFC 9113 Section 8.6: HTTP/2 は 101 (Switching Protocols) をサポートしない
+    /// (validate_response_headers が Status101NotSupported を返す)。
+    fn encode_response_headers_status_101() -> Vec<u8> {
+        let mut encoder = HpackEncoder::new(4096);
+        let headers = vec![HeaderField::new(":status", "101").expect("valid header field")];
+        let mut buf = Vec::new();
+        encoder.encode(&mut buf, &headers);
+        buf
+    }
+
+    /// Extended CONNECT リクエスト (CONNECT + :protocol) を HPACK エンコードする
+    ///
+    /// RFC 8441: Extended CONNECT は :protocol 疑似ヘッダーを含む。
+    /// ENABLE_CONNECT_PROTOCOL 未設定のサーバーが検出するネゴシエーション違反の
+    /// テストで使用する。
+    fn encode_extended_connect_request_headers() -> Vec<u8> {
+        let mut encoder = HpackEncoder::new(4096);
+        let headers = vec![
+            HeaderField::new(":method", "CONNECT").expect("valid header field"),
+            HeaderField::new(":scheme", "https").expect("valid header field"),
+            HeaderField::new(":path", "/").expect("valid header field"),
+            HeaderField::new(":protocol", "webtransport").expect("valid header field"),
+            HeaderField::new(":authority", "example.com").expect("valid header field"),
+        ];
+        let mut buf = Vec::new();
+        encoder.encode(&mut buf, &headers);
+        buf
+    }
+
+    /// Content-Length: abc (パース不能) のリクエストヘッダーを HPACK エンコードする
+    ///
+    /// RFC 9110 Section 8.6: content-length は 1 桁以上の数字であり、パース不能な値は
+    /// malformed (extract_content_length がエラーを返す)。
+    fn encode_request_headers_with_invalid_content_length() -> Vec<u8> {
+        let mut encoder = HpackEncoder::new(4096);
+        let mut headers = request_headers();
+        headers.push(HeaderField::new("content-length", "abc").expect("valid header field"));
+        let mut buf = Vec::new();
+        encoder.encode(&mut buf, &headers);
+        buf
+    }
+
+    /// Content-Length: abc (パース不能) のレスポンスヘッダーを HPACK エンコードする
+    ///
+    /// RFC 9110 Section 8.6 の根拠は
+    /// [`encode_request_headers_with_invalid_content_length`] を参照。
+    fn encode_response_headers_with_invalid_content_length() -> Vec<u8> {
+        let mut encoder = HpackEncoder::new(4096);
+        let headers = vec![
+            HeaderField::new(":status", "200").expect("valid header field"),
+            HeaderField::new("content-length", "abc").expect("valid header field"),
+        ];
+        let mut buf = Vec::new();
+        encoder.encode(&mut buf, &headers);
+        buf
+    }
+
+    /// リセット済みストリームへの遅延 DATA が破棄され、`Event::DataDiscarded` が通知され、
+    /// `Event::StreamReset` が再発しないことを検証する
+    ///
+    /// 遅延 DATA が接続エラーにならず破棄され、接続が維持されることの回帰確認。
+    /// ストリームが open / half-closed などの非 Closed 状態のままマップに残存する
+    /// 旧挙動 (孤立ストリーム) では、遅延 DATA が `recv_data` の状態遷移エラーで
+    /// RST_STREAM (STREAM_CLOSED) を再発させるため、`Event::StreamReset` の非存在で
+    /// その回帰を検出できる。
+    ///
+    /// なお `handle_data` の破棄判定 (`src/connection.rs` の `is_stream_closed` /
+    /// `!streams.contains_key`) は Closed 状態でマップに残存するストリームにも
+    /// `Event::DataDiscarded` を生成するため、本検証は「マップから削除されたこと」の
+    /// 厳密な証明にはならない。削除の裏付けは `assert_headers_reset_events` の
+    /// `Event::StreamReset` 存在検証 (リセット時に `streams` から削除される) が担う。
+    fn assert_delayed_data_discarded(conn: &mut Connection, stream_id: u32) {
+        let delayed_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(stream_id),
+            vec![1, 2, 3],
+        )));
+        conn.feed(&delayed_bytes).expect("feed should succeed");
+        conn.process().expect("process should succeed");
+
+        let events = collect_events(conn);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataDiscarded {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    connection_window_consumed: 3,
+                } if id.as_u32() == stream_id
+            )),
+            "リセット済みストリーム ({stream_id}) への遅延 DATA で DataDiscarded が通知されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "リセット済みストリーム ({stream_id}) への遅延 DATA で StreamReset が再発してはならない"
+        );
+    }
+
+    /// 疑似ヘッダーを欠いた初回リクエスト HEADERS がストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 生成・削除に
+    /// 変換され、接続が維持される (サーバーロール)
+    ///
+    /// RFC 9113 Section 8.1 / 8.3.1: 初回 HEADERS の疑似ヘッダー欠如は malformed であり、
+    /// Section 8.1.1 に従いストリームエラーとして処理する。ストリーム未作成のため
+    /// 生成してからリセットする。既存挙動 (接続終了) と異なり、ストリームエラーが
+    /// `process()` から呼び出し側へ伝播せず接続が維持される。
+    #[test]
+    fn test_initial_headers_without_pseudo_resets_stream() {
+        let mut server = setup_server();
+
+        // 疑似ヘッダーなしの初回 HEADERS を受信する (ストリーム未作成)
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_headers_without_pseudo(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            "初回 HEADERS の疑似ヘッダー欠如",
+        );
+
+        // ストリームが生成されてから削除済みであることを区別可能に検証する:
+        // 遅延 DATA は DataDiscarded で破棄され、StreamReset が再発しない
+        assert_delayed_data_discarded(&mut server, 1);
+    }
+
+    /// 新規ストリームの検証エラーで生成・リセットしたストリームが GOAWAY の
+    /// last-stream-id に含まれる
+    ///
+    /// 検証エラー経路が `Err` 返却から `Ok` 返却に変換されたことで、
+    /// `handle_headers` の `last_successful_stream_id` 更新が新規ストリーム
+    /// (ストリーム未作成 → `reset_headers_validation_error` で生成・リセット) の
+    /// 経路でも適用されることを、GOAWAY の last-stream-id で固定する。
+    /// [`test_reset_stream_included_in_goaway_last_stream_id`] が既存ストリームの
+    /// 状態遷移後経路を検証するのに対し、本テストは新規ストリーム生成経路を検証する。
+    /// RST_STREAM 送信も RFC 9113 Section 6.8 の last-stream-id 更新対象。
+    #[test]
+    fn test_reset_new_stream_included_in_goaway_last_stream_id() {
+        let mut server = setup_server();
+
+        // 疑似ヘッダーなしの初回 HEADERS で新規ストリームを生成・リセットさせる
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_headers_without_pseudo(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        // ストリームエラー由来のイベントと出力を消費する
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // GOAWAY を送信し、last-stream-id にストリーム ID 1 が含まれることを検証する
+        server
+            .send_goaway(ErrorCode::NoError, Vec::new())
+            .expect("send_goaway should succeed");
+        let output = server
+            .poll_output()
+            .expect("GOAWAY フレームが出力されるべき");
+        let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+        decoder.feed(&output);
+        let mut found_goaway = false;
+        while let Some(frame) = decoder.decode().expect("decode should succeed") {
+            if let Frame::Goaway(goaway) = frame {
+                assert_eq!(
+                    goaway.last_stream_id.get(),
+                    1,
+                    "GOAWAY の last-stream-id に新規ストリーム生成・リセット済みストリームが含まれるべき"
+                );
+                found_goaway = true;
+            }
+        }
+        assert!(found_goaway, "GOAWAY フレームが出力されるべき");
+    }
+
+    /// 新規ストリームの検証エラーを CONTINUATION 分割で受信した場合も、
+    /// ストリームが生成されてからリセットされ、接続が維持される
+    ///
+    /// `handle_continuation` も `process_headers` を経由するため、単一 HEADERS フレームと
+    /// 同じリセット経路を通る。CONTINUATION 分割の後始末 (header_block_fragment の
+    /// クリア等) と、新規ストリーム生成 → リセットの相互作用も併せて検証する。
+    #[test]
+    fn test_new_stream_validation_error_via_continuation_resets_stream() {
+        let mut server = setup_server();
+
+        // 疑似ヘッダーなしのヘッダーブロックを HEADERS + CONTINUATION に分割して送信する
+        let encoded = encode_headers_without_pseudo();
+        let split = encoded.len() / 2;
+        let headers = HeadersFrame::new(NonZeroStreamId::from_static(1), encoded[..split].to_vec())
+            .with_end_headers(false)
+            .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        let continuation = create_continuation(
+            NonZeroStreamId::from_static(1),
+            encoded[split..].to_vec(),
+            true,
+        );
+        server
+            .feed(&encode_frame(&Frame::Continuation(continuation)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        // 単一 HEADERS フレームと同じく、ストリームが生成されてからリセットされる
+        assert_headers_reset_events(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            "新規ストリームの検証エラー (CONTINUATION 分割)",
+        );
+
+        // CONTINUATION 経由でもリセット済みストリームへの遅延 DATA は破棄される
+        assert_delayed_data_discarded(&mut server, 1);
+    }
+
+    /// 疑似ヘッダーを欠いた初回レスポンス HEADERS がストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される (クライアントロール)
+    ///
+    /// クライアントは `start_stream` でストリームを生成済みのため、
+    /// 既存ストリームのままリセットされる。
+    #[test]
+    fn test_initial_response_without_pseudo_resets_stream() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), true)
+            .expect("start_stream should succeed");
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        // 疑似ヘッダーなしの初回レスポンスを受信する (ストリーム生成済み)
+        let response = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_headers_without_pseudo(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(response)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut client,
+            1,
+            ErrorCode::ProtocolError,
+            "初回レスポンスの疑似ヘッダー欠如",
+        );
+    }
+
+    /// 初回ヘッダー受信後の疑似ヘッダーを含む HEADERS がストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される
+    ///
+    /// RFC 9113 Section 8.1: 疑似ヘッダーは初回ヘッダーにのみ含められる。
+    #[test]
+    fn test_pseudo_headers_in_non_initial_headers_resets_stream() {
+        let mut server = setup_server();
+        open_stream_on_server(&mut server, 1);
+        // 初回 HEADERS 由来のイベントを消費する
+        while server.poll_event().is_some() {}
+
+        // 2 回目の HEADERS に疑似ヘッダーを含める
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_request_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            "非初回 HEADERS の疑似ヘッダー",
+        );
+    }
+
+    /// トレーラー検証エラー (トレーラーで禁止された te ヘッダー) がストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される
+    ///
+    /// RFC 9113 Section 8.2.2: TE ヘッダーはトレーラーでは禁止される。
+    #[test]
+    fn test_trailer_validation_error_resets_stream() {
+        let mut server = setup_server();
+        open_stream_on_server(&mut server, 1);
+        // 初回 HEADERS 由来のイベントを消費する
+        while server.poll_event().is_some() {}
+
+        let trailers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_trailer_headers_with_forbidden(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(trailers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            "トレーラー検証エラー",
+        );
+    }
+
+    /// END_STREAM なしのトレーラーがストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される
+    ///
+    /// RFC 9113 Section 8.1: トレーラーは END_STREAM 付きで送信しなければならない。
+    #[test]
+    fn test_trailer_without_end_stream_resets_stream() {
+        let mut server = setup_server();
+        open_stream_on_server(&mut server, 1);
+        // 初回 HEADERS 由来のイベントを消費する
+        while server.poll_event().is_some() {}
+
+        let trailers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_trailer_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(false);
+        server
+            .feed(&encode_frame(&Frame::Headers(trailers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            "END_STREAM なしトレーラー",
+        );
+    }
+
+    /// :method を欠いたリクエストがストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 生成・削除に
+    /// 変換され、接続が維持される
+    ///
+    /// RFC 9113 Section 8.3.1: 必須疑似ヘッダー (:method) の欠如は malformed。
+    /// validate_request_headers はストリーム生成前に実行されるため、
+    /// 新規ストリームとして生成してからリセットする。
+    #[test]
+    fn test_request_headers_missing_method_resets_stream() {
+        let mut server = setup_server();
+
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_request_headers_missing_method(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_headers_reset_events(&mut server, 1, ErrorCode::ProtocolError, ":method 欠如");
+
+        // ストリームが生成されてから削除済みであることを遅延 DATA で検証する
+        assert_delayed_data_discarded(&mut server, 1);
+    }
+
+    /// :status 101 のレスポンスがストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される
+    ///
+    /// RFC 9113 Section 8.6: HTTP/2 は 101 (Switching Protocols) をサポートしない。
+    #[test]
+    fn test_response_headers_status_101_resets_stream() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), true)
+            .expect("start_stream should succeed");
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        let response = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_response_headers_status_101(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(response)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        assert_headers_reset_events(&mut client, 1, ErrorCode::ProtocolError, ":status 101");
+    }
+
+    /// ENABLE_CONNECT_PROTOCOL 未設定のサーバーが受信した :protocol 付きリクエストが
+    /// ストリームエラーとして RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` +
+    /// `streams` 生成・削除に変換され、接続が維持される
+    ///
+    /// RFC 8441 Section 3: Extended CONNECT は SETTINGS_ENABLE_CONNECT_PROTOCOL=1 を送信済みの
+    /// 場合のみ許可される。ネゴシエーション違反はプロトコルエラーであり、
+    /// ストリームエラーとして処理する。
+    #[test]
+    fn test_protocol_without_enable_connect_protocol_resets_stream() {
+        let mut server = setup_server();
+
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_extended_connect_request_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            ":protocol ネゴシエーション違反",
+        );
+
+        // ストリームが生成されてから削除済みであることを遅延 DATA で検証する
+        assert_delayed_data_discarded(&mut server, 1);
+    }
+
+    /// パース不能な Content-Length のリクエストがストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される (サーバーロール)
+    ///
+    /// RFC 9110 Section 8.6: content-length は 1 桁以上の数字。パース不能な値は
+    /// malformed (RFC 9113 Section 8.1.1)。
+    #[test]
+    fn test_invalid_content_length_resets_stream_server() {
+        let mut server = setup_server();
+
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_request_headers_with_invalid_content_length(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            "Content-Length パースエラー (サーバー)",
+        );
+
+        // ストリームが生成されてから削除済みであることを遅延 DATA で検証する
+        assert_delayed_data_discarded(&mut server, 1);
+    }
+
+    /// パース不能な Content-Length のレスポンスがストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される (クライアントロール)
+    ///
+    /// RFC 9110 Section 8.6: content-length は 1 桁以上の数字。パース不能な値は
+    /// malformed (RFC 9113 Section 8.1.1)。
+    #[test]
+    fn test_invalid_content_length_resets_stream_client() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), true)
+            .expect("start_stream should succeed");
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        let response = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_response_headers_with_invalid_content_length(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(response)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut client,
+            1,
+            ErrorCode::ProtocolError,
+            "Content-Length パースエラー (クライアント)",
+        );
+    }
+
+    /// half-closed (remote) 状態のストリームへの追加 HEADERS が状態遷移エラーとして
+    /// RST_STREAM (STREAM_CLOSED) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される (サーバーロール)
+    ///
+    /// RFC 9113 Section 5.1: half-closed (remote) 状態のストリームへの
+    /// WINDOW_UPDATE / PRIORITY / RST_STREAM 以外のフレームは STREAM_CLOSED の
+    /// ストリームエラーで応答しなければならない (MUST)。
+    #[test]
+    fn test_headers_on_half_closed_remote_resets_stream() {
+        let mut server = setup_server();
+
+        // END_STREAM 付きリクエストで half-closed (remote) に遷移させる
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_request_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+
+        // half-closed (remote) への追加 HEADERS (トレーラー) は状態遷移エラー
+        let trailers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_trailer_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(trailers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut server,
+            1,
+            ErrorCode::StreamClosed,
+            "half-closed (remote) への HEADERS",
+        );
+
+        // ストリームが削除済みであることを遅延 DATA で区別可能に検証する
+        assert_delayed_data_discarded(&mut server, 1);
+    }
+
+    /// half-closed (remote) 状態のストリームへの追加 HEADERS が状態遷移エラーとして
+    /// RST_STREAM (STREAM_CLOSED) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される (クライアントロール)
+    ///
+    /// 仕様根拠は [`test_headers_on_half_closed_remote_resets_stream`] を参照。
+    #[test]
+    fn test_headers_on_half_closed_remote_resets_stream_client() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        // END_STREAM 付きレスポンスで half-closed (remote) に遷移させる
+        let response = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_response_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(response)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+        while client.poll_event().is_some() {}
+
+        // half-closed (remote) への追加 HEADERS (トレーラー) は状態遷移エラー
+        let trailers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_trailer_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(trailers)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut client,
+            1,
+            ErrorCode::StreamClosed,
+            "half-closed (remote) への HEADERS (クライアント)",
+        );
+    }
+
+    /// クライアント接続を初期化し、有効なレスポンスを END_STREAM なしで受信済みの状態にする
+    ///
+    /// ストリームは Open のまま残り `initial_headers_received` が立つため、
+    /// 後続 HEADERS (非初回疑似ヘッダー・トレーラー等) の検証エラーを発生させる土台になる。
+    fn setup_client_with_response() -> Connection {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        let response = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_response_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(false);
+        client
+            .feed(&encode_frame(&Frame::Headers(response)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+        while client.poll_event().is_some() {}
+        client
+    }
+
+    /// 初回ヘッダー受信後の疑似ヘッダーを含む HEADERS がストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される (クライアントロール)
+    ///
+    /// RFC 9113 Section 8.1: 疑似ヘッダーは初回ヘッダーにのみ含められる。
+    #[test]
+    fn test_pseudo_headers_in_non_initial_headers_resets_stream_client() {
+        let mut client = setup_client_with_response();
+
+        // 2 回目の HEADERS に疑似ヘッダーを含める
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_request_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut client,
+            1,
+            ErrorCode::ProtocolError,
+            "非初回 HEADERS の疑似ヘッダー (クライアント)",
+        );
+
+        // ストリームが削除済みであることを遅延 DATA で検証する
+        assert_delayed_data_discarded(&mut client, 1);
+    }
+
+    /// トレーラー検証エラー (トレーラーで禁止された te ヘッダー) がストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される (クライアントロール)
+    ///
+    /// RFC 9113 Section 8.2.2: TE ヘッダーはトレーラーでは禁止される。
+    #[test]
+    fn test_trailer_validation_error_resets_stream_client() {
+        let mut client = setup_client_with_response();
+
+        let trailers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_trailer_headers_with_forbidden(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(trailers)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut client,
+            1,
+            ErrorCode::ProtocolError,
+            "トレーラー検証エラー (クライアント)",
+        );
+
+        // ストリームが削除済みであることを遅延 DATA で検証する
+        assert_delayed_data_discarded(&mut client, 1);
+    }
+
+    /// END_STREAM なしのトレーラーがストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される (クライアントロール)
+    ///
+    /// RFC 9113 Section 8.1: トレーラーは END_STREAM 付きで送信しなければならない。
+    #[test]
+    fn test_trailer_without_end_stream_resets_stream_client() {
+        let mut client = setup_client_with_response();
+
+        let trailers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_trailer_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(false);
+        client
+            .feed(&encode_frame(&Frame::Headers(trailers)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut client,
+            1,
+            ErrorCode::ProtocolError,
+            "END_STREAM なしトレーラー (クライアント)",
+        );
+
+        // ストリームが削除済みであることを遅延 DATA で検証する
+        assert_delayed_data_discarded(&mut client, 1);
     }
 }
