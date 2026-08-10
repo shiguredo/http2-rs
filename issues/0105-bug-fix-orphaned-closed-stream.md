@@ -1,7 +1,7 @@
 # process_headers の状態遷移後エラー経路でストリームが streams に残り続ける問題を修正する
 
 - Created: 2026-08-09
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-08-10
 - Branch: feature/fix-orphaned-closed-stream
 - Polished: 2026-08-10
 
@@ -63,6 +63,23 @@
 - `issues/closed/0101-bug-fix-handle-data-stream-error.md` — `handle_data` のストリームエラーを `reset_stream` に変換した先行対応
 - `issues/closed/0102-change-connection-window-exhaustion.md` — マップ内 Closed への遅延 DATA 破棄 (`Event::DataDiscarded`) を確立した対応
 - `issues/closed/0103-bug-fix-no-content-empty-data.md` — Content-Length 不一致経路の no-content 例外 (204/304/HEAD の skip_check) に関連する no-content の扱いを整理した対応
+
+## 解決方法
+
+1. `src/connection/headers.rs` の `process_headers` の状態遷移後エラー経路 (1xx + END_STREAM / Content-Length 不一致) を `reset_stream_internal` による処理に変換した。`Event::HeadersReceived` / `Event::TrailersReceived` は push せず、`connection_window_consumed: 0` で `Event::StreamReset` を生成し、RST_STREAM (PROTOCOL_ERROR) 送信 + `streams` 削除 + `closed_streams` 登録を一貫させた
+2. `src/connection.rs` の `reset_stream_internal` は private のまま `headers` モジュールから呼び出した (公開範囲の変更なし)
+3. `src/connection/headers.rs` の `last_successful_stream_id` 更新コメント (handle_headers / handle_continuation) と `src/connection.rs` のフィールド doc を更新し、RST_STREAM 送信済みストリームも更新対象に含める旨と根拠 (RFC 9113 Section 6.8) を明記した
+4. `tests/test_connection.rs` の `mod reset_stream` に単体テストを追加・書き換えした:
+   - `test_malformed_1xx_end_stream_resets_stream`: 1xx + END_STREAM malformed で RST_STREAM (PROTOCOL_ERROR) + `Event::StreamReset` + `streams` 削除 + 遅延 DATA の `Event::DataDiscarded` を検証 (旧 `test_data_discarded_on_closed_stream_in_map` を書き換え)
+   - `test_malformed_content_length_end_stream_resets_stream_server` / `test_malformed_content_length_end_stream_resets_stream_client`: 両ロールの Content-Length 不一致 (サーバー版は遅延 DATA による `streams` 削除の区別可能な検証込み)
+   - `test_malformed_content_length_open_state_resets_stream`: リクエストボディ送信中 (Open) のクライアント経路
+   - `test_malformed_content_length_end_stream_resets_stream_continuation`: CONTINUATION 分割経路
+   - `test_no_content_content_length_end_stream_headers_accepted`: skip_check 正例 (204 + 非ゼロ Content-Length + END_STREAM)
+   - `test_content_length_zero_end_stream_headers_accepted`: Content-Length: 0 の合法境界
+   - `test_reset_stream_included_in_goaway_last_stream_id`: GOAWAY の last-stream-id に RST_STREAM 送信済みストリームが含まれること
+   - ヘルパー `assert_headers_reset_events` を追加
+5. `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
+6. `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通ることを確認した
 
 ## 残課題 (本 issue のスコープ外)
 
