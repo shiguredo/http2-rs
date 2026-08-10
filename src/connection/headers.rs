@@ -303,8 +303,8 @@ impl Connection {
 
             self.process_headers(StreamId::from(frame.stream_id), headers, frame.end_stream)?;
 
-            // RFC 9113 Section 5.4.1: ヘッダーの HPACK デコードと検証が
-            // 両方成功した場合のみ GOAWAY 用の last_successful_stream_id を更新する
+            // RFC 9113 Section 6.8: RST_STREAM 送信も last-stream-id の更新対象
+            // (根拠は last_successful_stream_id フィールドの doc コメント参照)
             if sid > self.last_successful_stream_id {
                 self.last_successful_stream_id = sid;
             }
@@ -321,6 +321,16 @@ impl Connection {
     }
 
     /// ヘッダーを処理する
+    ///
+    /// 状態機械 `recv_headers` による状態遷移を完了させた後に検出される malformed
+    /// (1xx + END_STREAM / Content-Length 不一致) は、ストリームエラーとして
+    /// RST_STREAM を送信してストリームを破棄し、`Ok(())` を返す (接続を維持する)。
+    /// 呼び出し側は `Ok` が返れば GOAWAY 用の last_successful_stream_id を更新する
+    /// (RST_STREAM 送信も RFC 9113 Section 6.8 の last-stream-id 更新対象)。
+    /// 状態遷移前に検出されるヘッダー検証エラー (疑似ヘッダー欠如・
+    /// validate_request_headers / validate_response_headers / validate_trailers 等) と
+    /// `recv_headers` 自体の状態遷移エラーは、ストリームがマップに残らない・または
+    /// 残りうるが、本経路の変換対象外であり既存挙動 (`Err` 返却) を維持する。
     fn process_headers(
         &mut self,
         stream_id: StreamId,
@@ -499,12 +509,17 @@ impl Connection {
                                 .find(|h| h.name() == validation::pseudo_headers::STATUS)
                                 .is_some_and(|h| h.value().len() == 3 && h.value()[0] == b'1');
                             // RFC 9113 Section 8.1: END_STREAM 付きの情報レスポンス (1xx) は
-                            // malformed である (Section 8.1.1)
+                            // malformed である (Section 8.1.1)。状態遷移完了後の malformed は
+                            // ストリームエラーとして処理する (詳細は process_headers の doc)。
+                            // 受信時点で HalfClosedLocal の場合は既に Closed に遷移しており、
+                            // Closed ストリームへの RST_STREAM 送信は RFC 9113 Section 5.1 の
+                            // 送信制限 (MUST NOT) に厳密には抵触しうるが、reset_stream_internal
+                            // の既存挙動 (streams に存在するストリームへの RST_STREAM 送信は
+                            // 状態を問わない) に合わせる (検出を状態遷移前に移す代替案は
+                            // 既存の状態遷移後の検出構造を維持するため不採用)。
                             if is_informational && end_stream {
-                                return Err(Error::stream_error(
-                                    ErrorCode::ProtocolError,
-                                    "informational response (1xx) with END_STREAM is malformed",
-                                ));
+                                self.reset_stream_internal(stream_id, ErrorCode::ProtocolError, 0)?;
+                                return Ok(());
                             }
                             if !is_informational {
                                 stream.set_initial_headers_received(true);
@@ -531,10 +546,18 @@ impl Connection {
                         Role::Server => false,
                     };
                     if !skip_check {
-                        return Err(Error::stream_error(
-                            ErrorCode::ProtocolError,
-                            "content-length mismatch: expected 0 with END_STREAM",
-                        ));
+                        // RFC 9113 Section 8.1.1: END_STREAM 時の Content-Length 不一致は
+                        // malformed である。状態遷移完了後の malformed はストリームエラー
+                        // として処理する (詳細は process_headers の doc)。
+                        // クライアントロールで受信時点が HalfClosedLocal の場合は既に
+                        // Closed に遷移しており、Closed ストリームへの RST_STREAM 送信は
+                        // RFC 9113 Section 5.1 の送信制限 (MUST NOT) に厳密には抵触しうる
+                        // が、reset_stream_internal の既存挙動 (streams に存在する
+                        // ストリームへの RST_STREAM 送信は状態を問わない) に合わせる
+                        // (検出を状態遷移前に移す代替案は既存の状態遷移後の検出構造を
+                        // 維持するため不採用)。
+                        self.reset_stream_internal(stream_id, ErrorCode::ProtocolError, 0)?;
+                        return Ok(());
                     }
                 }
 
@@ -637,8 +660,8 @@ impl Connection {
             self.header_end_stream = false;
             self.process_headers(StreamId::from_wire(expected_stream_id), headers, end_stream)?;
 
-            // RFC 9113 Section 5.4.1: ヘッダーの HPACK デコードと検証が
-            // 両方成功した場合のみ GOAWAY 用の last_successful_stream_id を更新する
+            // RFC 9113 Section 6.8: RST_STREAM 送信も last-stream-id の更新対象
+            // (根拠は last_successful_stream_id フィールドの doc コメント参照)
             if expected_stream_id > self.last_successful_stream_id {
                 self.last_successful_stream_id = expected_stream_id;
             }
