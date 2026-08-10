@@ -106,8 +106,21 @@ pub struct Connection {
     next_stream_id: u32,
     /// 最後に受信したストリーム ID
     last_recv_stream_id: u32,
-    /// 最後に正常処理が完了したストリーム ID (GOAWAY 用)
-    /// RFC 9113 Section 5.4.1: GOAWAY には正常に受信した最後のストリーム ID を載せる
+    /// GOAWAY の last-stream-id に載せるストリーム ID
+    ///
+    /// RFC 9113 Section 6.8: last-stream-id は「sender が何らかの action を取った
+    /// かもしれない、またはこれから取るかもしれない最高番号のストリーム ID」であり、
+    /// RST_STREAM 送信もこの action に該当する。同節の Note が「processed」を上位
+    /// レイヤへのデータ受け渡しと定義している点とは独立に、RST_STREAM を受信した
+    /// ピアはストリームの失敗を認識済みであり、last-stream-id に含めても再試行
+    /// 機会を奪う実害はない。
+    ///
+    /// 更新箇所はヘッダー処理 (handle_headers / handle_continuation) のみであり、
+    /// ヘッダー処理が成功したストリームに加え、ストリームエラーで RST_STREAM を
+    /// 送信したストリームも更新対象に含める。DATA 経路のストリームエラー
+    /// (handle_data の違反処理) は更新しない (既存挙動。RST_STREAM を受信した
+    /// ピアはストリームの失敗を認識済みのため、GOAWAY の last-stream-id に含めない
+    /// ことによる再試行の実害は限定的)。
     last_successful_stream_id: u32,
     /// HPACK エンコーダー
     hpack_encoder: HpackEncoder,
@@ -1065,11 +1078,10 @@ impl Connection {
         // 破棄された DATA の接続ウィンドウ消費量は Event::DataDiscarded で通知し、
         // アプリが補充できるようにする (空 DATA は消費 0 のため通知しない)。
         // Closed 判定は「マップに存在しない場合」に加えて「マップ内で Closed 状態の場合」を
-        // 含む。後者は process_headers のエラー経路 (状態機械 recv_headers による
-        // HalfClosedLocal + END_STREAM → Closed 遷移の後に 1xx + END_STREAM 等の malformed を
-        // 検出して Err を返し、streams からの削除処理に到達しないケース) で発生し、
-        // このストリームへの遅延 DATA も同様に破棄する (RST_STREAM 送信・Event::StreamReset
-        // 再発を防ぐ)。
+        // 含む。後者は状態遷移後に malformed を検出するヘッダー処理のエラー経路で
+        // 発生していたが、現在はストリームエラーが reset_stream_internal による
+        // RST_STREAM 送信 + streams 削除に変換されるため実質的に到達不能である。
+        // ヘッダー状態の追跡の一部として防御的に維持する (判定自体の削除は別途検討)。
         if self.is_stream_closed(sid) || !self.streams.contains_key(&sid) {
             if flow_control_size > 0 {
                 self.events.push_back(Event::DataDiscarded {

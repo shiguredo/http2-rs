@@ -802,8 +802,8 @@ mod reset_stream {
     ///
     /// 1xx 情報レスポンスに END_STREAM を付けたものは malformed であり
     /// (RFC 9113 Section 8.1 の規則、Section 8.1.1 の定義)、`process_headers` が
-    /// 状態遷移 (状態機械 `recv_headers`) を完了させた後にエラーを返すため、
-    /// ストリームが Closed 状態のまま `streams` に残る。
+    /// 状態遷移 (状態機械 `recv_headers`) を完了させた後にストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) を送信し、ストリームを `streams` から削除する。
     fn encode_informational_response_headers() -> Vec<u8> {
         let mut encoder = HpackEncoder::new(4096);
         let headers = vec![HeaderField::new(":status", "100").expect("valid header field")];
@@ -965,6 +965,64 @@ mod reset_stream {
                 .iter()
                 .any(|e| matches!(e, Event::DataDiscarded { .. })),
             "{label}の DATA で DataDiscarded が生成されてはならない (StreamReset と排他)"
+        );
+        assert_rst_stream_sent_with_code(
+            conn,
+            stream_id,
+            Some(error_code),
+            &format!("{label}で RST_STREAM フレームが出力されるべき"),
+        );
+    }
+
+    /// HEADERS 経路のストリームエラーによるリセット結果をまとめて検証する
+    ///
+    /// `process_headers` の状態遷移後の malformed 検出 (1xx + END_STREAM /
+    /// Content-Length 不一致) で、指定したエラーコードの `Event::StreamReset`
+    /// (接続ウィンドウ消費量 0) の通知・RST_STREAM フレームの出力 (エラーコード込み)・
+    /// `Event::HeadersReceived` / `Event::TrailersReceived` / `Event::StreamClosed` の
+    /// 非生成を一括検証する。出力バッファ全体を消費するため、
+    /// 検査対象の出力がすべて揃った後に呼ぶこと。
+    ///
+    /// 接続ウィンドウ消費量は HEADERS フレームがフロー制御の対象外であるため
+    /// 常に 0 である (RFC 9113 Section 5.2.1: フロー制御の対象は DATA のみ)。
+    ///
+    /// イベントの「存在」と「非存在」は同じイベント集合に対して検証する
+    /// (`find_event` は検査済みイベントを消費するため、順次検証すると非存在検証が恒真になる)。
+    fn assert_headers_reset_events(
+        conn: &mut Connection,
+        stream_id: u32,
+        error_code: ErrorCode,
+        label: &str,
+    ) {
+        let events = collect_events(conn);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::StreamReset {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    error_code: code,
+                    connection_window_consumed: 0,
+                } if id.as_u32() == stream_id && *code == error_code
+            )),
+            "{label}で Event::StreamReset ({error_code:?}) が通知されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::HeadersReceived { .. })),
+            "{label}で Event::HeadersReceived が生成されてはならない"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::TrailersReceived { .. })),
+            "{label}で Event::TrailersReceived が生成されてはならない"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamClosed { .. })),
+            "{label}で Event::StreamClosed が生成されてはならない"
         );
         assert_rst_stream_sent_with_code(
             conn,
@@ -2355,16 +2413,20 @@ mod reset_stream {
         );
     }
 
-    /// エラー経路でマップ内に Closed 状態のストリームが残る場合、
-    /// そのストリームへの遅延 DATA で `Event::DataDiscarded` が通知される
+    /// END_STREAM 付き情報レスポンス (1xx) の malformed がストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 削除に
+    /// 変換され、接続が維持される
     ///
     /// `recv_headers` は状態遷移を完了させてから (HalfClosedLocal + END_STREAM で
-    /// Closed に遷移) 情報レスポンス (1xx) の END_STREAM 違反を検出してエラーを返す
-    /// (RFC 9113 Section 8.1.1: malformed)。エラー経路では `streams` からの削除処理に
-    /// 到達しないため、Closed 状態のストリームがマップ内に残る。このストリームへの
-    /// 遅延 DATA は破棄され、`Event::DataDiscarded` で接続ウィンドウ消費量が通知される。
+    /// Closed に遷移) 情報レスポンス (1xx) の END_STREAM 違反を検出する
+    /// (RFC 9113 Section 8.1 / 8.1.1: malformed)。malformed はストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) を送信し、`Event::StreamReset` を通知して
+    /// `streams` から削除する (RFC 9113 Section 5.4.2)。
+    /// エラー経路で削除されたストリームへの遅延 DATA は破棄され、
+    /// `Event::DataDiscarded` で接続ウィンドウ消費量が通知される
+    /// (`Event::StreamReset` は再発しない)。
     #[test]
-    fn test_data_discarded_on_closed_stream_in_map() {
+    fn test_malformed_1xx_end_stream_resets_stream() {
         let mut client = setup_client();
         client
             .start_stream(request_headers(), true)
@@ -2374,7 +2436,8 @@ mod reset_stream {
         let _ = client.poll_output();
 
         // END_STREAM 付き情報レスポンス (1xx) は malformed であり、
-        // 状態遷移 (HalfClosedLocal + END_STREAM → Closed) 後にエラーが返る
+        // 状態遷移 (HalfClosedLocal + END_STREAM → Closed) 後に
+        // ストリームエラーとして RST_STREAM (PROTOCOL_ERROR) に変換される
         let response = HeadersFrame::new(
             NonZeroStreamId::from_static(1),
             encode_informational_response_headers(),
@@ -2384,16 +2447,19 @@ mod reset_stream {
         client
             .feed(&encode_frame(&Frame::Headers(response)))
             .expect("feed should succeed");
-        let result = client.process();
-        assert!(
-            result.is_err(),
-            "END_STREAM 付き情報レスポンスはエラーになるべき"
-        );
-        // エラー処理由来のイベントと出力を消費する
-        while client.poll_event().is_some() {}
-        let _ = client.poll_output();
+        client.process().expect("process should succeed");
 
-        // Closed 状態のままマップに残ったストリームへの遅延 DATA (4 バイト) は破棄される
+        // Event::StreamReset (PROTOCOL_ERROR, 接続ウィンドウ消費量 0) が通知され、
+        // Event::HeadersReceived / TrailersReceived / StreamClosed は生成されない
+        assert_headers_reset_events(
+            &mut client,
+            1,
+            ErrorCode::ProtocolError,
+            "1xx + END_STREAM malformed",
+        );
+
+        // streams から削除済みのストリームへの遅延 DATA (4 バイト) は破棄され、
+        // Event::DataDiscarded が通知される (Event::StreamReset は再発しない)
         let delayed_bytes = encode_frame(&Frame::Data(DataFrame::new(
             NonZeroStreamId::from_static(1),
             vec![1, 2, 3, 4],
@@ -2410,13 +2476,403 @@ mod reset_stream {
                     connection_window_consumed: 4,
                 } if id.as_u32() == 1
             )),
-            "マップ内 Closed 状態ストリームへの遅延 DATA で DataDiscarded が通知されるべき"
+            "削除済みストリームへの遅延 DATA で DataDiscarded が通知されるべき"
         );
         assert!(
             !events
                 .iter()
                 .any(|e| matches!(e, Event::StreamReset { .. })),
-            "マップ内 Closed 状態ストリームへの遅延 DATA で StreamReset が再発してはならない"
+            "削除済みストリームへの遅延 DATA で StreamReset が再発してはならない"
+        );
+    }
+
+    /// END_STREAM 付きリクエストの Content-Length 不一致 (malformed) が
+    /// ストリームエラーとして RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` +
+    /// `streams` 削除に変換され、接続が維持される (サーバーロール)
+    ///
+    /// `recv_headers` は状態遷移を完了させてから (Idle + END_STREAM で
+    /// half-closed (remote) に遷移) Content-Length 不一致を検出する
+    /// (RFC 9113 Section 8.1.1: malformed)。malformed はストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) を送信し、`Event::StreamReset` を通知して
+    /// `streams` から削除する (RFC 9113 Section 5.4.2)。
+    #[test]
+    fn test_malformed_content_length_end_stream_resets_stream_server() {
+        let mut server = setup_server();
+
+        // Content-Length: 5 のリクエストを END_STREAM 付きで受信すると
+        // END_STREAM 時の Content-Length 不一致 (malformed) になる
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_request_headers_with_content_length("5"),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        // Event::StreamReset (PROTOCOL_ERROR, 接続ウィンドウ消費量 0) が通知され、
+        // Event::HeadersReceived / TrailersReceived / StreamClosed は生成されない
+        assert_headers_reset_events(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            "Content-Length 不一致 (サーバー)",
+        );
+
+        // ストリームが streams から削除済みであることを区別可能に検証する
+        // (この経路は half-closed (remote) に遷移するため、もしマップに残っていたら
+        // 遅延 DATA は recv_data の状態遷移エラーで RST_STREAM (STREAM_CLOSED) が
+        // 再発するはずであり、削除済みなら DataDiscarded になる)
+        let delayed_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![1, 2, 3],
+        )));
+        server.feed(&delayed_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        let events = collect_events(&mut server);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataDiscarded {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    connection_window_consumed: 3,
+                } if id.as_u32() == 1
+            )),
+            "リセット済みストリームへの遅延 DATA で DataDiscarded が通知されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "リセット済みストリームへの遅延 DATA で StreamReset が再発してはならない"
+        );
+    }
+
+    /// END_STREAM 付きレスポンスの Content-Length 不一致 (malformed) が
+    /// ストリームエラーとして RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` +
+    /// `streams` 削除に変換され、接続が維持される (クライアントロール)
+    ///
+    /// `recv_headers` は状態遷移を完了させてから (HalfClosedLocal + END_STREAM で
+    /// Closed に遷移) Content-Length 不一致を検出する
+    /// (RFC 9113 Section 8.1.1: malformed)。malformed はストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) を送信し、`Event::StreamReset` を通知して
+    /// `streams` から削除する (RFC 9113 Section 5.4.2)。
+    #[test]
+    fn test_malformed_content_length_end_stream_resets_stream_client() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), true)
+            .expect("start_stream should succeed");
+        // リクエスト送信由来のイベントと出力を消費する
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        // :status 200 + Content-Length: 5 のレスポンスを END_STREAM 付きで受信すると
+        // END_STREAM 時の Content-Length 不一致 (malformed) になる
+        let response = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_response_headers_with_content_length("200", "5"),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(response)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        // Event::StreamReset (PROTOCOL_ERROR, 接続ウィンドウ消費量 0) が通知され、
+        // Event::HeadersReceived / TrailersReceived / StreamClosed は生成されない
+        assert_headers_reset_events(
+            &mut client,
+            1,
+            ErrorCode::ProtocolError,
+            "Content-Length 不一致 (クライアント)",
+        );
+    }
+
+    /// リクエストボディ送信中 (Open) のクライアントが END_STREAM 付きレスポンスの
+    /// Content-Length 不一致を受信すると half-closed (remote) からリセットされ、
+    /// ストリームが streams から削除される
+    ///
+    /// `start_stream(..., false)` で送信したリクエストは END_STREAM なしのため、
+    /// 受信時点の状態は Open であり、recv_headers (END_STREAM) により
+    /// half-closed (remote) に遷移してから Content-Length 不一致
+    /// (RFC 9113 Section 8.1.1: malformed) が検出される。この経路は
+    /// half-closed (remote) への RST_STREAM 送信であり、RFC 9113 Section 5.1 の
+    /// closed 状態への送信制限には抵触しない。
+    #[test]
+    fn test_malformed_content_length_open_state_resets_stream() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+        // リクエスト送信由来のイベントと出力を消費する
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        // :status 200 + Content-Length: 5 のレスポンスを END_STREAM 付きで受信すると
+        // Content-Length 不一致 (malformed) になり、ストリームエラーとして処理される
+        let response = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_response_headers_with_content_length("200", "5"),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(response)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut client,
+            1,
+            ErrorCode::ProtocolError,
+            "Content-Length 不一致 (Open 状態)",
+        );
+
+        // ストリームが streams から削除済みであることを区別可能に検証する
+        // (Open 状態からは half-closed (remote) に遷移するため、マップに残っていたら
+        // 遅延 DATA は recv_data の状態遷移エラーで RST_STREAM (STREAM_CLOSED) が再発する
+        // はずであり、削除済みなら DataDiscarded になる)
+        let delayed_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![1, 2, 3],
+        )));
+        client.feed(&delayed_bytes).expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        let events = collect_events(&mut client);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataDiscarded {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    connection_window_consumed: 3,
+                } if id.as_u32() == 1
+            )),
+            "リセット済みストリームへの遅延 DATA で DataDiscarded が通知されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "リセット済みストリームへの遅延 DATA で StreamReset が再発してはならない"
+        );
+    }
+
+    /// コンテンツを持たないレスポンス (204) は非ゼロ Content-Length を持つことが
+    /// 合法であり、END_STREAM 付きでもリセットされず `Event::HeadersReceived` になる
+    ///
+    /// RFC 9113 Section 8.1.1: 「A response that is defined to have no content ... MAY
+    /// have a non-zero content-length header field」。Content-Length 不一致チェックの
+    /// skip_check (204/304/HEAD) の正例であり、HEADERS 経路のリセット変換が
+    /// 誤って適用されないことを検証する。
+    #[test]
+    fn test_no_content_content_length_end_stream_headers_accepted() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), false)
+            .expect("start_stream should succeed");
+        // リクエスト送信由来のイベントと出力を消費する
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        // :status 204 + Content-Length: 5 のレスポンスを END_STREAM 付きで受信しても
+        // リセットされず、Event::HeadersReceived が通知される
+        let response = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_response_headers_with_content_length("204", "5"),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(response)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        let events = collect_events(&mut client);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::HeadersReceived {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    end_stream: true,
+                    ..
+                } if id.as_u32() == 1
+            )),
+            "no-content レスポンス + 非ゼロ Content-Length + END_STREAM で HeadersReceived が通知されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "no-content レスポンスの Content-Length 不一致チェックはスキップされるべき"
+        );
+    }
+
+    /// END_STREAM 付きリクエストの Content-Length: 0 は合法であり、
+    /// リセットされず `Event::HeadersReceived` になる
+    ///
+    /// RFC 9113 Section 8.1.1: Content-Length と DATA ペイロード長の不一致が
+    /// malformed の条件であり、END_STREAM 時の Content-Length チェックは
+    /// 非ゼロのみを対象とする (`content_length.is_some_and(|len| len != 0)` の
+    /// 合法側境界)。
+    #[test]
+    fn test_content_length_zero_end_stream_headers_accepted() {
+        let mut server = setup_server();
+
+        // Content-Length: 0 のリクエストを END_STREAM 付きで受信しても
+        // リセットされず、Event::HeadersReceived が通知される
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_request_headers_with_content_length("0"),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        let events = collect_events(&mut server);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::HeadersReceived {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    end_stream: true,
+                    ..
+                } if id.as_u32() == 1
+            )),
+            "Content-Length: 0 + END_STREAM で HeadersReceived が通知されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "Content-Length: 0 + END_STREAM で StreamReset が生成されてはならない"
+        );
+    }
+
+    /// ストリームエラーで RST_STREAM を送信したストリームが GOAWAY の last-stream-id に
+    /// 含まれる
+    ///
+    /// RFC 9113 Section 6.8: last-stream-id は「sender が何らかの action を取った
+    /// かもしれない最高番号のストリーム ID」であり、RST_STREAM 送信もこの action に
+    /// 該当する。ヘッダー処理が成功したストリームと同様に、
+    /// ストリームエラーでリセットしたストリームも `last_successful_stream_id` の
+    /// 更新対象に含める。
+    #[test]
+    fn test_reset_stream_included_in_goaway_last_stream_id() {
+        let mut server = setup_server();
+
+        // Content-Length: 5 のリクエストを END_STREAM 付きで受信して
+        // Content-Length 不一致 (malformed) を発生させ、RST_STREAM (PROTOCOL_ERROR) を
+        // 送信させる (ストリーム ID 1)
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_request_headers_with_content_length("5"),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        // ストリームエラー由来のイベントと出力を消費する
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // GOAWAY を送信し、last-stream-id にストリーム ID 1 が含まれることを検証する
+        server
+            .send_goaway(ErrorCode::NoError, Vec::new())
+            .expect("send_goaway should succeed");
+        let output = server
+            .poll_output()
+            .expect("GOAWAY フレームが出力されるべき");
+        let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+        decoder.feed(&output);
+        let mut found_goaway = false;
+        while let Some(frame) = decoder.decode().expect("decode should succeed") {
+            if let Frame::Goaway(goaway) = frame {
+                assert_eq!(
+                    goaway.last_stream_id.get(),
+                    1,
+                    "GOAWAY の last-stream-id に RST_STREAM 送信済みストリームが含まれるべき"
+                );
+                found_goaway = true;
+            }
+        }
+        assert!(found_goaway, "GOAWAY フレームが出力されるべき");
+    }
+
+    /// CONTINUATION に分割されたヘッダーブロックでも Content-Length 不一致の
+    /// ストリームエラーが RST_STREAM (PROTOCOL_ERROR) 送信 + streams 削除に変換され、
+    /// 接続が維持される
+    ///
+    /// `handle_continuation` も `process_headers` を経由するため、単一 HEADERS フレームと
+    /// 同じリセット経路を通る。分割送信の後始末 (header_block_fragment のクリア等) と
+    /// リセットの相互作用も併せて検証する。
+    #[test]
+    fn test_malformed_content_length_end_stream_resets_stream_continuation() {
+        let mut server = setup_server();
+
+        // Content-Length: 5 のリクエストを HEADERS + CONTINUATION に分割して送信する
+        let encoded = encode_request_headers_with_content_length("5");
+        let split = encoded.len() / 2;
+        let headers = HeadersFrame::new(NonZeroStreamId::from_static(1), encoded[..split].to_vec())
+            .with_end_headers(false)
+            .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        let continuation = create_continuation(
+            NonZeroStreamId::from_static(1),
+            encoded[split..].to_vec(),
+            true,
+        );
+        server
+            .feed(&encode_frame(&Frame::Continuation(continuation)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        // 単一 HEADERS フレームと同じく、ストリームエラーとして処理される
+        assert_headers_reset_events(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            "Content-Length 不一致 (CONTINUATION 分割)",
+        );
+
+        // CONTINUATION 経由でもリセット済みストリームへの遅延 DATA は破棄される
+        let delayed_bytes = encode_frame(&Frame::Data(DataFrame::new(
+            NonZeroStreamId::from_static(1),
+            vec![1, 2, 3],
+        )));
+        server.feed(&delayed_bytes).expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        let events = collect_events(&mut server);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::DataDiscarded {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    connection_window_consumed: 3,
+                } if id.as_u32() == 1
+            )),
+            "リセット済みストリームへの遅延 DATA で DataDiscarded が通知されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "リセット済みストリームへの遅延 DATA で StreamReset が再発してはならない"
         );
     }
 
