@@ -320,17 +320,58 @@ impl Connection {
         Ok(())
     }
 
+    /// ヘッダー検証エラーをストリームエラーとして処理する
+    ///
+    /// ストリームがまだ生成されていない (新規ストリームで検出された検証エラー) 場合は
+    /// 生成してから `reset_stream_internal` でリセットする。生成してからリセットする
+    /// ことで、RST_STREAM 送信・`Event::StreamReset` 生成・`closed_streams` 登録・
+    /// `streams` 削除を既存ストリームと一貫させられる。加えて、生成済みのストリームは
+    /// `is_idle_stream` (`src/connection.rs`) が最初に `streams` への存在を判定するため、
+    /// idle 判定が発火しない (RFC 9113 Section 6.4: idle ストリームへの RST_STREAM は
+    /// 送信禁止)。
+    ///
+    /// 受信した HEADERS の検証エラーは RFC 9113 Section 8.1.1 の malformed として
+    /// ストリームエラーの PROTOCOL_ERROR で処理する (Section 5.4.2 / Section 8.1.1:
+    /// malformed は PROTOCOL_ERROR が MUST)。
+    fn reset_headers_validation_error(&mut self, stream_id: StreamId) -> Result<()> {
+        let sid = stream_id.as_u32();
+        self.streams.entry(sid).or_insert_with(|| {
+            Stream::new(
+                stream_id,
+                self.remote_settings.initial_window_size().get(),
+                self.local_settings.initial_window_size().get(),
+            )
+        });
+        self.reset_stream_internal(stream_id, ErrorCode::ProtocolError, 0)?;
+        Ok(())
+    }
+
     /// ヘッダーを処理する
     ///
-    /// 状態機械 `recv_headers` による状態遷移を完了させた後に検出される malformed
-    /// (1xx + END_STREAM / Content-Length 不一致) は、ストリームエラーとして
-    /// RST_STREAM を送信してストリームを破棄し、`Ok(())` を返す (接続を維持する)。
+    /// 以下の不正な HEADERS はストリームエラーとして処理し、RST_STREAM を送信して
+    /// ストリームを破棄し、`Ok(())` を返す (接続を維持する):
+    ///
+    /// - `recv_headers` 状態機械の状態遷移エラー (RFC 9113 Section 5.1:
+    ///   half-closed (remote) 状態への HEADERS 受信等) は、`handle_data` の
+    ///   `recv_data` 処理と同じパターンで `reset_stream_internal` を
+    ///   STREAM_CLOSED で呼ぶ
+    /// - 状態遷移前に検出されるヘッダー検証エラー (疑似ヘッダー欠如・
+    ///   validate_request_headers / validate_response_headers / validate_trailers /
+    ///   :protocol ネゴシエーション違反・Content-Length パースエラー等) は、
+    ///   [`Self::reset_headers_validation_error`] から `reset_stream_internal` を
+    ///   PROTOCOL_ERROR で呼ぶ (RFC 9113 Section 8.1.1: malformed はストリームエラー
+    ///   として処理する MUST、Section 5.4.2: ストリームエラーは RST_STREAM で処理する)
+    ///
+    /// 検証エラー (Section 8.1.1 の malformed) は状態遷移エラー (Section 5.1) より先に
+    /// 検出され PROTOCOL_ERROR が優先される。RFC は両方の MUST が重なる場合の優先順位を
+    /// 定めておらず、これは実装判断である (変更前と同じ挙動)。
+    ///
+    /// 新規ストリーム (ストリーム未作成) で検出される検証エラーは、
+    /// [`Self::reset_headers_validation_error`] がストリームを生成してからリセットする
+    /// (一貫性の詳細と idle 判定が発火しない根拠は当該ヘルパーの doc 参照)。
+    ///
     /// 呼び出し側は `Ok` が返れば GOAWAY 用の last_successful_stream_id を更新する
     /// (RST_STREAM 送信も RFC 9113 Section 6.8 の last-stream-id 更新対象)。
-    /// 状態遷移前に検出されるヘッダー検証エラー (疑似ヘッダー欠如・
-    /// validate_request_headers / validate_response_headers / validate_trailers 等) と
-    /// `recv_headers` 自体の状態遷移エラーは、ストリームがマップに残らない・または
-    /// 残りうるが、本経路の変換対象外であり既存挙動 (`Err` 返却) を維持する。
     fn process_headers(
         &mut self,
         stream_id: StreamId,
@@ -354,10 +395,8 @@ impl Connection {
                 .get(&sid)
                 .is_some_and(|s| s.initial_headers_received());
             if is_initial {
-                return Err(Error::stream_error(
-                    ErrorCode::ProtocolError,
-                    "initial HEADERS must contain pseudo-headers",
-                ));
+                self.reset_headers_validation_error(stream_id)?;
+                return Ok(());
             }
         }
 
@@ -368,29 +407,31 @@ impl Connection {
             && let Some(stream) = self.streams.get(&sid)
             && stream.initial_headers_received()
         {
-            return Err(Error::stream_error(
-                ErrorCode::ProtocolError,
-                "pseudo-headers in non-initial HEADERS",
-            ));
+            self.reset_headers_validation_error(stream_id)?;
+            return Ok(());
         }
 
         let is_trailer = !has_pseudo_header;
 
         if is_trailer {
             // RFC 9113 Section 8.1: トレーラー検証
-            validation::validate_trailers(&headers)?;
+            if validation::validate_trailers(&headers).is_err() {
+                self.reset_headers_validation_error(stream_id)?;
+                return Ok(());
+            }
             if !end_stream {
-                return Err(Error::stream_error(
-                    ErrorCode::ProtocolError,
-                    "trailers must be sent with END_STREAM",
-                ));
+                self.reset_headers_validation_error(stream_id)?;
+                return Ok(());
             }
         } else {
             // ヘッダー検証
             // サーバーはリクエストを受信、クライアントはレスポンスを受信
             match self.role {
                 Role::Server => {
-                    validation::validate_request_headers(&headers)?;
+                    if validation::validate_request_headers(&headers).is_err() {
+                        self.reset_headers_validation_error(stream_id)?;
+                        return Ok(());
+                    }
 
                     // RFC 8441: Extended CONNECT のネゴシエーションチェック
                     // :protocol を含むリクエストは ENABLE_CONNECT_PROTOCOL=1 を
@@ -401,10 +442,8 @@ impl Connection {
                         .map(|h| h.value().to_vec());
                     let has_protocol = protocol_value.is_some();
                     if has_protocol && !self.local_settings.enable_connect_protocol() {
-                        return Err(Error::stream_error(
-                            ErrorCode::ProtocolError,
-                            "received :protocol without ENABLE_CONNECT_PROTOCOL",
-                        ));
+                        self.reset_headers_validation_error(stream_id)?;
+                        return Ok(());
                     }
 
                     // リクエストメソッドと :protocol を記録する
@@ -429,7 +468,10 @@ impl Connection {
                     }
                 }
                 Role::Client => {
-                    validation::validate_response_headers(&headers)?;
+                    if validation::validate_response_headers(&headers).is_err() {
+                        self.reset_headers_validation_error(stream_id)?;
+                        return Ok(());
+                    }
 
                     // クライアント側: レスポンスステータスの判定
                     let status = headers
@@ -464,7 +506,13 @@ impl Connection {
         let content_length = if is_trailer {
             None
         } else {
-            Self::extract_content_length(&headers)?
+            match Self::extract_content_length(&headers) {
+                Ok(content_length) => content_length,
+                Err(_) => {
+                    self.reset_headers_validation_error(stream_id)?;
+                    return Ok(());
+                }
+            }
         };
 
         // RFC 9113 Section 6.5.2 / Section 6.9.2: 受信したストリームの場合、
@@ -479,7 +527,15 @@ impl Connection {
                 )
             });
 
-            stream.state_machine_mut().recv_headers(end_stream)?;
+            // `recv_headers` が失敗する状態のうち reserved (local) は
+            // PUSH_PROMISE 非対応のため到達せず、実質的な対象は half-closed (remote) のみ
+            // (RFC 9113 Section 5.1: reserved (local) への HEADERS 受信は接続エラー
+            // PROTOCOL_ERROR の規定だが、本実装は PUSH_PROMISE 受信を接続エラーとして
+            // 拒否するため遷移しない)。
+            if stream.state_machine_mut().recv_headers(end_stream).is_err() {
+                self.reset_stream_internal(stream_id, ErrorCode::StreamClosed, 0)?;
+                return Ok(());
+            }
 
             // RFC 9113 Section 8.2.3: 複数の Cookie ヘッダーを連結する
             let headers = concatenate_cookies(headers);

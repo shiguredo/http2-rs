@@ -1,7 +1,7 @@
 # ヘッダー処理の残存エラー経路でストリームが streams に残り続け、接続が終了する問題を修正する
 
 - Created: 2026-08-10
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-08-10
 - Branch: feature/fix-header-error-paths
 - Polished: 2026-08-10
 
@@ -53,12 +53,14 @@
 
 ## 解決方法
 
-1. `src/connection/headers.rs` の `process_headers` のエラー経路 (状態遷移前の検証エラーと `recv_headers` 状態遷移エラー) を `reset_stream_internal` による処理に変換する。`Event::HeadersReceived` / `Event::TrailersReceived` は push せず、`connection_window_consumed: 0` で `Event::StreamReset` を生成する
-2. 新規ストリーム (ストリーム未作成) で検出される経路は、ストリームを生成してから `reset_stream_internal` を呼ぶ
-3. 変換後は `process_headers` が `Ok` を返すため、`handle_headers` / `handle_continuation` の `last_successful_stream_id` 更新が RST_STREAM 送信済みのストリームにも適用される (0105 で確立した挙動を継続し、コード変更は不要)
-4. `src/connection/headers.rs` の `process_headers` の doc コメント (状態遷移前の検証エラーと `recv_headers` 状態遷移エラーを「変換対象外」としている記述) を新挙動に合わせて更新する
-5. 単体テストを追加・書き換えする (変換対象の経路を適用可能なロール (クライアント / サーバー) で、RST_STREAM のエラーコード検証、`Event::HeadersReceived` / `Event::TrailersReceived` / `Event::StreamClosed` の非生成を含む)。既存の `test_initial_headers_without_pseudo_is_error` を新挙動を検証する形に書き換え、テスト名も新挙動に合わせて変更する
-6. `CHANGES.md` の `## develop` に `[FIX]` エントリを追加する (shiguredo-changelog スキルを参照)
+1. `src/connection/headers.rs` の `process_headers` のエラー経路 (状態遷移前のヘッダー検証エラーと `recv_headers` 状態遷移エラー) を `reset_stream_internal` による処理に変換した。`Event::HeadersReceived` / `Event::TrailersReceived` は push せず、`connection_window_consumed: 0` で `Event::StreamReset` を生成する
+2. 新規ストリーム (ストリーム未作成) で検出される経路は、ヘルパー `reset_headers_validation_error` がストリームを生成してから `reset_stream_internal` (PROTOCOL_ERROR) でリセットする (RST_STREAM 送信・`Event::StreamReset` 生成・`closed_streams` 登録・`streams` 削除を一貫させる)
+3. 状態遷移エラー (`recv_headers` の Err) は `handle_data` の `recv_data` 処理と同じパターンで `reset_stream_internal` を STREAM_CLOSED で呼ぶ
+4. 変換後は `process_headers` が `Ok` を返すため、`handle_headers` / `handle_continuation` の `last_successful_stream_id` 更新が RST_STREAM 送信済みのストリームにも適用される (0105 で確立した挙動を継続し、コード変更は不要)
+5. `process_headers` の doc コメントを新挙動に合わせて更新した (検証エラーが状態遷移エラーより優先される実装判断の明記、idle 判定が発火しない根拠)
+6. `tests/test_connection.rs` の `mod reset_stream` に単体テストを追加・書き換えした。変換対象の全経路 × 適用可能ロール (クライアント / サーバー) をカバーし、RST_STREAM のエラーコード検証・`Event::HeadersReceived` / `Event::TrailersReceived` / `Event::StreamClosed` の非生成・リセット後の遅延 DATA の `Event::DataDiscarded`・GOAWAY last-stream-id への反映 (新規ストリーム経路 / CONTINUATION 経路含む) を検証する。既存の `test_initial_headers_without_pseudo_is_error` を `test_initial_headers_without_pseudo_resets_stream` に書き換えた
+7. `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した (shiguredo-changelog スキルに従う)
+8. `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通ることを確認した
 
 ## 参照
 
