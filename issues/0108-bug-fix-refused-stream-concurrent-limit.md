@@ -1,7 +1,7 @@
 # 同時ストリーム数上限超過 (REFUSED_STREAM) が接続終了を引き起こす問題を修正する
 
 - Created: 2026-08-10
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-08-15
 - Branch: feature/fix-refused-stream-concurrent-limit
 - Polished: 2026-08-14
 
@@ -40,6 +40,15 @@
 - GOAWAY の last-stream-id に REFUSED_STREAM したストリームが反映される
 - リセット後の遅延 DATA が `Event::DataDiscarded` で破棄され、接続が維持される
 - 上記を検証する単体テスト (同時ストリーム数上限を超えた新規 HEADERS をサーバーロールで受信するケース) を `tests/test_connection.rs` の `mod reset_stream` に追加し、`CHANGES.md` の `## develop` に `[FIX]` エントリ (shiguredo-changelog スキルに従う) を追加し、`cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通る
+
+## 解決方法
+
+1. `src/connection/headers.rs` の `handle_headers` の同時ストリーム数上限チェック (`check_concurrent_streams_limit`) のストリームエラー (REFUSED_STREAM) を、`process()` から呼び出し側への伝播ではなく RST_STREAM 送信 + `Event::StreamReset` 生成 + `streams` 削除に変換した。上限超過は field block のデコード前に検出されるため、検出結果を `header_concurrent_limit_exceeded` (`src/connection.rs` の `Connection` フィールド) に記録し、デコード完了後 (単一フレームは `handle_headers`、多フレームは `handle_continuation`) にリセットへ分岐する (RFC 9113 Section 4.3: 破棄する場合でも伸長する必要がある MUST)
+2. ヘルパー `reset_refused_concurrent_stream` を追加し、`ensure_stream` でストリームを生成してから `reset_stream_internal` (REFUSED_STREAM) でリセットする (RST_STREAM 送信・`Event::StreamReset` (connection_window_consumed: 0) 生成・`closed_streams` 登録・`streams` 削除を一貫させる)。RST_STREAM 送信は RFC 9113 Section 6.8 の last-stream-id 更新対象であり、リセット分岐は `process_headers` をスキップするため、リセット分岐側で `last_successful_stream_id` を更新する
+3. ストリーム生成部は `reset_headers_validation_error` と共通の `ensure_stream` に抽出した
+4. `tests/test_connection.rs` の `mod reset_stream` に単体テスト 7 件を追加した (上限超過の単一フレーム / CONTINUATION 分割 / GOAWAY last-stream-id (単一・多フレーム) / HPACK 状態維持 (単一・多フレーム) / 上限 0 / 2 回連続の上限超過)
+5. `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した (shiguredo-changelog スキルに従う)
+6. `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通ることを確認した
 
 ## 参照
 
