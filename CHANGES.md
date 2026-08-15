@@ -216,6 +216,8 @@
   - @voluntas
 - [FIX] `Connection::extract_content_length` が RFC 9110 Section 8.6 の ABNF (`Content-Length = 1*DIGIT`) に違反する Content-Length 値 (符号付き数字・空値・非数字) を stream error (PROTOCOL_ERROR) で拒否するように修正する。`u64::from_str` が先頭の `+` を受理するため、`+0` のような符号付き数字が ABNF 違反であるにもかかわらず受理されていた (RFC 9110 Section 8.6 / RFC 9113 Section 8.2.1)
   - @voluntas
+- [FIX] `Connection` の CONNECT 確立済みストリームへの HEADERS と未知フレームのストリームエラーが `Err` として伝播して接続全体が終了する問題を修正する。ストリームエラーは RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` 通知に変換し、`streams` から削除して接続を維持する (RFC 9113 Section 4.3 / Section 5.4.2 / Section 6.8 / Section 8.5)
+  - @voluntas
 
 ### misc
 
