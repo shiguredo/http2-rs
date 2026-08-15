@@ -1,7 +1,7 @@
 # Content-Length の ABNF 違反値 (符号付き数字) を許容する問題を修正する
 
 - Created: 2026-08-10
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-08-15
 - Branch: feature/fix-content-length-abnf-validation
 - Polished: 2026-08-15
 
@@ -35,3 +35,10 @@ RFC 9110 Section 8.6 は ABNF に一致しない Content-Length の転送を MUS
 - `refs/rfc9110.txt` — Section 8.6 (Content-Length)
 - `refs/rfc9113.txt` — Section 8.1.1 (Malformed Messages) / Section 8.2.1 (Field Validity)
 - `src/connection/headers.rs` — `Connection::extract_content_length`
+
+## 解決方法
+
+1. `src/connection/headers.rs` の `extract_content_length` に、パース前に値の全バイトが ASCII 数字 (`0-9`) であることを検証する処理を追加した (空文字列は `1*DIGIT` の 1 桁以上に違反するため同様に拒否)。違反時は既存のパースエラーと同じ `Error::stream_error(ErrorCode::ProtocolError, ...)` を返し、`process_headers` の既存経路 (`reset_headers_validation_error`) により RST_STREAM (PROTOCOL_ERROR) 送信・`Event::StreamReset` (connection_window_consumed: 0) 生成・`streams` 削除・接続維持に変換される
+2. `tests/test_connection.rs` の `mod reset_stream` に単体テスト 2 件 (`test_signed_content_length_resets_stream_server` / `test_signed_content_length_resets_stream_client`) を追加した。テスト値は `+0` を使い、END_STREAM 時の Content-Length 不一致チェック (非ゼロ値の検出) をすり抜けて ASCII 数字検証が唯一の拒否経路になることを検証する
+3. `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した (shiguredo-changelog スキルに従う)
+4. `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通ることを確認した
