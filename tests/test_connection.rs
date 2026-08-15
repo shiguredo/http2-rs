@@ -3874,4 +3874,440 @@ mod reset_stream {
         // ストリームが削除済みであることを遅延 DATA で検証する
         assert_delayed_data_discarded(&mut client, 1);
     }
+
+    /// 同時ストリーム数上限超過の新規 HEADERS がストリームエラーとして
+    /// RST_STREAM (REFUSED_STREAM) 送信 + `Event::StreamReset` + `streams` 生成・削除に
+    /// 変換され、接続が維持される
+    ///
+    /// RFC 9113 Section 5.1.2: 受信した HEADERS が広告した同時ストリーム数上限を
+    /// 超える場合、PROTOCOL_ERROR または REFUSED_STREAM のストリームエラーで応答
+    /// することを MUST と定める。本実装は REFUSED_STREAM を選択する (Section 8.7
+    /// の自動再試行を許可し、送信側 `start_stream` の同時上限超過と同じエラー
+    /// コードで一貫させる)。ストリームエラーは RST_STREAM で処理して接続を維持
+    /// する (Section 5.4.2)。
+    ///
+    /// 上限超過はデコード前に検出されるが、field block は破棄する場合でも伸長
+    /// しなければならない (RFC 9113 Section 4.3 の MUST) ため、デコード完了後に
+    /// ストリームを生成してからリセットする。
+    #[test]
+    fn test_concurrent_stream_limit_exceeded_resets_stream() {
+        let limits = Limits::builder()
+            .max_concurrent_streams(Some(1))
+            .build()
+            .expect("should succeed");
+        let mut server = setup_server_with_limits(limits);
+        open_stream_on_server(&mut server, 1);
+        // ストリーム 1 の HEADERS 由来のイベントを消費する
+        while server.poll_event().is_some() {}
+
+        // 上限 (1) を超える新規 HEADERS (ストリーム 3) を受信する
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(3),
+            encode_valid_request_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut server,
+            3,
+            ErrorCode::RefusedStream,
+            "同時ストリーム数上限超過",
+        );
+
+        // ストリームが生成されてから削除済みであることを遅延 DATA で検証する
+        assert_delayed_data_discarded(&mut server, 3);
+    }
+
+    /// 同時ストリーム数上限超過の新規 HEADERS を CONTINUATION 分割で受信した場合も、
+    /// CONTINUATION を吸収してからストリームが生成・リセットされ、接続が維持される
+    ///
+    /// 上限超過はデコード前に検出されるが、RFC 9113 Section 4.3 は破棄する場合でも
+    /// field block の再組み立てと伸長を要求し、伸長しない場合は COMPRESSION_ERROR
+    /// の接続エラーで終了しなければならない (MUST) ため、CONTINUATION の吸収と
+    /// デコードを完了してからリセットする。リセット分岐は `process_headers` を
+    /// スキップするため、`handle_continuation` の `last_successful_stream_id` 更新部
+    /// を通らない。RST_STREAM 送信は RFC 9113 Section 6.8 の last-stream-id 更新
+    /// 対象であるため、リセット分岐側の更新が必要であり、GOAWAY の last-stream-id
+    /// に反映されることを検証する。
+    #[test]
+    fn test_concurrent_stream_limit_exceeded_via_continuation_resets_stream() {
+        let limits = Limits::builder()
+            .max_concurrent_streams(Some(1))
+            .build()
+            .expect("should succeed");
+        let mut server = setup_server_with_limits(limits);
+        open_stream_on_server(&mut server, 1);
+        // ストリーム 1 の HEADERS 由来のイベントを消費する
+        while server.poll_event().is_some() {}
+
+        // 上限超過のヘッダーブロックを HEADERS + CONTINUATION に分割して送信する
+        let encoded = encode_valid_request_headers();
+        let split = encoded.len() / 2;
+        let headers = HeadersFrame::new(NonZeroStreamId::from_static(3), encoded[..split].to_vec())
+            .with_end_headers(false)
+            .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        let continuation = create_continuation(
+            NonZeroStreamId::from_static(3),
+            encoded[split..].to_vec(),
+            true,
+        );
+        server
+            .feed(&encode_frame(&Frame::Continuation(continuation)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        // 単一 HEADERS フレームと同じく、ストリームが生成されてからリセットされる
+        assert_headers_reset_events(
+            &mut server,
+            3,
+            ErrorCode::RefusedStream,
+            "同時ストリーム数上限超過 (CONTINUATION 分割)",
+        );
+
+        // CONTINUATION 経由でもリセット済みストリームへの遅延 DATA は破棄される
+        assert_delayed_data_discarded(&mut server, 3);
+
+        // GOAWAY を送信し、last-stream-id にストリーム ID 3 が含まれることを検証する
+        assert_refused_stream_included_in_goaway(&mut server, 3);
+    }
+
+    /// 同時ストリーム数上限超過でリセットしたストリームが GOAWAY の last-stream-id に
+    /// 含まれる (単一 HEADERS フレーム経路)
+    ///
+    /// リセット分岐は `process_headers` をスキップするため、`handle_headers` の
+    /// `last_successful_stream_id` 更新部を通らない。RST_STREAM 送信は RFC 9113
+    /// Section 6.8 の last-stream-id 更新対象であり、リセット分岐側の更新が GOAWAY
+    /// の last-stream-id に反映されることを検証する。
+    #[test]
+    fn test_concurrent_stream_limit_exceeded_included_in_goaway_last_stream_id() {
+        let limits = Limits::builder()
+            .max_concurrent_streams(Some(1))
+            .build()
+            .expect("should succeed");
+        let mut server = setup_server_with_limits(limits);
+        open_stream_on_server(&mut server, 1);
+        // ストリーム 1 の HEADERS 由来のイベントと出力を消費する
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // 上限超過の新規 HEADERS (ストリーム 3) を受信する
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(3),
+            encode_valid_request_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        // ストリームエラー由来のイベントと出力を消費する
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        assert_refused_stream_included_in_goaway(&mut server, 3);
+    }
+
+    /// 同時ストリーム数上限超過でリセットしたストリームが GOAWAY の last-stream-id に
+    /// 含まれることを検証する
+    ///
+    /// RFC 9113 Section 6.8: last-stream-id は「sender が何らかの action を取った
+    /// かもしれない最高番号のストリーム ID」であり、RST_STREAM 送信もこの action に
+    /// 該当する。出力バッファ全体を消費するため、GOAWAY 以外の出力が揃った後に
+    /// 呼ぶこと。
+    fn assert_refused_stream_included_in_goaway(server: &mut Connection, stream_id: u32) {
+        server
+            .send_goaway(ErrorCode::NoError, Vec::new())
+            .expect("send_goaway should succeed");
+        let output = server
+            .poll_output()
+            .expect("GOAWAY フレームが出力されるべき");
+        let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+        decoder.feed(&output);
+        let mut found_goaway = false;
+        while let Some(frame) = decoder.decode().expect("decode should succeed") {
+            if let Frame::Goaway(goaway) = frame {
+                assert_eq!(
+                    goaway.last_stream_id.get(),
+                    stream_id,
+                    "GOAWAY の last-stream-id に REFUSED_STREAM 送信済みストリームが含まれるべき"
+                );
+                found_goaway = true;
+            }
+        }
+        assert!(found_goaway, "GOAWAY フレームが出力されるべき");
+    }
+
+    /// 同時ストリーム数上限超過時も field block がデコードされ、HPACK 状態が維持される
+    ///
+    /// RFC 9113 Section 4.3: field block を破棄する場合でも再組み立てして伸長する
+    /// 必要があり、伸長しない場合は COMPRESSION_ERROR の接続エラーで終了しなければ
+    /// ならない (MUST)。伸長しないままリセットして接続を維持すると、デコーダと
+    /// ピアのエンコーダ文脈がずれ、以降の field block で COMPRESSION_ERROR の
+    /// 接続エラーになる。
+    ///
+    /// 上限超過でリセットされたブロック (ブロック 2) を単一 HEADERS で送り、
+    /// `handle_headers` のフラグ消費分岐を検証する (多フレーム版は
+    /// [`test_concurrent_stream_limit_exceeded_keeps_hpack_state_via_continuation`])。
+    #[test]
+    fn test_concurrent_stream_limit_exceeded_keeps_hpack_state() {
+        let limits = Limits::builder()
+            .max_concurrent_streams(Some(1))
+            .build()
+            .expect("should succeed");
+        let mut server = setup_server_with_limits(limits);
+        assert_hpack_state_kept_after_refused(&mut server, false);
+    }
+
+    /// 同時ストリーム数上限超過の多フレーム field block (HEADERS + CONTINUATION) でも
+    /// field block がデコードされ、HPACK 状態が維持される
+    ///
+    /// [`test_concurrent_stream_limit_exceeded_keeps_hpack_state`] の多フレーム対称
+    /// テスト。上限超過のフラグ消費は `handle_continuation` の独立した分岐で行われる
+    /// ため、デコード完了後の分岐が正しく実行されることを動的テーブルの同期で固定
+    /// する (RFC 9113 Section 4.3 の根拠は単一フレーム版の doc 参照)。
+    #[test]
+    fn test_concurrent_stream_limit_exceeded_keeps_hpack_state_via_continuation() {
+        let limits = Limits::builder()
+            .max_concurrent_streams(Some(1))
+            .build()
+            .expect("should succeed");
+        let mut server = setup_server_with_limits(limits);
+        assert_hpack_state_kept_after_refused(&mut server, true);
+    }
+
+    /// 同時ストリーム数上限超過のリセット後も HPACK 状態が維持されることを検証する
+    ///
+    /// 検証方法: 1 つの `HpackEncoder` をピアに見立てて 3 つの field block を
+    /// エンコードする。上限超過でリセットされたブロック (ブロック 2) がデコード
+    /// されないと動的テーブルがずれ、リセット後の新規 HEADERS (ブロック 3) の
+    /// 動的テーブル参照が誤った値になるか COMPRESSION_ERROR になる。正しく
+    /// デコードされていれば値が一致する。
+    ///
+    /// この検証は、エンコーダが動的テーブルの完全一致エントリを Indexed Header
+    /// Field (RFC 7541 Section 6.1) でエンコードする実装に依存する。リテラル優先
+    /// の実装に変わった場合は検出力が落ちるため、実装変更時に再評価すること。
+    ///
+    /// `split_block2` が真の場合はブロック 2 を HEADERS + CONTINUATION に分割して
+    /// 送り、`handle_continuation` のフラグ消費分岐を検証する。偽の場合は単一
+    /// HEADERS で送り、`handle_headers` の分岐を検証する。
+    fn assert_hpack_state_kept_after_refused(server: &mut Connection, split_block2: bool) {
+        let mut encoder = HpackEncoder::new(4096);
+
+        // ブロック 1: ストリーム 1 (上限内のため正常に処理される)
+        let mut first_headers = request_headers();
+        first_headers.push(HeaderField::new("x-dynamic", "v1").expect("valid header field"));
+        let mut block1 = Vec::new();
+        encoder.encode(&mut block1, &first_headers);
+        let frame1 = HeadersFrame::new(NonZeroStreamId::from_static(1), block1)
+            .with_end_headers(true)
+            .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(frame1)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // ブロック 2: ストリーム 3 (上限超過 → デコード後にリセットされる)
+        let mut second_headers = request_headers();
+        second_headers.push(HeaderField::new("x-dynamic", "v2").expect("valid header field"));
+        let mut block2 = Vec::new();
+        encoder.encode(&mut block2, &second_headers);
+        if split_block2 {
+            // CONTINUATION 分割で送信し、多フレーム経路のフラグ消費を検証する
+            let split = block2.len() / 2;
+            let frame2 =
+                HeadersFrame::new(NonZeroStreamId::from_static(3), block2[..split].to_vec())
+                    .with_end_headers(false)
+                    .with_end_stream(true);
+            server
+                .feed(&encode_frame(&Frame::Headers(frame2)))
+                .expect("feed should succeed");
+            server.process().expect("process should succeed");
+            let continuation = create_continuation(
+                NonZeroStreamId::from_static(3),
+                block2[split..].to_vec(),
+                true,
+            );
+            server
+                .feed(&encode_frame(&Frame::Continuation(continuation)))
+                .expect("feed should succeed");
+            server.process().expect("process should succeed");
+        } else {
+            let frame2 = HeadersFrame::new(NonZeroStreamId::from_static(3), block2)
+                .with_end_headers(true)
+                .with_end_stream(true);
+            server
+                .feed(&encode_frame(&Frame::Headers(frame2)))
+                .expect("feed should succeed");
+            server.process().expect("process should succeed");
+        }
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // ストリーム 1 をリセットして同時ストリーム数の上限を空ける
+        server
+            .reset_stream(client_stream_id(1), ErrorCode::Cancel)
+            .expect("reset_stream should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // ブロック 3: ストリーム 5 (動的テーブル参照を含み、正常に処理される)
+        // ブロック 2 がデコードされていれば参照が正しく解決され、
+        // されていなければ COMPRESSION_ERROR の接続エラーになる
+        let mut block3 = Vec::new();
+        encoder.encode(&mut block3, &second_headers);
+        let frame3 = HeadersFrame::new(NonZeroStreamId::from_static(5), block3)
+            .with_end_headers(true)
+            .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(frame3)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        // ストリーム 5 の HEADERS が正常に処理され、x-dynamic: v2 として受信される
+        let events = collect_events(server);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::HeadersReceived {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    headers,
+                    ..
+                } if id.as_u32() == 5
+                    && headers
+                        .iter()
+                        .any(|h| h.name() == b"x-dynamic" && h.value() == b"v2")
+            )),
+            "リセット後の新規 HEADERS が正常に処理され、x-dynamic: v2 が受信されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "リセット後の新規 HEADERS で StreamReset が生成されてはならない"
+        );
+    }
+
+    /// 同時ストリーム数上限が 0 のサーバーが受信した最初の新規 HEADERS が
+    /// RST_STREAM (REFUSED_STREAM) でリセットされ、接続が維持される
+    ///
+    /// RFC 9113 Section 6.5.2: SETTINGS_MAX_CONCURRENT_STREAMS は 0 に設定でき、
+    /// ゼロ値は新規ストリームの作成を防ぐ (「A value of 0 ... SHOULD NOT be
+    /// treated as special by endpoints」)。上限超過の検出は既存ストリーム数に
+    /// 依存しないため、最初の新規 HEADERS から REFUSED_STREAM でリセットされる
+    /// (RFC 9113 Section 5.1.2)。
+    #[test]
+    fn test_concurrent_stream_limit_zero_resets_stream() {
+        let limits = Limits::builder()
+            .max_concurrent_streams(Some(0))
+            .build()
+            .expect("should succeed");
+        let mut server = setup_server_with_limits(limits);
+
+        // 上限 0 のため、最初の新規 HEADERS (ストリーム 1) がリセットされる
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_request_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut server,
+            1,
+            ErrorCode::RefusedStream,
+            "同時ストリーム数上限 0",
+        );
+
+        // ストリームが生成されてから削除済みであることを遅延 DATA で検証する
+        assert_delayed_data_discarded(&mut server, 1);
+    }
+
+    /// 同時ストリーム数上限超過のリセットが 2 回連続しても、フラグの往復
+    /// (設定 → 消費) が正しく行われ、接続が維持される
+    ///
+    /// 上限超過の検出はヘッダーブロックごとに `header_concurrent_limit_exceeded` に
+    /// 記録され、デコード完了時に必ず消費される。消費漏れ・残存の回帰があると、
+    /// 2 回目のリセット後に正常な新規 HEADERS が誤ってリセットされるため、
+    /// このテストで検出できる。
+    #[test]
+    fn test_concurrent_stream_limit_exceeded_twice_keeps_connection() {
+        let limits = Limits::builder()
+            .max_concurrent_streams(Some(1))
+            .build()
+            .expect("should succeed");
+        let mut server = setup_server_with_limits(limits);
+        open_stream_on_server(&mut server, 1);
+        // ストリーム 1 の HEADERS 由来のイベントを消費する
+        while server.poll_event().is_some() {}
+
+        // 1 回目の上限超過 (ストリーム 3)
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(3),
+            encode_valid_request_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // 2 回目の上限超過 (ストリーム 5)
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(5),
+            encode_valid_request_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut server,
+            5,
+            ErrorCode::RefusedStream,
+            "2 回目の同時ストリーム数上限超過",
+        );
+
+        // ストリーム 1 をリセットして上限を空け、ストリーム 7 が正常処理されることを
+        // 確認する (フラグが残存していると誤ってリセットされる)
+        server
+            .reset_stream(client_stream_id(1), ErrorCode::Cancel)
+            .expect("reset_stream should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        open_stream_on_server(&mut server, 7);
+        assert!(
+            find_event(&mut server, |e| matches!(
+                e,
+                Event::HeadersReceived {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    ..
+                } if id.as_u32() == 7
+            )),
+            "フラグ往復後に正常な新規 HEADERS (ストリーム 7) が処理されるべき"
+        );
+    }
 }

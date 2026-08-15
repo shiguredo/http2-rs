@@ -273,9 +273,17 @@ impl Connection {
                 ));
             }
 
-            // 同時ストリーム数の上限チェック
-            if !self.streams.contains_key(&sid) {
-                self.check_concurrent_streams_limit(sid)?;
+            // RFC 9113 Section 5.1.2: 上限超過は PROTOCOL_ERROR または REFUSED_STREAM
+            // のストリームエラーで応答する MUST。本実装は REFUSED_STREAM を選択し、
+            // RST_STREAM で処理して接続を維持する (Section 5.4.2 / Section 8.7。
+            // 根拠の詳細は reset_refused_concurrent_stream の doc 参照)。
+            // 上限超過はデコード前に検出されるが、field block は破棄する場合でも
+            // 伸長する必要がある (Section 4.3 の MUST) ため、検出結果を
+            // header_concurrent_limit_exceeded に記録してデコード後のリセットへ
+            // 遅延する。check_concurrent_streams_limit は上限超過時に REFUSED_STREAM
+            // のみを返す。
+            if self.check_concurrent_streams_limit(sid).is_err() {
+                self.header_concurrent_limit_exceeded = true;
             }
         }
 
@@ -301,6 +309,17 @@ impl Connection {
                 return Ok(());
             }
 
+            // 同時ストリーム数上限超過 (header_concurrent_limit_exceeded) の
+            // ヘッダーブロックは、デコード完了後に REFUSED_STREAM でリセットする。
+            // header_end_stream は CONTINUATION 分割時 (end_headers = false) のみ
+            // 設定され、継続中は他フレームが拒否されるため、本分岐では常に false
+            // でありリセット不要。
+            if self.header_concurrent_limit_exceeded {
+                self.header_concurrent_limit_exceeded = false;
+                self.reset_refused_concurrent_stream(StreamId::from(frame.stream_id))?;
+                return Ok(());
+            }
+
             self.process_headers(StreamId::from(frame.stream_id), headers, frame.end_stream)?;
 
             // RFC 9113 Section 6.8: RST_STREAM 送信も last-stream-id の更新対象
@@ -323,17 +342,28 @@ impl Connection {
     /// ヘッダー検証エラーをストリームエラーとして処理する
     ///
     /// ストリームがまだ生成されていない (新規ストリームで検出された検証エラー) 場合は
-    /// 生成してから `reset_stream_internal` でリセットする。生成してからリセットする
-    /// ことで、RST_STREAM 送信・`Event::StreamReset` 生成・`closed_streams` 登録・
-    /// `streams` 削除を既存ストリームと一貫させられる。加えて、生成済みのストリームは
-    /// `is_idle_stream` (`src/connection.rs`) が最初に `streams` への存在を判定するため、
-    /// idle 判定が発火しない (RFC 9113 Section 6.4: idle ストリームへの RST_STREAM は
-    /// 送信禁止)。
+    /// [`Self::ensure_stream`] で生成してから `reset_stream_internal` でリセットする
+    /// (生成してからリセットする理由は当該メソッドの doc 参照)。
     ///
     /// 受信した HEADERS の検証エラーは RFC 9113 Section 8.1.1 の malformed として
     /// ストリームエラーの PROTOCOL_ERROR で処理する (Section 5.4.2 / Section 8.1.1:
     /// malformed は PROTOCOL_ERROR が MUST)。
     fn reset_headers_validation_error(&mut self, stream_id: StreamId) -> Result<()> {
+        self.ensure_stream(stream_id);
+        self.reset_stream_internal(stream_id, ErrorCode::ProtocolError, 0)?;
+        Ok(())
+    }
+
+    /// ストリームが存在しなければ生成する
+    ///
+    /// リセット前にストリームを生成しておくことで、`reset_stream_internal` が
+    /// `Event::StreamReset` 生成・`closed_streams` 登録・`streams` 削除を既存
+    /// ストリームと一貫して行える (生成しなければ `Event::StreamReset` を生成
+    /// しない)。加えて、生成済みのストリームは `is_idle_stream`
+    /// (`src/connection.rs`) が最初に `streams` への存在を判定するため、
+    /// idle 判定が発火しない (RFC 9113 Section 6.4: idle ストリームへの
+    /// RST_STREAM は送信禁止)。
+    fn ensure_stream(&mut self, stream_id: StreamId) {
         let sid = stream_id.as_u32();
         self.streams.entry(sid).or_insert_with(|| {
             Stream::new(
@@ -342,7 +372,34 @@ impl Connection {
                 self.local_settings.initial_window_size().get(),
             )
         });
-        self.reset_stream_internal(stream_id, ErrorCode::ProtocolError, 0)?;
+    }
+
+    /// 同時ストリーム数上限超過のヘッダーブロックをストリームエラーとして処理する
+    ///
+    /// RFC 9113 Section 5.1.2: 受信した HEADERS が広告した同時ストリーム数上限を
+    /// 超える場合、PROTOCOL_ERROR または REFUSED_STREAM のストリームエラーで応答
+    /// することを MUST と定める。本実装は REFUSED_STREAM を選択する (Section 8.7
+    /// の自動再試行を許可し、送信側 `start_stream` の同時上限超過と同じエラー
+    /// コードで一貫させる)。
+    ///
+    /// field block のデコード完了後に呼ばれる (RFC 9113 Section 4.3: 破棄する場合
+    /// でも再組み立てして伸長する必要があり、伸長しない場合は COMPRESSION_ERROR
+    /// の接続エラーで終了しなければならない MUST)。[`Self::ensure_stream`] で
+    /// ストリームを生成してから `reset_stream_internal` でリセットする。本経路の
+    /// リセットは `last_recv_stream_id` 更新後に行われるため idle 判定は発火
+    /// しないが、生成してからリセットすることで一貫性を保証する。
+    ///
+    /// リセット分岐は `process_headers` をスキップするため、呼び出し側の
+    /// `last_successful_stream_id` 更新 (handle_headers / handle_continuation の
+    /// 通常更新部) を通らない。RST_STREAM 送信は RFC 9113 Section 6.8 の
+    /// last-stream-id 更新対象であるため、本メソッドで更新する。
+    fn reset_refused_concurrent_stream(&mut self, stream_id: StreamId) -> Result<()> {
+        let sid = stream_id.as_u32();
+        self.ensure_stream(stream_id);
+        self.reset_stream_internal(stream_id, ErrorCode::RefusedStream, 0)?;
+        if sid > self.last_successful_stream_id {
+            self.last_successful_stream_id = sid;
+        }
         Ok(())
     }
 
@@ -368,7 +425,7 @@ impl Connection {
     ///
     /// 新規ストリーム (ストリーム未作成) で検出される検証エラーは、
     /// [`Self::reset_headers_validation_error`] がストリームを生成してからリセットする
-    /// (一貫性の詳細と idle 判定が発火しない根拠は当該ヘルパーの doc 参照)。
+    /// (一貫性の詳細と idle 判定が発火しない根拠は [`Self::ensure_stream`] の doc 参照)。
     ///
     /// 呼び出し側は `Ok` が返れば GOAWAY 用の last_successful_stream_id を更新する
     /// (RST_STREAM 送信も RFC 9113 Section 6.8 の last-stream-id 更新対象)。
@@ -708,6 +765,16 @@ impl Connection {
             let is_previously_closed = self.closed_streams.contains(&expected_stream_id);
             if is_previously_closed || self.is_stream_closed(expected_stream_id) {
                 self.header_end_stream = false;
+                return Ok(());
+            }
+
+            // 同時ストリーム数上限超過 (header_concurrent_limit_exceeded) の
+            // ヘッダーブロックは、CONTINUATION を吸収したデコード完了後に
+            // REFUSED_STREAM でリセットする
+            if self.header_concurrent_limit_exceeded {
+                self.header_concurrent_limit_exceeded = false;
+                self.header_end_stream = false;
+                self.reset_refused_concurrent_stream(StreamId::from_wire(expected_stream_id))?;
                 return Ok(());
             }
 

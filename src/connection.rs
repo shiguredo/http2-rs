@@ -115,7 +115,8 @@ pub struct Connection {
     /// ピアはストリームの失敗を認識済みであり、last-stream-id に含めても再試行
     /// 機会を奪う実害はない。
     ///
-    /// 更新箇所はヘッダー処理 (handle_headers / handle_continuation) のみであり、
+    /// 更新箇所はヘッダー処理 (handle_headers / handle_continuation /
+    /// reset_refused_concurrent_stream) のみであり、
     /// ヘッダー処理が成功したストリームに加え、ストリームエラーで RST_STREAM を
     /// 送信したストリームも更新対象に含める。DATA 経路のストリームエラー
     /// (handle_data の違反処理) は更新しない (既存挙動。RST_STREAM を受信した
@@ -152,6 +153,15 @@ pub struct Connection {
     /// HEADERS フレームで END_HEADERS が未設定の場合、END_STREAM フラグを保存し、
     /// 最後の CONTINUATION フレームで使用する (RFC 9113 Section 6.2)。
     header_end_stream: bool,
+    /// ヘッダーブロックが同時ストリーム数上限超過で REFUSED_STREAM により
+    /// リセットされるかどうか
+    ///
+    /// 同時ストリーム数上限超過は field block のデコード前に検出されるため、
+    /// リセットをデコード完了後に遅延する目的で記録する (RFC 9113 Section 4.3:
+    /// 破棄する場合でも伸長する必要があり、伸長しない場合は COMPRESSION_ERROR
+    /// の接続エラーで終了しなければならない MUST)。単一フレームは
+    /// `handle_headers`、多フレームは `handle_continuation` がデコード後に消費する。
+    header_concurrent_limit_exceeded: bool,
     /// 最初に受信した NO_RFC7540_PRIORITIES の値
     ///
     /// RFC 9218 Section 2.1: この設定は接続中に変更できない。
@@ -235,6 +245,7 @@ impl Connection {
             header_continuation_stream: None,
             header_block_fragment: Vec::new(),
             header_end_stream: false,
+            header_concurrent_limit_exceeded: false,
             initial_no_rfc7540_priorities: None,
             peer_sent_enable_connect_protocol: false,
             pending_table_size_update: None,
@@ -1522,6 +1533,9 @@ impl Connection {
     }
 
     /// 同時ストリーム数の上限チェック
+    ///
+    /// 上限超過時にのみ REFUSED_STREAM のストリームエラーを返す。呼び出し側
+    /// (`handle_headers`) は `is_err()` で上限超過を判定してよい。
     fn check_concurrent_streams_limit(&self, stream_id: u32) -> Result<()> {
         if self.streams.contains_key(&stream_id) {
             return Ok(());
