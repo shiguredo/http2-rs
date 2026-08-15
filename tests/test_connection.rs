@@ -2068,8 +2068,9 @@ mod reset_stream {
         // パディングのみの DATA (データ長 0 + パディング 5) は許容される。
         // フレームデコード後の data が空のため no-content チェックを通過する。
         // なお、接続ウィンドウはペイロード全体 (1 + 5 = 6 バイト) 消費されるが、
-        // アプリは data.len() (0) しか知覚できず補充できない (0102 の残課題であり、
-        // 本テストではウィンドウ消費量の検証は対象外)。
+        // アプリは data.len() (0) しか知覚できず補充できない。パディング分の
+        // 接続ウィンドウ消費量はアプリに通知されず、本テストではウィンドウ消費量の
+        // 検証は対象外。
         let padding_only_bytes = encode_frame(&Frame::Data(
             DataFrame::new(NonZeroStreamId::from_static(1), Vec::new()).with_padding(5),
         ));
