@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-08-09
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-08-15
 - Branch: feature/change-remove-send-max
 - Polished: 2026-08-15
 
@@ -80,3 +80,11 @@ pub const fn send_max(&self) -> u64 {
 - `src/webtransport/stream.rs` — `WtStream::send_max()` getter
 - `src/webtransport/flow_control.rs` — `WtFlowControl::send_max()` getter
 - `issues/closed/0072-change-remove-unused-code.md` — 同種の未使用公開 API 削除の先行事例
+
+## 解決方法
+
+`src/webtransport/stream.rs` の `WtStream::send_max()` と `src/webtransport/flow_control.rs` の `WtFlowControl::send_max()` を、doc コメントと `#[must_use]` 属性ごと削除した。いずれも全コードベースで呼び出しが存在しないことを grep で確認済み。`send_max` フィールド・`new()` の引数・`update_send_max()` は維持し、`recv_max()` などの使用中の getter は削除していない。
+
+`CHANGES.md` の `## develop` の既存 `[CHANGE]` 群の末尾にエントリを追加した。テストの追加・変更はない (削除対象の getter を使用するテストは存在しなかった)。
+
+検証として `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo check --manifest-path fuzz/Cargo.toml` のすべてが通過することを確認した。
