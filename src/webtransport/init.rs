@@ -1,24 +1,23 @@
 //! WebTransport-Init ヘッダーフィールドのパーサー
 //!
-//! draft-ietf-webtrans-http2-15 Section 4.3.2 (L519-L541) に定義されている
+//! draft-ietf-webtrans-http2-15 Section 4.3.2 に定義されている
 //! `WebTransport-Init` HTTP ヘッダーフィールドをパースする。
 //! 実体は RFC 8941 (Structured Field Values for HTTP) Dictionary。
 //!
 //! 本モジュールは known キー (`u` / `bl` / `br`) のみ抽出する必要最小限の
 //! Dictionary パーサーを提供する。仕様の MUST 要件:
-//! - 未知キーとパラメータは MUST 無視する (Section 4.3.2 L541)
-//! - パース不能・型不一致・値範囲外は MUST 4xx で拒否する (Section 4.3.2 L525-L526, L539-L540)
+//! - 未知キーとパラメータは MUST 無視する (Section 4.3.2)
+//! - パース不能・型不一致・値範囲外は MUST 4xx で拒否する (Section 4.3.2)
 //! - 重複キーは RFC 8941 Section 4.2.2 の規則で last-wins
 //!
-//! 本実装が参照する仕様は IETF draft (`-14`) であり、draft の改訂や RFC 化に
-//! 伴って章番号・行番号・要求項目が変わりうる。コメント内の `L<番号>` 参照は
-//! 現行 draft 時点のもの。
+//! 本実装が参照する仕様は IETF draft (`-15`) であり、draft の改訂や RFC 化に
+//! 伴って章番号・行番号・要求項目が変わりうる。
 
 use crate::webtransport::error::WtError;
 
 /// WebTransport-Init ヘッダーフィールドの値
 ///
-/// draft-ietf-webtrans-http2-15 Section 4.3.2 (L527-L537) で定義された
+/// draft-ietf-webtrans-http2-15 Section 4.3.2 で定義された
 /// 3 つの Integer キーを optional に保持する。
 ///
 /// `None` はキーがヘッダーに含まれていなかったことを示し、
@@ -73,7 +72,7 @@ impl WtInit {
             parser.skip_parameters()?;
 
             // known キーのみ WtInit に格納する
-            // (RFC 8941 §4.2.2 step 2.4 は last-wins、未知キーは Section 4.3.2 L541 で無視)
+            // (RFC 8941 §4.2.2 step 2.4 は last-wins、未知キーは Section 4.3.2 で無視)
             match key.as_slice() {
                 b"u" => out.u = Some(extract_nonneg_integer(&value, "u")?),
                 b"bl" => out.bl = Some(extract_nonneg_integer(&value, "bl")?),
@@ -109,7 +108,7 @@ impl WtInit {
 
 /// known キー (`u` / `bl` / `br`) の値が Integer で、かつ 0 以上の範囲に収まることを確認する
 ///
-/// 仕様 (Section 4.3.2 L527-L537) は「Integer」とのみ規定。フロー制御の初期値として
+/// 仕様 (Section 4.3.2) は「Integer」とのみ規定。フロー制御の初期値として
 /// 負値・小数・他の型は意味を持たないため `WtError::invalid_input` を返す。
 fn extract_nonneg_integer(value: &SfValue, key: &str) -> Result<u64, WtError> {
     match value {

@@ -33,7 +33,7 @@ use std::collections::{HashMap, VecDeque};
 use crate::connection::Role;
 use crate::webtransport::capsule::MAX_CLOSE_REASON_LEN;
 
-/// RFC 9110 Section 5.6.2: tchar (RFC 7230 §3.2.6 から定義は変わらず移管されている)
+/// RFC 9110 Section 5.6.2: tchar の定義
 ///
 /// `"!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA`
 pub(crate) fn is_tchar(b: u8) -> bool {

@@ -24,9 +24,9 @@ proptest! {
 
     /// 送信/受信ウィンドウ分離初期化テスト
     ///
-    /// RFC 9113 Section 5.2: ストリームのフロー制御において、
-    /// 送信ウィンドウはリモートの initial_window_size、
-    /// 受信ウィンドウはローカルの initial_window_size で初期化する。
+    /// RFC 9113 Section 6.9.2: 新規ストリームのフロー制御ウィンドウは
+    /// SETTINGS_INITIAL_WINDOW_SIZE で初期化される。
+    /// 送信ウィンドウはリモートの設定値、受信ウィンドウはローカルの設定値で初期化する。
     #[test]
     fn prop_separate_windows_init(
         send_initial in valid_window_size(),

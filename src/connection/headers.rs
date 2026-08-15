@@ -736,8 +736,9 @@ impl Connection {
 
     /// Content-Length ヘッダーを抽出する
     ///
-    /// RFC 9110 Section 8.6: 複数の Content-Length が異なる値を持つ場合は malformed。
-    /// ABNF (`Content-Length = 1*DIGIT`) に違反する値 (符号付き数字・空値・非数字) は
+    /// RFC 9110 Section 8.6: Content-Length の ABNF は `Content-Length = 1*DIGIT`。
+    /// 複数の Content-Length が異なる値を持つ場合は framing エラーとして扱う (RFC 9112 Section 6.2)。
+    /// ABNF に違反する値 (符号付き数字・空値・非数字) は
     /// stream error (PROTOCOL_ERROR) で拒否する。
     fn extract_content_length(headers: &[HeaderField]) -> Result<Option<u64>> {
         let mut content_length: Option<u64> = None;
