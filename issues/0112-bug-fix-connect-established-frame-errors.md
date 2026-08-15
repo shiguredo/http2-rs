@@ -1,7 +1,7 @@
 # CONNECT 確立済みストリームへの HEADERS ・未知フレームが接続終了を引き起こす問題を修正する
 
 - Created: 2026-08-15
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-08-15
 - Branch: feature/fix-connect-established-frame-errors
 - Polished: 2026-08-15
 
@@ -48,3 +48,13 @@ CONNECT 確立済みストリームへの HEADERS 拒否経路 (`src/connection/
 - `src/connection.rs` — `Connection::handle_frame` / `Connection::reset_stream_internal`
 - `issues/closed/0106-bug-fix-header-error-paths.md` — 残課題として本経路を記録した先行対応
 - `issues/closed/0108-bug-fix-refused-stream-concurrent-limit.md` — デコード前検出のストリームエラーをデコード後にリセットする遅延機構を確立した先行対応
+
+## 解決方法
+
+1. `src/connection/headers.rs` の `handle_headers` の CONNECT 確立済みストリームへの HEADERS 拒否経路を、`Err(stream_error)` の返却から `connect_established_headers_received` フラグの記録に変換し、field block のデコード完了後にヘルパー `reset_connect_established_headers` で RST_STREAM (PROTOCOL_ERROR) 送信・`Event::StreamReset` (connection_window_consumed: 0) 生成・`streams` 削除・接続維持に変換した (RFC 9113 Section 4.3 の伸長 MUST に従う遅延リセット。同時ストリーム数上限超過と同じ機構)
+2. 多フレーム (HEADERS + CONTINUATION) の場合は `handle_continuation` がフラグを消費してデコード完了後にリセットする。`is_previously_closed` / `is_stream_closed` の閉塞分岐ではフラグの残留を防ぐため防御的にフラグをクリアする (現状到達不能)
+3. `src/connection.rs` の `handle_frame` の `Frame::Unknown` 処理を、`Err(stream_error)` の返却から検出時点での `reset_stream_internal` (PROTOCOL_ERROR) 呼び出しに変換した (未知フレームはデコード済みで HPACK 状態に影響しないため遅延不要)
+4. `last_successful_stream_id` の更新は両経路とも行わない。設計方針では HEADERS 経路を更新対象に含めるとしていたが、レビューで「CONNECT 確立済みストリームは CONNECT リクエスト処理で既に `last_successful_stream_id` に記録済みのため、リセット時の更新は常に no-op である」ことが判明したため、更新と GOAWAY 恒真テストを削除した (完了条件の「GOAWAY の last-stream-id に反映され」は CONNECT リクエスト処理で既に満たされる)
+5. `tests/test_connection.rs` の `mod reset_stream` に単体テスト 5 件を追加した (単一フレーム HEADERS / CONTINUATION 分割 / 未知フレーム / HPACK 状態維持 単一・多フレーム)
+6. `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した (shiguredo-changelog スキルに従う)
+7. `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通ることを確認した
