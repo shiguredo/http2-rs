@@ -698,6 +698,8 @@ impl Connection {
     /// Content-Length ヘッダーを抽出する
     ///
     /// RFC 9110 Section 8.6: 複数の Content-Length が異なる値を持つ場合は malformed。
+    /// ABNF (`Content-Length = 1*DIGIT`) に違反する値 (符号付き数字・空値・非数字) は
+    /// stream error (PROTOCOL_ERROR) で拒否する。
     fn extract_content_length(headers: &[HeaderField]) -> Result<Option<u64>> {
         let mut content_length: Option<u64> = None;
         for header in headers {
@@ -705,6 +707,21 @@ impl Connection {
                 let value_str = std::str::from_utf8(header.value()).map_err(|_| {
                     Error::stream_error(ErrorCode::ProtocolError, "invalid content-length encoding")
                 })?;
+                // RFC 9110 Section 8.6: Content-Length の ABNF は 1*DIGIT であり符号を
+                // 含まない。u64::from_str は先頭の '+' を受理してしまうため、パース前に
+                // 全バイトが ASCII 数字 (0-9) であることを検証して ABNF 違反値を拒否する
+                // (空文字列は 1*DIGIT の 1 桁以上に違反するため同様に拒否する)。
+                // RFC 9113 Section 8.2.1 の注記 (フィールド定義レベルの値不正は必ずしも
+                // malformed にならない) により ABNF 違反値を必ず malformed として扱う
+                // 義務はないが、RFC 9110 Section 8.6 の ABNF との整合を優先する
+                // 実装判断である。u64 に収まらない巨大な ABNF 準拠値は従来どおり
+                // parse エラーで拒否する (既存挙動維持)。
+                if value_str.is_empty() || !value_str.bytes().all(|b| b.is_ascii_digit()) {
+                    return Err(Error::stream_error(
+                        ErrorCode::ProtocolError,
+                        "invalid content-length value",
+                    ));
+                }
                 let len: u64 = value_str.parse().map_err(|_| {
                     Error::stream_error(ErrorCode::ProtocolError, "invalid content-length value")
                 })?;

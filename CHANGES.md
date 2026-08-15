@@ -214,6 +214,8 @@
   - @voluntas
 - [FIX] `WtError::Display` からファイルパス・行番号・バックトレースの出力を削除し、情報漏洩を防止する。`Debug` は kind・reason・location を出力し、alternate format かつ `Backtrace::Captured` のときのみバックトレースを出力する。`Debug` 実装を `Display` 委譲から独立させる
   - @voluntas
+- [FIX] `Connection::extract_content_length` が RFC 9110 Section 8.6 の ABNF (`Content-Length = 1*DIGIT`) に違反する Content-Length 値 (符号付き数字・空値・非数字) を stream error (PROTOCOL_ERROR) で拒否するように修正する。`u64::from_str` が先頭の `+` を受理するため、`+0` のような符号付き数字が ABNF 違反であるにもかかわらず受理されていた (RFC 9110 Section 8.6 / RFC 9113 Section 8.2.1)
+  - @voluntas
 
 ### misc
 

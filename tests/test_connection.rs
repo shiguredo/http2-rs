@@ -3661,6 +3661,81 @@ mod reset_stream {
         );
     }
 
+    /// 符号付き Content-Length のリクエストがストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される (サーバーロール)
+    ///
+    /// RFC 9110 Section 8.6: Content-Length の ABNF は 1*DIGIT であり、`+0` のような
+    /// 符号付き数字は ABNF 違反である。u64::from_str は先頭の '+' を受理するため、
+    /// パース前の ASCII 数字検証で拒否する。値が 0 のため END_STREAM 時の
+    /// Content-Length 不一致チェック (非ゼロ値の検出) では弾かれず、
+    /// ASCII 数字検証が唯一の拒否経路であることが検証できる。
+    #[test]
+    fn test_signed_content_length_resets_stream_server() {
+        let mut server = setup_server();
+
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_request_headers_with_content_length("+0"),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            "符号付き Content-Length (サーバー)",
+        );
+
+        // ストリームが生成されてから削除済みであることを遅延 DATA で検証する
+        assert_delayed_data_discarded(&mut server, 1);
+    }
+
+    /// 符号付き Content-Length のレスポンスがストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される (クライアントロール)
+    ///
+    /// RFC 9110 Section 8.6: Content-Length の ABNF は 1*DIGIT であり、`+0` のような
+    /// 符号付き数字は ABNF 違反である。u64::from_str は先頭の '+' を受理するため、
+    /// パース前の ASCII 数字検証で拒否する。値が 0 のため END_STREAM 時の
+    /// Content-Length 不一致チェック (非ゼロ値の検出) では弾かれず、
+    /// ASCII 数字検証が唯一の拒否経路であることが検証できる。
+    #[test]
+    fn test_signed_content_length_resets_stream_client() {
+        let mut client = setup_client();
+        client
+            .start_stream(request_headers(), true)
+            .expect("start_stream should succeed");
+        while client.poll_event().is_some() {}
+        let _ = client.poll_output();
+
+        let response = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_response_headers_with_content_length("200", "+0"),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        client
+            .feed(&encode_frame(&Frame::Headers(response)))
+            .expect("feed should succeed");
+        client.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut client,
+            1,
+            ErrorCode::ProtocolError,
+            "符号付き Content-Length (クライアント)",
+        );
+
+        // ストリームが削除済みであることを遅延 DATA で検証する
+        assert_delayed_data_discarded(&mut client, 1);
+    }
+
     /// half-closed (remote) 状態のストリームへの追加 HEADERS が状態遷移エラーとして
     /// RST_STREAM (STREAM_CLOSED) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
     /// 接続が維持される (サーバーロール)
