@@ -1,7 +1,7 @@
 # テストコメント内の issue 番号参照を削除する
 
 - Created: 2026-08-10
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-08-15
 - Branch: feature/refactor-remove-issue-number-from-test
 - Polished: {YYYY-MM-DD}
 
@@ -27,3 +27,11 @@
 
 - `tests/test_connection.rs` — `test_no_content_padding_only_data_accepted`
 - `issues/closed/0096-fmt-remove-issue-number-from-source.md` — 同種の issue 番号参照削除の先行事例
+
+## 解決方法
+
+PR #88 で対応した。
+
+- `tests/test_connection.rs` の `test_no_content_padding_only_data_accepted` のコメントから「(0102 の残課題であり、本テストではウィンドウ消費量の検証は対象外)」を除去した
+- 置き換え後は「パディング分の接続ウィンドウ消費量はアプリに通知されず、本テストではウィンドウ消費量の検証は対象外」という理由そのものの説明になっている
+- テスト内容は変更せず、`cargo test --workspace` が通ることを確認した
