@@ -121,7 +121,10 @@ pub struct Connection {
     /// 送信したストリームも更新対象に含める。DATA 経路のストリームエラー
     /// (handle_data の違反処理) は更新しない (既存挙動。RST_STREAM を受信した
     /// ピアはストリームの失敗を認識済みのため、GOAWAY の last-stream-id に含めない
-    /// ことによる再試行の実害は限定的)。
+    /// ことによる再試行の実害は限定的)。CONNECT 確立済みストリームへの HEADERS
+    /// リセット (reset_connect_established_headers) は対象ストリームが CONNECT
+    /// リクエスト処理で記録済みのため更新せず、未知フレームのリセット
+    /// (handle_frame の Frame::Unknown 処理) は DATA 経路と同じ理由で更新しない。
     last_successful_stream_id: u32,
     /// HPACK エンコーダー
     hpack_encoder: HpackEncoder,
@@ -162,6 +165,17 @@ pub struct Connection {
     /// の接続エラーで終了しなければならない MUST)。単一フレームは
     /// `handle_headers`、多フレームは `handle_continuation` がデコード後に消費する。
     header_concurrent_limit_exceeded: bool,
+    /// CONNECT 確立済みストリームへの HEADERS 受信が記録されているかどうか
+    ///
+    /// RFC 9113 Section 8.5: CONNECT 確立済みストリームでは DATA または stream
+    /// management フレーム (RST_STREAM / WINDOW_UPDATE / PRIORITY) 以外のフレームを
+    /// ストリームエラーとして処理する MUST であり、HEADERS は該当する。検出は field
+    /// block のデコード前に行われるため、リセットをデコード完了後に遅延する目的で
+    /// 記録する (RFC 9113 Section 4.3: 破棄する場合でも伸長する必要があり、伸長しない
+    /// 場合は COMPRESSION_ERROR の接続エラーで終了しなければならない MUST)。単一
+    /// フレームは `handle_headers`、多フレームは `handle_continuation` がデコード後に
+    /// 消費する。
+    connect_established_headers_received: bool,
     /// 最初に受信した NO_RFC7540_PRIORITIES の値
     ///
     /// RFC 9218 Section 2.1: この設定は接続中に変更できない。
@@ -246,6 +260,7 @@ impl Connection {
             header_block_fragment: Vec::new(),
             header_end_stream: false,
             header_concurrent_limit_exceeded: false,
+            connect_established_headers_received: false,
             initial_no_rfc7540_priorities: None,
             peer_sent_enable_connect_protocol: false,
             pending_table_size_update: None,
@@ -1043,15 +1058,23 @@ impl Connection {
             Frame::Unknown { header, .. } => {
                 // RFC 9113 Section 8.5: CONNECT 確立済みストリームでは
                 // DATA/RST_STREAM/WINDOW_UPDATE/PRIORITY 以外のフレームはストリームエラー。
-                // 未知フレームタイプもこの制約に該当する。
+                // 未知フレームタイプもこの制約に該当する (Section 4.1 の未知フレーム無視
+                // MUST と競合するが、より特定の Section 8.5 を優先する実装判断)。
                 if header.stream_id != 0
                     && let Some(stream) = self.streams.get(&header.stream_id)
                     && stream.connect_established()
                 {
-                    return Err(Error::stream_error(
+                    // 未知フレームはデコード済みであり HPACK 状態に影響しないため、
+                    // 検出時点で RST_STREAM (PROTOCOL_ERROR) を送信してストリームを
+                    // リセットし、接続を維持する (RFC 9113 Section 5.4.2)。RST_STREAM
+                    // 送信は Section 6.8 の last-stream-id 更新対象だが、本経路は
+                    // ヘッダー処理ではないため `last_successful_stream_id` は更新しない
+                    // (DATA 経路のストリームエラーと同じ既存方針)。
+                    self.reset_stream_internal(
+                        StreamId::from_wire(header.stream_id),
                         ErrorCode::ProtocolError,
-                        "unknown frame type not allowed on established CONNECT tunnel",
-                    ));
+                        0,
+                    )?;
                 }
                 // RFC 9113 Section 4.1: それ以外の未知フレームは無視する
             }

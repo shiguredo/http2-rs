@@ -264,13 +264,14 @@ impl Connection {
 
             // RFC 9113 Section 8.5: CONNECT 確立済みストリームでは HEADERS を拒否する
             // Extended CONNECT (:protocol 付き) は通常のストリームとして動作するため対象外
+            // 検出はデコード前に行われるが、field block は破棄する場合でも伸長する
+            // 必要がある (RFC 9113 Section 4.3 の MUST) ため、検出結果を
+            // connect_established_headers_received に記録してデコード後のリセットへ
+            // 遅延する。
             if let Some(stream) = self.streams.get(&sid)
                 && stream.connect_established()
             {
-                return Err(Error::stream_error(
-                    ErrorCode::ProtocolError,
-                    "HEADERS not allowed on established CONNECT tunnel",
-                ));
+                self.connect_established_headers_received = true;
             }
 
             // RFC 9113 Section 5.1.2: 上限超過は PROTOCOL_ERROR または REFUSED_STREAM
@@ -306,6 +307,10 @@ impl Connection {
             // RFC 9113 Section 5.1: Closed 状態のストリームへの HEADERS は
             // HPACK 状態を更新した上で破棄する (マップから削除済みの場合を含む)
             if is_previously_closed || self.is_stream_closed(sid) {
+                // フラグは streams に存在するストリームでのみ設定されるため、
+                // 本分岐と同時成立しない (現状到達不能)。フラグの残留による
+                // 後続 HEADERS の誤リセットを防ぐため、防御的に消費する。
+                self.connect_established_headers_received = false;
                 return Ok(());
             }
 
@@ -317,6 +322,16 @@ impl Connection {
             if self.header_concurrent_limit_exceeded {
                 self.header_concurrent_limit_exceeded = false;
                 self.reset_refused_concurrent_stream(StreamId::from(frame.stream_id))?;
+                return Ok(());
+            }
+
+            // CONNECT 確立済みストリームへの HEADERS
+            // (connect_established_headers_received) のヘッダーブロックは、
+            // デコード完了後に PROTOCOL_ERROR でリセットする (RFC 9113 Section 8.5)。
+            // 単一フレームのため header_end_stream は常に false でありリセット不要。
+            if self.connect_established_headers_received {
+                self.connect_established_headers_received = false;
+                self.reset_connect_established_headers(StreamId::from(frame.stream_id))?;
                 return Ok(());
             }
 
@@ -400,6 +415,30 @@ impl Connection {
         if sid > self.last_successful_stream_id {
             self.last_successful_stream_id = sid;
         }
+        Ok(())
+    }
+
+    /// CONNECT 確立済みストリームへの HEADERS をストリームエラーとして処理する
+    ///
+    /// RFC 9113 Section 8.5: CONNECT 確立済みストリームでは DATA または stream
+    /// management フレーム (RST_STREAM / WINDOW_UPDATE / PRIORITY) 以外のフレームを
+    /// ストリームエラーとして処理することを MUST と定める。HEADERS は該当するため
+    /// PROTOCOL_ERROR でリセットする。
+    ///
+    /// field block のデコード完了後に呼ばれる (RFC 9113 Section 4.3: 破棄する場合でも
+    /// 再組み立てして伸長する必要があり、伸長しない場合は COMPRESSION_ERROR の接続
+    /// エラーで終了しなければならない MUST)。本経路のストリームは CONNECT 確立済み
+    /// (streams に存在) のためストリーム生成は不要で、`reset_stream_internal` を直接呼ぶ。
+    ///
+    /// リセット分岐は `process_headers` をスキップするため、呼び出し側の
+    /// `last_successful_stream_id` 更新 (handle_headers / handle_continuation の
+    /// 通常更新部) を通らない。ただし本経路のストリームは CONNECT リクエストの
+    /// HEADERS 処理で `last_successful_stream_id` に記録済みであり、RST_STREAM 送信
+    /// は RFC 9113 Section 6.8 の last-stream-id 更新対象だが、リセット時の更新は
+    /// 実効を持たないため行わない (`reset_refused_concurrent_stream` の更新は
+    /// process_headers を通らない新規ストリームが対象で、意味を持つ)。
+    fn reset_connect_established_headers(&mut self, stream_id: StreamId) -> Result<()> {
+        self.reset_stream_internal(stream_id, ErrorCode::ProtocolError, 0)?;
         Ok(())
     }
 
@@ -782,6 +821,10 @@ impl Connection {
             let is_previously_closed = self.closed_streams.contains(&expected_stream_id);
             if is_previously_closed || self.is_stream_closed(expected_stream_id) {
                 self.header_end_stream = false;
+                // フラグは streams に存在するストリームでのみ設定されるため、
+                // 本分岐と同時成立しない (現状到達不能)。フラグの残留による
+                // 後続 HEADERS の誤リセットを防ぐため、防御的に消費する。
+                self.connect_established_headers_received = false;
                 return Ok(());
             }
 
@@ -792,6 +835,17 @@ impl Connection {
                 self.header_concurrent_limit_exceeded = false;
                 self.header_end_stream = false;
                 self.reset_refused_concurrent_stream(StreamId::from_wire(expected_stream_id))?;
+                return Ok(());
+            }
+
+            // CONNECT 確立済みストリームへの HEADERS
+            // (connect_established_headers_received) のヘッダーブロックは、
+            // CONTINUATION を吸収したデコード完了後に PROTOCOL_ERROR でリセットする
+            // (RFC 9113 Section 8.5)
+            if self.connect_established_headers_received {
+                self.connect_established_headers_received = false;
+                self.header_end_stream = false;
+                self.reset_connect_established_headers(StreamId::from_wire(expected_stream_id))?;
                 return Ok(());
             }
 

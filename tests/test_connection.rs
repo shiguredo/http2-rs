@@ -6,8 +6,8 @@ use shiguredo_http2::{
     Connection, ErrorCode, Event, HeaderField, HpackEncoder, LastStreamId, Limits, NonZeroStreamId,
     WindowIncrement, WindowSize,
     frame::{
-        ContinuationFrame, DataFrame, Frame, FrameDecoder, FrameEncoder, GoawayFrame, HeadersFrame,
-        PingFrame, RstStreamFrame, SettingsFrame, WindowUpdateFrame,
+        ContinuationFrame, DataFrame, Frame, FrameDecoder, FrameEncoder, FrameFlags, FrameHeader,
+        GoawayFrame, HeadersFrame, PingFrame, RstStreamFrame, SettingsFrame, WindowUpdateFrame,
     },
     settings::{MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, Setting},
 };
@@ -4383,6 +4383,312 @@ mod reset_stream {
                 } if id.as_u32() == 7
             )),
             "フラグ往復後に正常な新規 HEADERS (ストリーム 7) が処理されるべき"
+        );
+    }
+
+    /// CONNECT リクエストヘッダーを HPACK エンコードする
+    ///
+    /// RFC 9113 Section 8.5: CONNECT リクエストは :method=CONNECT と :authority
+    /// (authority-form) のみを含み、:scheme / :path は MUST で省略する。
+    fn encode_connect_request_headers() -> Vec<u8> {
+        let mut encoder = HpackEncoder::new(4096);
+        let headers = vec![
+            HeaderField::new(":method", "CONNECT").expect("valid header field"),
+            HeaderField::new(":authority", "example.com:443").expect("valid header field"),
+        ];
+        let mut buf = Vec::new();
+        encoder.encode(&mut buf, &headers);
+        buf
+    }
+
+    /// CONNECT リクエストを受信して 2xx レスポンスを送信し、CONNECT トンネルを確立する
+    /// (サーバーロール)
+    ///
+    /// RFC 9113 Section 8.5: サーバーが通常 CONNECT に 2xx を返すと
+    /// `connect_established` が設定され、以後 DATA 以外のフレームはストリームエラー
+    /// になる。確立時のイベントと出力はすべて消費してから返す。
+    fn establish_connect_tunnel(server: &mut Connection) {
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_connect_request_headers(),
+        )
+        .with_end_headers(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        server
+            .send_response(
+                client_stream_id(1),
+                vec![HeaderField::new(":status", "200").expect("valid header field")],
+                false,
+            )
+            .expect("send_response should succeed");
+        let _ = server.poll_output();
+    }
+
+    /// CONNECT 確立済みストリームへの HEADERS がストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される (単一フレーム)
+    ///
+    /// RFC 9113 Section 8.5: CONNECT 確立済みストリームでは DATA または stream
+    /// management フレーム (RST_STREAM / WINDOW_UPDATE / PRIORITY) 以外のフレームを
+    /// ストリームエラーとして処理する MUST。HEADERS はデコード前に検出されるが、
+    /// field block は破棄する場合でも伸長する必要がある (RFC 9113 Section 4.3 の
+    /// MUST) ため、デコード完了後にリセットする (同時ストリーム数上限超過の
+    /// 遅延リセットと同じ機構)。
+    #[test]
+    fn test_headers_on_established_connect_resets_stream() {
+        let mut server = setup_server();
+        establish_connect_tunnel(&mut server);
+
+        // CONNECT 確立済みストリーム (stream 1) への HEADERS を送信する
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_request_headers(),
+        )
+        .with_end_headers(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            "CONNECT 確立済みストリームへの HEADERS",
+        );
+
+        // ストリームが streams から削除済みであることを遅延 DATA で検証する
+        assert_delayed_data_discarded(&mut server, 1);
+    }
+
+    /// CONNECT 確立済みストリームへの HEADERS を CONTINUATION 分割で受信した場合も、
+    /// CONTINUATION を吸収してからリセットされ、接続が維持される
+    ///
+    /// CONNECT 確立済みストリームへの HEADERS の検出はデコード前に行われるが、
+    /// RFC 9113 Section 4.3 は破棄する場合でも field block の再組み立てと伸長を
+    /// 要求する (MUST) ため、CONTINUATION の吸収とデコードを完了してからリセット
+    /// する。`handle_continuation` のフラグ消費分岐を検証する。
+    #[test]
+    fn test_headers_on_established_connect_resets_stream_continuation() {
+        let mut server = setup_server();
+        establish_connect_tunnel(&mut server);
+
+        // CONNECT 確立済みストリーム (stream 1) への HEADERS を
+        // HEADERS + CONTINUATION に分割して送信する
+        let encoded = encode_valid_request_headers();
+        let split = encoded.len() / 2;
+        let headers = HeadersFrame::new(NonZeroStreamId::from_static(1), encoded[..split].to_vec())
+            .with_end_headers(false);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        let continuation = create_continuation(
+            NonZeroStreamId::from_static(1),
+            encoded[split..].to_vec(),
+            true,
+        );
+        server
+            .feed(&encode_frame(&Frame::Continuation(continuation)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            "CONNECT 確立済みストリームへの HEADERS (CONTINUATION 分割)",
+        );
+
+        assert_delayed_data_discarded(&mut server, 1);
+    }
+
+    /// CONNECT 確立済みストリームへの未知フレームがストリームエラーとして
+    /// RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` + `streams` 削除に変換され、
+    /// 接続が維持される
+    ///
+    /// RFC 9113 Section 8.5: 未知フレームタイプも「DATA または stream management
+    /// フレーム以外」に該当し、CONNECT 確立済みストリームではストリームエラーとして
+    /// 処理する MUST である。Section 4.1 の未知フレーム無視 MUST と競合するが、
+    /// より特定の Section 8.5 を優先する実装判断。未知フレームはデコード済みであり
+    /// HPACK 状態に影響しないため、検出時点でリセットする。
+    #[test]
+    fn test_unknown_frame_on_established_connect_resets_stream() {
+        let mut server = setup_server();
+        establish_connect_tunnel(&mut server);
+
+        // CONNECT 確立済みストリーム (stream 1) への未知フレーム (type 0x2a) を送信する
+        let unknown = Frame::Unknown {
+            header: FrameHeader {
+                length: 0,
+                frame_type: 0x2a,
+                flags: FrameFlags::empty(),
+                stream_id: 1,
+            },
+            payload: vec![],
+        };
+        server
+            .feed(&encode_frame(&unknown))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        assert_headers_reset_events(
+            &mut server,
+            1,
+            ErrorCode::ProtocolError,
+            "CONNECT 確立済みストリームへの未知フレーム",
+        );
+
+        assert_delayed_data_discarded(&mut server, 1);
+    }
+
+    /// CONNECT 確立済みストリームへの HEADERS のリセット後も HPACK 状態が維持される
+    /// (単一フレーム)
+    ///
+    /// リセット分岐が `process_headers` をスキップしても、field block のデコード
+    /// (伸長) は完了しているため、デコーダとピアのエンコーダ文脈がずれないことを
+    /// 検証する (RFC 9113 Section 4.3)。
+    #[test]
+    fn test_connect_established_headers_reset_keeps_hpack_state() {
+        let mut server = setup_server();
+        assert_hpack_state_kept_after_connect_established(&mut server, false);
+    }
+
+    /// CONNECT 確立済みストリームへの HEADERS のリセット後も HPACK 状態が維持される
+    /// (多フレーム)
+    ///
+    /// [`test_connect_established_headers_reset_keeps_hpack_state`] の多フレーム対称
+    /// テスト。`handle_continuation` の独立した分岐でフラグを消費するため、
+    /// デコード完了後の分岐が正しく実行されることを動的テーブルの同期で固定する。
+    #[test]
+    fn test_connect_established_headers_reset_keeps_hpack_state_via_continuation() {
+        let mut server = setup_server();
+        assert_hpack_state_kept_after_connect_established(&mut server, true);
+    }
+
+    /// CONNECT 確立済みストリームへの HEADERS のリセット後も HPACK 状態が維持される
+    /// ことを検証する
+    ///
+    /// 検証方法: 1 つの `HpackEncoder` をピアに見立てて 3 つの field block を
+    /// エンコードする。CONNECT 確立済みストリームへの HEADERS (ブロック 2) がデコード
+    /// されないと動的テーブルがずれ、リセット後の新規 HEADERS (ブロック 3) の
+    /// 動的テーブル参照が誤った値になるか COMPRESSION_ERROR になる。正しく
+    /// デコードされていれば値が一致する。
+    ///
+    /// この検証は、エンコーダが動的テーブルの完全一致エントリを Indexed Header
+    /// Field (RFC 7541 Section 6.1) でエンコードする実装に依存する。リテラル優先
+    /// の実装に変わった場合は検出力が落ちるため、実装変更時に再評価すること。
+    ///
+    /// `split_block2` が真の場合はブロック 2 を HEADERS + CONTINUATION に分割して
+    /// 送り、`handle_continuation` のフラグ消費分岐を検証する。偽の場合は単一
+    /// HEADERS で送り、`handle_headers` の分岐を検証する。
+    fn assert_hpack_state_kept_after_connect_established(
+        server: &mut Connection,
+        split_block2: bool,
+    ) {
+        let mut encoder = HpackEncoder::new(4096);
+
+        // ブロック 1: stream 1 の CONNECT リクエスト (正常に処理され、2xx で確立される)
+        let connect_headers = vec![
+            HeaderField::new(":method", "CONNECT").expect("valid header field"),
+            HeaderField::new(":authority", "example.com:443").expect("valid header field"),
+        ];
+        let mut block1 = Vec::new();
+        encoder.encode(&mut block1, &connect_headers);
+        let frame1 =
+            HeadersFrame::new(NonZeroStreamId::from_static(1), block1).with_end_headers(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(frame1)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+        server
+            .send_response(
+                client_stream_id(1),
+                vec![HeaderField::new(":status", "200").expect("valid header field")],
+                false,
+            )
+            .expect("send_response should succeed");
+        let _ = server.poll_output();
+
+        // ブロック 2: CONNECT 確立済みストリーム (stream 1) への HEADERS
+        // (デコード後にリセットされる)
+        let mut second_headers = request_headers();
+        second_headers.push(HeaderField::new("x-dynamic", "v2").expect("valid header field"));
+        let mut block2 = Vec::new();
+        encoder.encode(&mut block2, &second_headers);
+        if split_block2 {
+            // CONTINUATION 分割で送信し、多フレーム経路のフラグ消費を検証する
+            let split = block2.len() / 2;
+            let frame2 =
+                HeadersFrame::new(NonZeroStreamId::from_static(1), block2[..split].to_vec())
+                    .with_end_headers(false);
+            server
+                .feed(&encode_frame(&Frame::Headers(frame2)))
+                .expect("feed should succeed");
+            server.process().expect("process should succeed");
+            let continuation = create_continuation(
+                NonZeroStreamId::from_static(1),
+                block2[split..].to_vec(),
+                true,
+            );
+            server
+                .feed(&encode_frame(&Frame::Continuation(continuation)))
+                .expect("feed should succeed");
+            server.process().expect("process should succeed");
+        } else {
+            let frame2 =
+                HeadersFrame::new(NonZeroStreamId::from_static(1), block2).with_end_headers(true);
+            server
+                .feed(&encode_frame(&Frame::Headers(frame2)))
+                .expect("feed should succeed");
+            server.process().expect("process should succeed");
+        }
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // ブロック 3: stream 3 の新規 HEADERS (動的テーブル参照を含み、正常に処理される)
+        // ブロック 2 がデコードされていれば参照が正しく解決され、
+        // されていなければ COMPRESSION_ERROR の接続エラーになる
+        let mut block3 = Vec::new();
+        encoder.encode(&mut block3, &second_headers);
+        let frame3 = HeadersFrame::new(NonZeroStreamId::from_static(3), block3)
+            .with_end_headers(true)
+            .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(frame3)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        // ストリーム 3 の HEADERS が正常に処理され、x-dynamic: v2 として受信される
+        let events = collect_events(server);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::HeadersReceived {
+                    stream_id: shiguredo_http2::StreamId::Client(id),
+                    headers,
+                    ..
+                } if id.as_u32() == 3
+                    && headers
+                        .iter()
+                        .any(|h| h.name() == b"x-dynamic" && h.value() == b"v2")
+            )),
+            "リセット後の新規 HEADERS が正常に処理され、x-dynamic: v2 が受信されるべき"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::StreamReset { .. })),
+            "リセット後の新規 HEADERS で StreamReset が生成されてはならない"
         );
     }
 }
