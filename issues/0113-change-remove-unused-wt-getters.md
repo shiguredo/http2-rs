@@ -4,7 +4,7 @@
 - Created: 2026-08-15
 - Completed: {YYYY-MM-DD}
 - Branch: feature/change-remove-wt-getters
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-08-15
 
 ## 目的
 
@@ -21,6 +21,7 @@
 - `max_streams_bidi_remote` / `max_streams_uni_remote` / `opened_streams_bidi` / `opened_streams_uni` フィールド自体は、`can_open_bidi_stream()` / `can_open_uni_stream()` / `opened_stream()` / `update_max_streams()` / `is_bidi_streams_blocked()` / `is_uni_streams_blocked()` の内部で使用されており維持する
 - 公開 API 削除のため `[CHANGE]` エントリを `CHANGES.md` の `## develop` に追加する
 - `skills/shiguredo-http2/SKILL.md` には上記 getter への言及はないため変更は不要
+- テストでのみ使用される公開 API (例: `WtFlowControl::is_bidi_streams_blocked()` / `is_uni_streams_blocked()`、`WtStream::id()`) は、テストが動作を保証しているため本 issue の削除対象としない
 
 ## 変更対象ファイル一覧
 
