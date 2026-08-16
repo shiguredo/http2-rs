@@ -112,18 +112,6 @@ impl WtFlowControl {
         self.max_streams_uni_local
     }
 
-    /// ピアが許可した双方向ストリーム最大数を取得する
-    #[must_use]
-    pub const fn max_streams_bidi_remote(&self) -> u64 {
-        self.max_streams_bidi_remote
-    }
-
-    /// ピアが許可した単方向ストリーム最大数を取得する
-    #[must_use]
-    pub const fn max_streams_uni_remote(&self) -> u64 {
-        self.max_streams_uni_remote
-    }
-
     /// 送信を消費する
     pub fn consume_send(&mut self, size: u64) -> WtResult<()> {
         let new_offset = self.send_offset.saturating_add(size);
@@ -283,17 +271,5 @@ impl WtFlowControl {
     #[must_use]
     pub fn should_send_max_data(&self, initial_max_data: u64) -> bool {
         self.recv_available() < initial_max_data / 2
-    }
-
-    /// 開いた双方向ストリーム数を取得する
-    #[must_use]
-    pub const fn opened_streams_bidi(&self) -> u64 {
-        self.opened_streams_bidi
-    }
-
-    /// 開いた単方向ストリーム数を取得する
-    #[must_use]
-    pub const fn opened_streams_uni(&self) -> u64 {
-        self.opened_streams_uni
     }
 }

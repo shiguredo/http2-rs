@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-08-15
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-08-15
 - Branch: feature/change-remove-wt-getters
 - Polished: 2026-08-15
 
@@ -59,3 +59,11 @@
 - `src/webtransport/flow_control.rs` — 削除対象 getter 4 件
 - `issues/closed/0072-change-remove-unused-code.md` — 同種の未使用公開 API 削除の先行事例
 - `issues/closed/0104-change-remove-send-max-getters.md` — 同種の未使用公開 API 削除の先行事例
+
+## 解決方法
+
+`src/webtransport/flow_control.rs` の `WtFlowControl::max_streams_bidi_remote()` / `max_streams_uni_remote()` / `opened_streams_bidi()` / `opened_streams_uni()` getter を、doc コメントと `#[must_use]` 属性ごと削除した。いずれも全コードベースで呼び出しが存在しないことを grep で確認済み。対応するフィールド (max_streams_bidi_remote / max_streams_uni_remote / opened_streams_bidi / opened_streams_uni) と、フィールドを使用するメソッド (`can_open_bidi_stream()` / `can_open_uni_stream()` / `opened_stream()` / `update_max_streams()` / `is_bidi_streams_blocked()` / `is_uni_streams_blocked()`) は維持した。
+
+`CHANGES.md` の `## develop` の既存 `[CHANGE]` 群の末尾にエントリを追加した。テストの追加・変更はない (削除対象の getter を使用するテストは存在しなかった)。
+
+検証として `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo check --manifest-path fuzz/Cargo.toml` のすべてが通過することを確認した。
