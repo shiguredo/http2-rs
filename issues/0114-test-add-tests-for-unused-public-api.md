@@ -1,39 +1,47 @@
-# 死にコードを削除する
+# テスト未使用の公開 API にテストを追加する
 
 - Created: 2026-08-16
 - Completed: {YYYY-MM-DD}
-- Branch: feature/change-remove-dead-code
-- Polished: {YYYY-MM-DD}
+- Branch: feature/add-tests-for-unused-public-api
+- Polished: 2026-08-16
 
 ## 目的
 
-生産コードから全く使用されていない `RecvBuffer` 構造体と、テストでのみ使用されている公開メソッド群を削除し、コードベースを整理する。
+テスト・PBT を含む全コードベースで一度も使用されていない公開 API が残っている。CODEBASE.md の規約（「公開 API は必ず使用箇所とテストを用意すること」）により、未使用・テスト未使用の公開 API は追加してはならず、既存のものはテストを追加して動作を保証するか削除して解消することと定められている。
+
+本 issue の対象 7 件は `Stream`（HTTP/2 コアの公開型）の基本 getter と Capsule デコーダの基本アクセサであり、削除は破壊的変更になるため、テストを追加して動作を保証する。なお 0113 が削除を選んだのは `WtFlowControl` の内部詳細 getter が対象だったためであり、コア型の基本 getter を対象とする本 issue とは性質が異なる。
 
 ## 現状
 
-以下の死にコードが存在する:
+以下の公開 API は `src/` / `crates/` / `tests/` / `pbt/` / `fuzz/` / `examples/` のすべてで使用されていない:
 
-1. `RecvBuffer` 構造体 (`src/stream/buffer.rs` の `RecvBuffer` 型) — `Stream` のフィールドとして存在し getter も定義されているが、生産コードのどこからも呼び出されていない
-2. `Stream` の `recv_buffer` フィールドおよび `recv_buffer()` / `recv_buffer_mut()` getter (`src/stream.rs` の `Stream` 型)
-3. `FrameDecoder::clear()` (`src/frame/decoder.rs` の `FrameDecoder` 型) — テストでのみ使用
-4. `FrameEncoder::take()` (`src/frame/encoder.rs` の `FrameEncoder` 型) — 使用箇所なし
-5. `CapsuleEncoder::buffer()` / `clear()` (`src/webtransport/capsule.rs` の `CapsuleEncoder` 型) — テストでのみ使用
-6. `CapsuleDecoder::remaining()` / `clear()` / `with_max_buffer_size()` (`src/webtransport/capsule.rs` の `CapsuleDecoder` 型) — テストでのみ使用
-7. `varint::encode_to_vec()` (`src/webtransport/varint.rs` の `encode_to_vec` 関数) — 生産コードで使用されていない
-8. `SettingsFrame::from_settings()` (`src/frame.rs` の `SettingsFrame` 型) — PBT でのみ使用
+1. `Stream::recv_buffer()` / `recv_buffer_mut()` (`src/stream.rs` の `Stream` 型) — 0072 で「将来の受信バッファ経路 API として意図的に維持」と判断されている。ただしテストが存在しない
+2. `CapsuleDecoder::remaining()` (`src/webtransport/capsule.rs` の `CapsuleDecoder` 型) — 全コードベースで使用箇所なし
+3. `Stream::id()` (`src/stream.rs` の `Stream` 型) — 全コードベースで使用箇所なし
+4. `Stream::headers()` (`src/stream.rs` の `Stream` 型) — 全コードベースで使用箇所なし (`set_headers()` は内部で使用されている)
+5. `Stream::state_machine()` (`src/stream.rs` の `Stream` 型) — 全コードベースで使用箇所なし (可変版の `state_machine_mut()` のみ使用されている)
+6. `Stream::is_open()` (`src/stream.rs` の `Stream` 型) — 全コードベースで使用箇所なし
+7. `Stream::is_closed()` (`src/stream.rs` の `Stream` 型) — 全コードベースで使用箇所なし
 
-`CHANGES.md` の `## develop` セクションには「未使用の公開 API を削除する」という方針が既に宣言されている（`CHANGES.md:103-107`）。
+テストでのみ使用されている公開 API（`FrameDecoder::clear()`、`CapsuleEncoder::buffer()` / `clear()`、`CapsuleDecoder::clear()` / `with_max_buffer_size()`、`SettingsFrame::from_settings()` 等）は、0113 の方針（テストが動作を保証しているため削除対象としない）に従い本 issue の対象外とする。
 
 ## 設計方針
 
-- `RecvBuffer` 構造体と `Stream` の関連フィールド・getter を完全に削除する
-- テストのみで使用されている公開メソッドは、テストコードを修正して公開メソッドに依存しない形に書き換えるか、削除する
-- テストが依存している場合は、テストを `tests/` ディレクトリに移動し、`pub(crate)` や `#[cfg(test)]` で対応する
-- 影響範囲を確認し、削除後に全テストが通過することを確認する
+- 以下の API に公開 API 経由のテストを追加する:
+  - `Stream::recv_buffer()` / `recv_buffer_mut()`: `Stream::new()` で生成し、`recv_buffer_mut()` で `push` → `recv_buffer()` で `len` / `is_empty` / `pop` を検証するテストを `tests/test_stream/buffer.rs` に追加する
+  - `CapsuleDecoder::remaining()`: `feed()` 後に `remaining()` の値が期待どおりになること、`decode()` 後に減少することを検証するテストを `tests/test_webtransport/capsule.rs` に追加する
+  - `Stream::id()` / `headers()` / `state_machine()` / `is_open()` / `is_closed()`: `Stream::new()` で生成し、各 getter の返り値と状態遷移を検証するテストを `tests/test_stream/main.rs` に追加する
+- テストは公開 API 経由で書く（`tests/` は公開 API に対してだけ書くという shiguredo-rust 規約に従う）
+- 追加後、テスト未使用の公開 API が他にないか grep で再確認する
 
 ## 完了条件
 
-- `RecvBuffer` 構造体が削除されていること
-- 上記の全未使用メソッドが削除されていること
-- `cargo test --workspace` が全件通過すること
-- `cargo clippy --workspace --all-targets -- -D warnings` が通過すること
+- `Stream::recv_buffer()` / `recv_buffer_mut()` の動作を検証するテストが `tests/test_stream/buffer.rs` に追加されている
+- `CapsuleDecoder::remaining()` の動作を検証するテストが `tests/test_webtransport/capsule.rs` に追加されている
+- `Stream::id()` / `headers()` / `state_machine()` / `is_open()` / `is_closed()` の動作を検証するテストが `tests/test_stream/main.rs` に追加されている
+- テスト未使用の公開 API が他に存在しないことが grep で確認されている
+- `CHANGES.md` の `## develop` の `### misc` にテスト追加の `[ADD]` エントリと担当者行が追加されている
+- `cargo fmt --all -- --check` が通過する
+- `cargo test --workspace` が通過する
+- `cargo clippy --workspace --all-targets -- -D warnings` が通過する
+- `cargo check --manifest-path fuzz/Cargo.toml` が通過する
