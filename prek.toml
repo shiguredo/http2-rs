@@ -1,6 +1,7 @@
 fail_fast = true
 default_install_hook_types = ["pre-commit", "pre-push"]
-exclude = { glob = ["target/**", "fuzz/target/**"] }
+# refs/ は一次資料 (RFC / draft の原文パース) を格納するため、フックによる自動修正の対象から除外する
+exclude = { glob = ["target/**", "fuzz/target/**", "refs/**"] }
 
 [[repos]]
 repo = "builtin"
