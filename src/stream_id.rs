@@ -439,46 +439,55 @@ mod tests {
     }
 
     mod validated_parts {
-        use proptest::prelude::*;
-
         use super::{ClientStreamId, NonZeroStreamId, NonZeroU32, STREAM_ID_MAX, ServerStreamId};
 
-        proptest! {
-            #[test]
-            fn client_stream_id_validated_matches_new(
-                id in (1u32..=STREAM_ID_MAX).prop_filter(
-                    "奇数のみ",
-                    |id| id % 2 == 1,
-                ),
-            ) {
+        #[test]
+        fn client_stream_id_validated_matches_new() -> noprop::TestResult {
+            let seed = noprop::seed_from_env_or_time("HTTP2_PBT_SEED")?;
+            let mut runner = noprop::Runner::new(seed);
+            runner.run(256, |ctx| {
+                // 奇数 ID を valid-by-construction で生成する
+                let id =
+                    2 * noprop::sample_u64_in(ctx, 0..=(STREAM_ID_MAX as u64 - 1) / 2) as u32 + 1;
                 let via_new = ClientStreamId::new(id).expect("valid client stream id");
                 let nz = NonZeroU32::new(id).expect("non-zero stream id");
                 let via_validated = ClientStreamId::from_validated_parts(nz);
-                prop_assert_eq!(via_new, via_validated);
-            }
+                assert_eq!(via_new, via_validated);
+                Ok(())
+            })?;
+            Ok(())
+        }
 
-            #[test]
-            fn server_stream_id_validated_matches_new(
-                id in (2u32..=STREAM_ID_MAX).prop_filter(
-                    "偶数のみ",
-                    |id| id % 2 == 0,
-                ),
-            ) {
+        #[test]
+        fn server_stream_id_validated_matches_new() -> noprop::TestResult {
+            let seed = noprop::seed_from_env_or_time("HTTP2_PBT_SEED")?;
+            let mut runner = noprop::Runner::new(seed);
+            runner.run(256, |ctx| {
+                // 偶数 ID を valid-by-construction で生成する
+                let id =
+                    2 * noprop::sample_u64_in(ctx, 0..=(STREAM_ID_MAX as u64 - 2) / 2) as u32 + 2;
                 let via_new = ServerStreamId::new(id).expect("valid server stream id");
                 let nz = NonZeroU32::new(id).expect("non-zero stream id");
                 let via_validated = ServerStreamId::from_validated_parts(nz);
-                prop_assert_eq!(via_new, via_validated);
-            }
+                assert_eq!(via_new, via_validated);
+                Ok(())
+            })?;
+            Ok(())
+        }
 
-            #[test]
-            fn non_zero_stream_id_validated_matches_new(
-                id in 1u32..=STREAM_ID_MAX,
-            ) {
+        #[test]
+        fn non_zero_stream_id_validated_matches_new() -> noprop::TestResult {
+            let seed = noprop::seed_from_env_or_time("HTTP2_PBT_SEED")?;
+            let mut runner = noprop::Runner::new(seed);
+            runner.run(256, |ctx| {
+                let id = noprop::sample_u64_in(ctx, 1..=STREAM_ID_MAX as u64) as u32;
                 let via_new = NonZeroStreamId::new(id).expect("valid non-zero stream id");
                 let nz = NonZeroU32::new(id).expect("non-zero stream id");
                 let via_validated = NonZeroStreamId::from_validated_parts(nz);
-                prop_assert_eq!(via_new, via_validated);
-            }
+                assert_eq!(via_new, via_validated);
+                Ok(())
+            })?;
+            Ok(())
         }
     }
 }

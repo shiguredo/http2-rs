@@ -312,37 +312,48 @@ impl LastStreamId {
 
 #[cfg(test)]
 mod validated_parts {
-    use proptest::prelude::*;
-
     use super::{LastStreamId, Weight, WindowIncrement};
 
-    proptest! {
-        #[test]
-        fn window_increment_validated_matches_new(
-            v in 1u32..=WindowIncrement::MAX,
-        ) {
+    #[test]
+    fn window_increment_validated_matches_new() -> noprop::TestResult {
+        let seed = noprop::seed_from_env_or_time("HTTP2_PBT_SEED")?;
+        let mut runner = noprop::Runner::new(seed);
+        runner.run(256, |ctx| {
+            let v = noprop::sample_u64_in(ctx, 1..=WindowIncrement::MAX as u64) as u32;
             let via_new = WindowIncrement::new(v).expect("valid window increment");
             let nz = core::num::NonZeroU32::new(v).expect("non-zero increment");
             let via_validated = WindowIncrement::from_validated_parts(nz);
-            prop_assert_eq!(via_new, via_validated);
-        }
+            assert_eq!(via_new, via_validated);
+            Ok(())
+        })?;
+        Ok(())
+    }
 
-        #[test]
-        fn weight_validated_matches_new(
-            w in 0u16..=255,
-        ) {
+    #[test]
+    fn weight_validated_matches_new() -> noprop::TestResult {
+        let seed = noprop::seed_from_env_or_time("HTTP2_PBT_SEED")?;
+        let mut runner = noprop::Runner::new(seed);
+        runner.run(256, |ctx| {
+            let w = noprop::sample_u64_in(ctx, 0..=255) as u16;
             let via_new = Weight::new(w).expect("valid weight");
             let via_validated = Weight::from_validated_parts(w as u8);
-            prop_assert_eq!(via_new, via_validated);
-        }
+            assert_eq!(via_new, via_validated);
+            Ok(())
+        })?;
+        Ok(())
+    }
 
-        #[test]
-        fn last_stream_id_validated_matches_new(
-            id in 0u32..=LastStreamId::MAX,
-        ) {
+    #[test]
+    fn last_stream_id_validated_matches_new() -> noprop::TestResult {
+        let seed = noprop::seed_from_env_or_time("HTTP2_PBT_SEED")?;
+        let mut runner = noprop::Runner::new(seed);
+        runner.run(256, |ctx| {
+            let id = noprop::sample_u64_in(ctx, 0..=LastStreamId::MAX as u64) as u32;
             let via_new = LastStreamId::new(id).expect("valid last stream id");
             let via_validated = LastStreamId::from_validated_parts(id);
-            prop_assert_eq!(via_new, via_validated);
-        }
+            assert_eq!(via_new, via_validated);
+            Ok(())
+        })?;
+        Ok(())
     }
 }

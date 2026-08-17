@@ -1645,7 +1645,6 @@ pub(crate) fn concatenate_cookies(headers: Vec<HeaderField>) -> Vec<HeaderField>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
 
     #[test]
     fn concatenate_cookies_returns_input_when_cookie_count_is_zero() {
@@ -1745,112 +1744,259 @@ mod tests {
         );
     }
 
-    /// cookie 値の Strategy: 空 (1/4 の確率) または 印字可能 ASCII 1..=32 文字
+    /// cookie 値を生成する: 空 (1/4 の確率) または ';' を含まない印字可能 ASCII 1..=32 文字
+    ///
     /// 0x3B (';') を除外: cookie 値に ';' を含むと連結区切り "; " と合わせて
-    /// "; ;" パターンが正当に出現しうるため、二重区切り不在の検証が偽陽性になる
-    fn cookie_value_strategy() -> impl Strategy<Value = Vec<u8>> {
-        prop_oneof![
-            1 => Just(Vec::new()),
-            3 => prop::collection::vec(
-                (0x21u8..=0x7Eu8).prop_filter("';' を除外する", |b| *b != 0x3B),
-                1..=32,
-            ),
-        ]
-    }
-
-    proptest! {
-        #[test]
-        fn prop_concatenate_cookies(
-            cookie_count in 0usize..=8,
-            non_cookie_count in 0usize..=4,
-            cookie_values in prop::collection::vec(cookie_value_strategy(), 8),
-            cookie_sensitives in prop::collection::vec(any::<bool>(), 8),
-            non_cookie_values in prop::collection::vec(
-                prop::collection::vec(0x21u8..=0x7Eu8, 1..=16), 4
-            ),
-        ) {
-            // 入力を構築する
-            let mut input = Vec::new();
-            for (i, value) in non_cookie_values.iter().take(non_cookie_count).enumerate() {
-                let name = format!("x-header-{i}");
-                let v = String::from_utf8_lossy(value).to_string();
-                input.push(HeaderField::new(&name, &v).expect("valid header"));
-            }
-            let cookie_input: Vec<_> = cookie_values[..cookie_count]
-                .iter()
-                .zip(&cookie_sensitives[..cookie_count])
-                .collect();
-            for (value, sensitive) in cookie_input {
-                let v = String::from_utf8_lossy(value).to_string();
-                input.push(
-                    HeaderField::new_with_sensitive("cookie", &v, *sensitive)
-                        .expect("valid header"),
-                );
-            }
-
-            let output = concatenate_cookies(input.clone());
-
-            if cookie_count <= 1 {
-                // ケース A: 早期 return → 出力 = 入力
-                prop_assert_eq!(output.len(), input.len());
-                for (a, b) in output.iter().zip(input.iter()) {
-                    prop_assert_eq!(a.name(), b.name());
-                    prop_assert_eq!(a.value(), b.value());
-                }
-            } else {
-                // 非空 cookie の抽出
-                let non_empty_cookies: Vec<_> = cookie_values[..cookie_count]
-                    .iter()
-                    .filter(|v| !v.is_empty())
-                    .collect();
-
-                if non_empty_cookies.is_empty() {
-                    // ケース B: 全 cookie 空 → 出力に cookie なし
-                    prop_assert!(
-                        !output.iter().any(|h| h.name().eq_ignore_ascii_case(b"cookie")),
-                        "全空 cookie 入力で出力に cookie が含まれてはならない"
-                    );
-                    prop_assert_eq!(output.len(), non_cookie_count);
-                } else {
-                    // ケース C: 1 件以上非空 cookie → 末尾に連結 cookie
-                    prop_assert_eq!(
-                        output.last().expect("連結 cookie は末尾に存在する").name(),
-                        b"cookie",
-                        "連結 cookie は末尾に配置される"
-                    );
-                    // 非 cookie 順序保持
-                    let non_cookie_output: Vec<_> = output[..output.len() - 1].iter().collect();
-                    let non_cookie_input: Vec<_> = input
-                        .iter()
-                        .filter(|h| !h.name().eq_ignore_ascii_case(b"cookie"))
-                        .collect();
-                    prop_assert_eq!(non_cookie_output.len(), non_cookie_input.len());
-                    for (a, b) in non_cookie_output.iter().zip(non_cookie_input.iter()) {
-                        prop_assert_eq!(a.name(), b.name());
-                        prop_assert_eq!(a.value(), b.value());
-                    }
-                    // 二重区切り不在
-                    let cookie_value = output
-                        .last()
-                        .expect("連結 cookie は末尾に存在する")
-                        .value();
-                    prop_assert!(
-                        !cookie_value.windows(3).any(|w| w == b"; ;"),
-                        "連結結果に二重区切り '; ;' が含まれてはならない"
-                    );
-                    // sensitive フラグは全 cookie の OR (空 cookie も含む)
-                    let expected_sensitive =
-                        cookie_sensitives[..cookie_count].iter().any(|s| *s);
-                    prop_assert_eq!(
-                        output
-                            .last()
-                            .expect("連結 cookie は末尾に存在する")
-                            .sensitive(),
-                        expected_sensitive
-                    );
-                }
+    /// "; ;" パターンが正当に出現しうるため、二重区切り不在の検証が偽陽性になる。
+    fn sample_cookie_value(ctx: &mut noprop::TestCaseContext) -> Vec<u8> {
+        // ';' を除いた印字可能 ASCII (0x21..=0x7E) を二つの区間に分けて等確率で引く
+        const FIRST: usize = b';' as usize - 0x21; // 0x21..=0x3A (';' の直前まで)
+        const SECOND: usize = 0x7E - b';' as usize; // 0x3C..=0x7E (';' の直後から)
+        match noprop::sample_weighted_index(ctx, &[1, 3]) {
+            0 => Vec::new(),
+            _ => {
+                let len = noprop::sample_usize_in(ctx, 1..=32);
+                (0..len)
+                    .map(|_| {
+                        let pick = noprop::sample_usize_in(ctx, 0..FIRST + SECOND);
+                        if pick < FIRST {
+                            0x21 + pick as u8
+                        } else {
+                            b';' + 1 + (pick - FIRST) as u8
+                        }
+                    })
+                    .collect()
             }
         }
+    }
+
+    #[test]
+    fn prop_concatenate_cookies() -> noprop::TestResult {
+        let seed = noprop::seed_from_env_or_time("HTTP2_PBT_SEED")?;
+        // ケース A (cookie_count <= 1: 早期 return) / B (全 cookie 空) / C (連結) の
+        // 到達ゲート。各ケースの検証が実際に実行されたことを保証する。
+        let early_return_gate = std::cell::Cell::new(0usize);
+        let all_empty_gate = std::cell::Cell::new(0usize);
+        let merged_gate = std::cell::Cell::new(0usize);
+        let mut runner = noprop::Runner::new(seed);
+        runner.run(256, |ctx| {
+            // 各分岐を確実に探索するため、オペランドの形を First-class の分岐で選ぶ
+            // (weights: 早期 return 2 / 全 cookie 空 1 / 一般 3)
+            match noprop::sample_weighted_index(ctx, &[2, 1, 3]) {
+                0 => {
+                    // ケース A 用: cookie_count を 0..=1 に固定
+                    let cookie_count = noprop::sample_usize_in(ctx, 0..=1);
+                    let non_cookie_count = noprop::sample_usize_in(ctx, 0..=4);
+                    prop_concatenate_cookies_case_a(
+                        ctx,
+                        cookie_count,
+                        non_cookie_count,
+                        &early_return_gate,
+                    );
+                }
+                1 => {
+                    // ケース B 用: 全 cookie を空に固定
+                    let cookie_count = noprop::sample_usize_in(ctx, 2..=6);
+                    let non_cookie_count = noprop::sample_usize_in(ctx, 0..=4);
+                    prop_concatenate_cookies_case_b(
+                        ctx,
+                        cookie_count,
+                        non_cookie_count,
+                        &all_empty_gate,
+                    );
+                }
+                _ => {
+                    // 一般ケース: どの分岐に化けても検証が走る
+                    let cookie_count = noprop::sample_usize_in(ctx, 1..=8);
+                    let non_cookie_count = noprop::sample_usize_in(ctx, 0..=4);
+                    prop_concatenate_cookies_general(
+                        ctx,
+                        cookie_count,
+                        non_cookie_count,
+                        &early_return_gate,
+                        &all_empty_gate,
+                        &merged_gate,
+                    );
+                }
+            }
+            Ok(())
+        })?;
+
+        assert!(
+            early_return_gate.get() > 0,
+            "ケース A (cookie_count <= 1) が一度も実行されなかった\n{runner}"
+        );
+        assert!(
+            all_empty_gate.get() > 0,
+            "ケース B (全 cookie 空) が一度も実行されなかった\n{runner}"
+        );
+        assert!(
+            merged_gate.get() > 0,
+            "ケース C (非空 cookie 連結) が一度も実行されなかった\n{runner}"
+        );
+        Ok(())
+    }
+
+    /// cookie_count <= 1 の入力で `concatenate_cookies` が入力をそのまま返すことを検証する
+    fn prop_concatenate_cookies_case_a(
+        ctx: &mut noprop::TestCaseContext,
+        cookie_count: usize,
+        non_cookie_count: usize,
+        gate: &std::cell::Cell<usize>,
+    ) {
+        let (input, output, _, _) = build_cookie_input(ctx, cookie_count, non_cookie_count, None);
+        // ケース A: 早期 return → 出力 = 入力
+        assert_eq!(output.len(), input.len());
+        for (a, b) in output.iter().zip(input.iter()) {
+            assert_eq!(a.name(), b.name());
+            assert_eq!(a.value(), b.value());
+        }
+        gate.set(gate.get() + 1);
+    }
+
+    /// 全 cookie が空の入力で出力から cookie が除外されることを検証する
+    fn prop_concatenate_cookies_case_b(
+        ctx: &mut noprop::TestCaseContext,
+        cookie_count: usize,
+        non_cookie_count: usize,
+        gate: &std::cell::Cell<usize>,
+    ) {
+        let (input, output, _, _) =
+            build_cookie_input(ctx, cookie_count, non_cookie_count, Some(()));
+        // 全 cookie が空であることを確認する (ケース B の前提)
+        assert!(
+            !input
+                .iter()
+                .any(|h| h.name().eq_ignore_ascii_case(b"cookie") && !h.value().is_empty()),
+            "ケース B の前提: cookie はすべて空でなければならない"
+        );
+        assert!(
+            !output
+                .iter()
+                .any(|h| h.name().eq_ignore_ascii_case(b"cookie")),
+            "全空 cookie 入力で出力に cookie が含まれてはならない"
+        );
+        assert_eq!(output.len(), non_cookie_count);
+        gate.set(gate.get() + 1);
+    }
+
+    /// 一般入力で三つのケース (A/B/C) の共通検証を実行する
+    fn prop_concatenate_cookies_general(
+        ctx: &mut noprop::TestCaseContext,
+        cookie_count: usize,
+        non_cookie_count: usize,
+        early_return_gate: &std::cell::Cell<usize>,
+        all_empty_gate: &std::cell::Cell<usize>,
+        merged_gate: &std::cell::Cell<usize>,
+    ) {
+        let (input, output, cookie_values, cookie_sensitives) =
+            build_cookie_input(ctx, cookie_count, non_cookie_count, None);
+
+        if cookie_count <= 1 {
+            // ケース A: 早期 return → 出力 = 入力
+            assert_eq!(output.len(), input.len());
+            for (a, b) in output.iter().zip(input.iter()) {
+                assert_eq!(a.name(), b.name());
+                assert_eq!(a.value(), b.value());
+            }
+            early_return_gate.set(early_return_gate.get() + 1);
+        } else {
+            let non_empty_cookies: Vec<_> =
+                cookie_values.iter().filter(|v| !v.is_empty()).collect();
+            if non_empty_cookies.is_empty() {
+                // ケース B: 全 cookie 空 → 出力に cookie なし
+                assert!(
+                    !output
+                        .iter()
+                        .any(|h| h.name().eq_ignore_ascii_case(b"cookie")),
+                    "全空 cookie 入力で出力に cookie が含まれてはならない"
+                );
+                assert_eq!(output.len(), non_cookie_count);
+                all_empty_gate.set(all_empty_gate.get() + 1);
+            } else {
+                // ケース C: 1 件以上非空 cookie → 末尾に連結 cookie
+                assert_eq!(
+                    output.last().expect("連結 cookie は末尾に存在する").name(),
+                    b"cookie",
+                    "連結 cookie は末尾に配置される"
+                );
+                // 非 cookie 順序保持
+                let non_cookie_output: Vec<_> = output[..output.len() - 1].iter().collect();
+                let non_cookie_input: Vec<_> = input
+                    .iter()
+                    .filter(|h| !h.name().eq_ignore_ascii_case(b"cookie"))
+                    .collect();
+                assert_eq!(non_cookie_output.len(), non_cookie_input.len());
+                for (a, b) in non_cookie_output.iter().zip(non_cookie_input.iter()) {
+                    assert_eq!(a.name(), b.name());
+                    assert_eq!(a.value(), b.value());
+                }
+                // 二重区切り不在
+                let cookie_value = output.last().expect("連結 cookie は末尾に存在する").value();
+                assert!(
+                    !cookie_value.windows(3).any(|w| w == b"; ;"),
+                    "連結結果に二重区切り '; ;' が含まれてはならない"
+                );
+                // sensitive フラグは全 cookie の OR (空 cookie も含む)
+                let expected_sensitive = cookie_sensitives.iter().any(|s| *s);
+                assert_eq!(
+                    output
+                        .last()
+                        .expect("連結 cookie は末尾に存在する")
+                        .sensitive(),
+                    expected_sensitive
+                );
+                merged_gate.set(merged_gate.get() + 1);
+            }
+        }
+    }
+
+    /// cookie 入力を構築して (入力, 出力, cookie 値, cookie sensitive) を返す
+    ///
+    /// `force_all_empty` が Some のときは全 cookie 値を空にする。None のときは
+    /// ランダムな cookie 値 (空 1/4) を生成する。
+    fn build_cookie_input(
+        ctx: &mut noprop::TestCaseContext,
+        cookie_count: usize,
+        non_cookie_count: usize,
+        force_all_empty: Option<()>,
+    ) -> (Vec<HeaderField>, Vec<HeaderField>, Vec<Vec<u8>>, Vec<bool>) {
+        let cookie_values: Vec<Vec<u8>> = (0..cookie_count)
+            .map(|_| {
+                if force_all_empty.is_some() {
+                    Vec::new()
+                } else {
+                    sample_cookie_value(ctx)
+                }
+            })
+            .collect();
+        let cookie_sensitives: Vec<bool> = (0..cookie_count)
+            .map(|_| noprop::sample_bool(ctx))
+            .collect();
+        let non_cookie_values: Vec<Vec<u8>> = (0..non_cookie_count)
+            .map(|_| {
+                let len = noprop::sample_usize_in(ctx, 1..=16);
+                (0..len)
+                    .map(|_| noprop::sample_u64_in(ctx, 0x21..=0x7E) as u8)
+                    .collect()
+            })
+            .collect();
+
+        let mut input = Vec::new();
+        for (i, value) in non_cookie_values.iter().enumerate() {
+            let name = format!("x-header-{i}");
+            let v = String::from_utf8_lossy(value).to_string();
+            input.push(HeaderField::new(&name, &v).expect("valid header"));
+        }
+        for (value, sensitive) in cookie_values.iter().zip(&cookie_sensitives) {
+            let v = String::from_utf8_lossy(value).to_string();
+            input.push(
+                HeaderField::new_with_sensitive("cookie", &v, *sensitive).expect("valid header"),
+            );
+        }
+
+        let output = concatenate_cookies(input.clone());
+        (input, output, cookie_values, cookie_sensitives)
     }
 
     mod stream_id_exhaustion {

@@ -5,7 +5,6 @@
 mod headers;
 mod settings;
 
-use proptest::prelude::*;
 use shiguredo_http2::{
     Connection, HeaderField, Limits, NonZeroStreamId, WindowIncrement, WindowSize,
     frame::{
@@ -15,9 +14,16 @@ use shiguredo_http2::{
     settings::{DEFAULT_INITIAL_WINDOW_SIZE, MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, Setting},
 };
 
-/// 有効なストリーム ID を生成する（クライアント開始: 奇数）
-pub(crate) fn client_stream_id() -> impl Strategy<Value = NonZeroStreamId> {
-    (1u32..=100).prop_map(|n| NonZeroStreamId::new(n * 2 + 1).expect("odd value is always valid"))
+/// 各 PBT 共通のシード取得用環境変数名
+const SEED_ENV: &str = "HTTP2_PBT_SEED";
+
+/// デフォルトのケースバジェット
+const CASES: usize = 256;
+
+/// 有効なストリーム ID (クライアント開始: 奇数) を生成する
+pub(crate) fn sample_client_stream_id(ctx: &mut noprop::TestCaseContext) -> NonZeroStreamId {
+    let n = 1 + noprop::sample_usize_in(ctx, 0..=99);
+    NonZeroStreamId::new(n as u32 * 2 + 1).expect("odd value is always valid")
 }
 
 /// フレームをバイト列にエンコードする
@@ -61,14 +67,15 @@ fn setup_client_server() -> (Connection, Connection) {
     (client, server)
 }
 
-proptest! {
-    /// 送信側の max_concurrent_streams チェック
-    ///
-    /// RFC 9113 Section 5.1.2: peer が設定した同時ストリーム上限を超えてはならない
-    #[test]
-    fn prop_start_stream_respects_remote_max_concurrent_streams(
-        max_streams in 1u32..=5,
-    ) {
+/// 送信側の max_concurrent_streams チェック
+///
+/// RFC 9113 Section 5.1.2: peer が設定した同時ストリーム上限を超えてはならない
+#[test]
+fn prop_start_stream_respects_remote_max_concurrent_streams() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        let max_streams = noprop::sample_u64_in(ctx, 1..=5) as u32;
         let mut client = Connection::client(Limits::default());
         client.initiate().expect("initiate should succeed");
 
@@ -88,7 +95,10 @@ proptest! {
                 HeaderField::new(":authority", "example.com").expect("valid header field"),
             ];
             let result = client.start_stream(headers, false);
-            prop_assert!(result.is_ok(), "stream should be started successfully");
+            assert!(
+                result.is_ok(),
+                "stream should be started successfully (max_streams={max_streams})"
+            );
         }
 
         // max_streams + 1 個目はエラーになるはず
@@ -99,22 +109,28 @@ proptest! {
             HeaderField::new(":authority", "example.com").expect("valid header field"),
         ];
         let result = client.start_stream(headers, false);
-        prop_assert!(result.is_err(), "exceeding max concurrent streams should fail");
-    }
-
-    // ========================================================================
-    // 双方向通信シナリオの PBT
-    // ========================================================================
+        assert!(
+            result.is_err(),
+            "exceeding max concurrent streams should fail"
+        );
+        Ok(())
+    })?;
+    Ok(())
 }
 
-proptest! {
-    /// クライアント-サーバー間の正常なリクエスト/レスポンスサイクル
-    ///
-    /// RFC 9113 Section 8.1: 正常な HTTP/2 リクエスト/レスポンスの流れ
-    #[test]
-    fn prop_request_response_cycle(
-        path in "/[a-z]{1,10}",
-    ) {
+/// クライアント-サーバー間の正常なリクエスト/レスポンスサイクル
+///
+/// RFC 9113 Section 8.1: 正常な HTTP/2 リクエスト/レスポンスの流れ
+#[test]
+fn prop_request_response_cycle() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        let path_len = noprop::sample_usize_in(ctx, 1..=10);
+        let mut path = String::from("/");
+        for _ in 0..path_len {
+            path.push((b'a' + noprop::sample_usize_in(ctx, 0..26) as u8) as char);
+        }
         let (mut client, mut server) = setup_client_server();
 
         // クライアント: リクエストを送信
@@ -124,8 +140,10 @@ proptest! {
             HeaderField::new(":path", &path).expect("valid header field"),
             HeaderField::new(":authority", "example.com").expect("valid header field"),
         ];
-        let stream_id = client.start_stream(request_headers, true).expect("should succeed");
-        prop_assert_eq!(stream_id, StreamId::from_wire(1)); // 最初のクライアントストリーム
+        let stream_id = client
+            .start_stream(request_headers, true)
+            .expect("should succeed");
+        assert_eq!(stream_id, StreamId::from_wire(1)); // 最初のクライアントストリーム
 
         // クライアントの出力をサーバーに送信
         if let Some(client_output) = client.poll_output() {
@@ -145,16 +163,21 @@ proptest! {
                 break;
             }
         }
-        prop_assert!(found_headers, "expected HeadersReceived event");
-    }
+        assert!(found_headers, "expected HeadersReceived event");
+        Ok(())
+    })?;
+    Ok(())
+}
 
-    /// 複数ストリームの並行処理
-    ///
-    /// RFC 9113 Section 5.1.2: 複数のストリームを並行して処理できる
-    #[test]
-    fn prop_concurrent_streams(
-        count in 1..5usize,
-    ) {
+/// 複数ストリームの並行処理
+///
+/// RFC 9113 Section 5.1.2: 複数のストリームを並行して処理できる
+#[test]
+fn prop_concurrent_streams() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        let count = noprop::sample_usize_in(ctx, 1..=4);
         let (mut client, _server) = setup_client_server();
 
         // 複数のストリームを開く
@@ -166,22 +189,31 @@ proptest! {
                 HeaderField::new(":path", format!("/resource{}", i)).expect("valid header field"),
                 HeaderField::new(":authority", "example.com").expect("valid header field"),
             ];
-            let stream_id = client.start_stream(request_headers, true).expect("should succeed");
+            let stream_id = client
+                .start_stream(request_headers, true)
+                .expect("should succeed");
             stream_ids.push(stream_id);
         }
 
         // ストリーム ID は奇数で単調増加
         for (i, &id) in stream_ids.iter().enumerate() {
             let expected = StreamId::from_wire(i as u32 * 2 + 1); // 1, 3, 5, ...
-            prop_assert_eq!(id, expected);
+            assert_eq!(id, expected);
         }
-    }
+        Ok(())
+    })?;
+    Ok(())
+}
 
-    /// PING フレームのエコー
-    ///
-    /// RFC 9113 Section 6.7: PING フレームは ACK でエコーされる
-    #[test]
-    fn prop_ping_echo(opaque_data in any::<[u8; 8]>()) {
+/// PING フレームのエコー
+///
+/// RFC 9113 Section 6.7: PING フレームは ACK でエコーされる
+#[test]
+fn prop_ping_echo() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        let opaque_data = noprop::sample_bytes::<8>(ctx);
         let (_client, mut server) = setup_client_server();
 
         // クライアント: PING を送信
@@ -193,27 +225,35 @@ proptest! {
         // サーバー: PingReceived イベントを確認
         let mut found_ping = false;
         while let Some(event) = server.poll_event() {
-            if matches!(&event, shiguredo_http2::Event::PingReceived { ack: false, .. }) {
+            if matches!(
+                &event,
+                shiguredo_http2::Event::PingReceived { ack: false, .. }
+            ) {
                 found_ping = true;
                 break;
             }
         }
-        prop_assert!(found_ping, "expected PingReceived event");
+        assert!(found_ping, "expected PingReceived event");
 
         // サーバー: PING ACK を送信
         let server_output = server.poll_output().expect("should succeed");
-        prop_assert!(!server_output.is_empty());
-    }
+        assert!(!server_output.is_empty());
+        Ok(())
+    })?;
+    Ok(())
+}
 
-    /// WINDOW_UPDATE による送信ウィンドウの増加
-    ///
-    /// RFC 9113 Section 6.9: WINDOW_UPDATE でフロー制御ウィンドウを増加させる
-    #[test]
-    fn prop_window_update_increases_window(
+/// WINDOW_UPDATE による送信ウィンドウの増加
+///
+/// RFC 9113 Section 6.9: WINDOW_UPDATE でフロー制御ウィンドウを増加させる
+#[test]
+fn prop_window_update_increases_window() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
         // 初期ウィンドウサイズ (65535) との合計が 2^31-1 を超えないよう上限を制限する
         // (RFC 9113 §6.9.1: 上限超過は FLOW_CONTROL_ERROR)
-        increment in 1u32..=(0x7FFF_FFFFu32 - 65535),
-    ) {
+        let increment = noprop::sample_u64_in(ctx, 1..=(0x7FFF_FFFF - 65535) as u64) as u32;
         let (_client, mut server) = setup_client_server();
 
         // クライアント: 接続レベルの WINDOW_UPDATE を送信
@@ -226,19 +266,32 @@ proptest! {
         // サーバー: WindowUpdateReceived イベントを確認
         let mut found_window_update = false;
         while let Some(event) = server.poll_event() {
-            if matches!(&event, shiguredo_http2::Event::WindowUpdateReceived { stream_id: StreamId::Connection, .. }) {
+            if matches!(
+                &event,
+                shiguredo_http2::Event::WindowUpdateReceived {
+                    stream_id: StreamId::Connection,
+                    ..
+                }
+            ) {
                 found_window_update = true;
                 break;
             }
         }
-        prop_assert!(found_window_update, "expected WindowUpdateReceived event");
-    }
+        assert!(found_window_update, "expected WindowUpdateReceived event");
+        Ok(())
+    })?;
+    Ok(())
+}
 
-    /// RST_STREAM によるストリームキャンセル
-    ///
-    /// RFC 9113 Section 6.4: RST_STREAM でストリームを即座に終了
-    #[test]
-    fn prop_rst_stream_cancels_stream(error_code in any::<u32>()) {
+/// RST_STREAM によるストリームキャンセル
+///
+/// RFC 9113 Section 6.4: RST_STREAM でストリームを即座に終了
+#[test]
+fn prop_rst_stream_cancels_stream() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        let error_code = noprop::sample_u32(ctx);
         let (mut client, mut server) = setup_client_server();
 
         // クライアント: リクエストを送信 (END_STREAM なし)
@@ -272,24 +325,27 @@ proptest! {
                 break;
             }
         }
-        prop_assert!(found_reset, "expected StreamReset event");
-    }
+        assert!(found_reset, "expected StreamReset event");
+        Ok(())
+    })?;
+    Ok(())
 }
 
-proptest! {
-    // ========================================================================
-    // 接続レベル WINDOW_UPDATE の広告の PBT
-    // ========================================================================
-
-    /// `connection_window_size` がデフォルトより大きい場合、`initiate()` の出力に
-    /// `connection_window_size - DEFAULT_INITIAL_WINDOW_SIZE` の WINDOW_UPDATE が含まれる
-    ///
-    /// RFC 9113 Section 6.9.2: 接続レベルのフロー制御ウィンドウは WINDOW_UPDATE でのみ
-    /// 拡張できる。SETTINGS_INITIAL_WINDOW_SIZE は接続レベルに適用されない。
-    #[test]
-    fn prop_initiate_emits_connection_window_update(
-        size in (DEFAULT_INITIAL_WINDOW_SIZE + 1)..=MAX_INITIAL_WINDOW_SIZE,
-    ) {
+/// `connection_window_size` がデフォルトより大きい場合、`initiate()` の出力に
+/// `connection_window_size - DEFAULT_INITIAL_WINDOW_SIZE` の WINDOW_UPDATE が含まれる
+///
+/// RFC 9113 Section 6.9.2: 接続レベルのフロー制御ウィンドウは WINDOW_UPDATE でのみ
+/// 拡張できる。SETTINGS_INITIAL_WINDOW_SIZE は接続レベルに適用されない。
+#[test]
+fn prop_initiate_emits_connection_window_update() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        let size = (DEFAULT_INITIAL_WINDOW_SIZE + 1)
+            + noprop::sample_u64_in(
+                ctx,
+                0..=(MAX_INITIAL_WINDOW_SIZE - DEFAULT_INITIAL_WINDOW_SIZE) as u64,
+            ) as u32;
         let window = WindowSize::from_static(size);
         let limits = Limits::builder()
             .connection_window_size(window)
@@ -298,11 +354,13 @@ proptest! {
         let mut client = Connection::client(limits);
         client.initiate().expect("initiate");
 
-        let output = client.poll_output().expect("output must contain preface + settings");
+        let output = client
+            .poll_output()
+            .expect("output must contain preface + settings");
 
         // CONNECTION_PREFACE をスキップしてから FrameDecoder にかける
         let preface_len = shiguredo_http2::CONNECTION_PREFACE_LEN;
-        prop_assert!(output.len() > preface_len);
+        assert!(output.len() > preface_len);
         let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
         decoder.feed(&output[preface_len..]);
 
@@ -315,11 +373,12 @@ proptest! {
             }
         }
         let expected = size - DEFAULT_INITIAL_WINDOW_SIZE;
-        prop_assert_eq!(
+        assert_eq!(
             found,
             Some(expected),
-            "expected connection-level WINDOW_UPDATE with increment {}",
-            expected
+            "expected connection-level WINDOW_UPDATE with increment {expected}",
         );
-    }
+        Ok(())
+    })?;
+    Ok(())
 }

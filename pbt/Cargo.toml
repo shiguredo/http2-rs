@@ -6,8 +6,8 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-# Property-Based Testing
-proptest = "1.11"
+# Property-Based Testing (noprop はマクロなしの命令的なプロパティテストライブラリ)
+noprop = "0.2"
 # PBT 対象の HTTP/2 Sans I/O コア
 shiguredo_http2 = { path = "../" }
 

@@ -2,7 +2,6 @@
 //!
 //! SETTINGS フレームの検証、無効値チェック、変更禁止設定の検出を含む。
 
-use proptest::prelude::*;
 use shiguredo_http2::{
     Connection, ErrorCode, Limits, WindowSize,
     frame::{Frame, FrameDecoder, SettingsFrame, StreamId},
@@ -11,14 +10,21 @@ use shiguredo_http2::{
 
 use super::encode_frame;
 
-proptest! {
-    /// NO_RFC7540_PRIORITIES の変更は PROTOCOL_ERROR
-    ///
-    /// RFC 9218 Section 2.1: この設定は接続中に変更できない
-    #[test]
-    fn prop_no_rfc7540_priorities_change_is_error(
-        initial_value in prop::bool::ANY,
-    ) {
+/// 各 PBT 共通のシード取得用環境変数名
+const SEED_ENV: &str = "HTTP2_PBT_SEED";
+
+/// デフォルトのケースバジェット
+const CASES: usize = 256;
+
+/// NO_RFC7540_PRIORITIES の変更は PROTOCOL_ERROR
+///
+/// RFC 9218 Section 2.1: この設定は接続中に変更できない
+#[test]
+fn prop_no_rfc7540_priorities_change_is_error() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        let initial_value = noprop::sample_bool(ctx);
         let mut client = Connection::client(Limits::default());
         client.initiate().expect("initiate should succeed");
 
@@ -36,21 +42,27 @@ proptest! {
         client.feed(&settings2_bytes).expect("feed should succeed");
 
         let result = client.process();
-        prop_assert!(result.is_err());
+        assert!(result.is_err());
         if let Err(e) = result {
-            prop_assert!(e.is_connection_error());
-            prop_assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
+            assert!(e.is_connection_error());
+            assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
         }
-    }
+        Ok(())
+    })?;
+    Ok(())
+}
 
-    /// 任意の SETTINGS シーケンスで true→false が出現した場合にのみ PROTOCOL_ERROR
-    ///
-    /// RFC 8441 §3 のプロパティを任意のシーケンスで検証する。
-    /// クライアントロールで実行する（サーバーロールは別テストでカバー）。
-    #[test]
-    fn prop_enable_connect_protocol_sequence(
-        sequence in prop::collection::vec(prop::bool::ANY, 1..=10),
-    ) {
+/// 任意の SETTINGS シーケンスで true→false が出現した場合にのみ PROTOCOL_ERROR
+///
+/// RFC 8441 §3 のプロパティを任意のシーケンスで検証する。
+/// クライアントロールで実行する（サーバーロールは別テストでカバー）。
+#[test]
+fn prop_enable_connect_protocol_sequence() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        let len = noprop::sample_usize_in(ctx, 1..=10);
+        let sequence: Vec<bool> = (0..len).map(|_| noprop::sample_bool(ctx)).collect();
         let mut client = Connection::client(Limits::default());
         client.initiate().expect("initiate must succeed");
 
@@ -89,32 +101,37 @@ proptest! {
             }
         }
 
-        prop_assert_eq!(
+        assert_eq!(
             actual_error, expect_error,
-            "sequence={:?}, saw_true={}, expect_error={}, actual_error={}",
-            sequence, saw_true, expect_error, actual_error
+            "sequence={sequence:?}, saw_true={saw_true}, expect_error={expect_error}, actual_error={actual_error}"
         );
         if actual_error {
-            prop_assert!(
+            assert!(
                 actual_is_connection_error,
                 "ダウングレードは接続エラーでなければならない"
             );
-            prop_assert_eq!(
+            assert_eq!(
                 actual_error_code,
                 Some(ErrorCode::ProtocolError),
                 "ダウングレードは PROTOCOL_ERROR でなければならない"
             );
         }
-    }
+        Ok(())
+    })?;
+    Ok(())
+}
 
-    /// サーバーロールでも ENABLE_CONNECT_PROTOCOL ダウングレードを PROTOCOL_ERROR で拒否する
-    ///
-    /// RFC 8441 §3 はロール非依存。クライアントからの SETTINGS を受信するサーバー側でも
-    /// 同じチェックが適用される。
-    #[test]
-    fn prop_enable_connect_protocol_sequence_server(
-        sequence in prop::collection::vec(prop::bool::ANY, 1..=10),
-    ) {
+/// サーバーロールでも ENABLE_CONNECT_PROTOCOL ダウングレードを PROTOCOL_ERROR で拒否する
+///
+/// RFC 8441 §3 はロール非依存。クライアントからの SETTINGS を受信するサーバー側でも
+/// 同じチェックが適用される。
+#[test]
+fn prop_enable_connect_protocol_sequence_server() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        let len = noprop::sample_usize_in(ctx, 1..=10);
+        let sequence: Vec<bool> = (0..len).map(|_| noprop::sample_bool(ctx)).collect();
         let mut server = Connection::server(Limits::default());
         server.mark_preface_received();
         server.initiate().expect("initiate must succeed");
@@ -152,32 +169,36 @@ proptest! {
             }
         }
 
-        prop_assert_eq!(
+        assert_eq!(
             actual_error, expect_error,
-            "sequence={:?}, saw_true={}, expect_error={}, actual_error={}",
-            sequence, saw_true, expect_error, actual_error
+            "sequence={sequence:?}, saw_true={saw_true}, expect_error={expect_error}, actual_error={actual_error}"
         );
         if actual_error {
-            prop_assert!(
+            assert!(
                 actual_is_connection_error,
                 "ダウングレードは接続エラーでなければならない"
             );
-            prop_assert_eq!(
+            assert_eq!(
                 actual_error_code,
                 Some(ErrorCode::ProtocolError),
                 "ダウングレードは PROTOCOL_ERROR でなければならない"
             );
         }
-    }
+        Ok(())
+    })?;
+    Ok(())
+}
 
-    /// EnableConnectProtocol を含まない SETTINGS が間に挟まっても追跡フラグは維持される
-    ///
-    /// RFC 8441 §3: ダウングレード検出は接続ライフタイム全体で追跡する
-    #[test]
-    fn prop_enable_connect_protocol_tracking_across_frames(
-        gap_count in 1usize..=5,
-        header_table_size in 1024u32..=65535,
-    ) {
+/// EnableConnectProtocol を含まない SETTINGS が間に挟まっても追跡フラグは維持される
+///
+/// RFC 8441 §3: ダウングレード検出は接続ライフタイム全体で追跡する
+#[test]
+fn prop_enable_connect_protocol_tracking_across_frames() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        let gap_count = noprop::sample_usize_in(ctx, 1..=5);
+        let header_table_size = noprop::sample_u64_in(ctx, 1024..=65535) as u32;
         let mut client = Connection::client(Limits::default());
         client.initiate().expect("initiate must succeed");
 
@@ -204,21 +225,29 @@ proptest! {
         client.feed(&settings3_bytes).expect("feed must succeed");
 
         let result = client.process();
-        prop_assert!(result.is_err(), "フラグは間に挟まる SETTINGS でリセットされてはならない");
+        assert!(
+            result.is_err(),
+            "フラグは間に挟まる SETTINGS でリセットされてはならない"
+        );
         if let Err(e) = result {
-            prop_assert!(e.is_connection_error());
-            prop_assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
+            assert!(e.is_connection_error());
+            assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
         }
-    }
+        Ok(())
+    })?;
+    Ok(())
+}
 
-    /// 同一 SETTINGS フレーム内の EnableConnectProtocol 重複は出現順に処理される
-    ///
-    /// RFC 9113 §6.5: 同一パラメータの重複は出現順で処理される。
-    /// true→false の順なら PROTOCOL_ERROR、false→true の順なら成功。
-    #[test]
-    fn prop_enable_connect_protocol_intra_frame_duplicate(
-        first in prop::bool::ANY,
-    ) {
+/// 同一 SETTINGS フレーム内の EnableConnectProtocol 重複は出現順に処理される
+///
+/// RFC 9113 §6.5: 同一パラメータの重複は出現順で処理される。
+/// true→false の順なら PROTOCOL_ERROR、false→true の順なら成功。
+#[test]
+fn prop_enable_connect_protocol_intra_frame_duplicate() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        let first = noprop::sample_bool(ctx);
         let mut client = Connection::client(Limits::default());
         client.initiate().expect("initiate must succeed");
 
@@ -234,21 +263,33 @@ proptest! {
         // first=true, second=false → true→false でダウングレード → PROTOCOL_ERROR
         // first=false, second=true → false→true で有効化 → 成功
         if first {
-            prop_assert!(result.is_err(), "true→false は PROTOCOL_ERROR でなければならない");
+            assert!(
+                result.is_err(),
+                "true→false は PROTOCOL_ERROR でなければならない"
+            );
             if let Err(e) = result {
-                prop_assert!(e.is_connection_error());
-                prop_assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
+                assert!(e.is_connection_error());
+                assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
             }
         } else {
-            prop_assert!(result.is_ok(), "false→true は成功しなければならない");
+            assert!(result.is_ok(), "false→true は成功しなければならない");
         }
-    }
+        Ok(())
+    })?;
+    Ok(())
+}
 
-    /// `send_settings()` (preface 外部処理経路) でも同じ WINDOW_UPDATE が送信される
-    #[test]
-    fn prop_send_settings_emits_connection_window_update(
-        size in (DEFAULT_INITIAL_WINDOW_SIZE + 1)..=MAX_INITIAL_WINDOW_SIZE,
-    ) {
+/// `send_settings()` (preface 外部処理経路) でも同じ WINDOW_UPDATE が送信される
+#[test]
+fn prop_send_settings_emits_connection_window_update() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        let size = (DEFAULT_INITIAL_WINDOW_SIZE + 1)
+            + noprop::sample_u64_in(
+                ctx,
+                0..=(MAX_INITIAL_WINDOW_SIZE - DEFAULT_INITIAL_WINDOW_SIZE) as u64,
+            ) as u32;
         let window = WindowSize::from_static(size);
         let limits = Limits::builder()
             .connection_window_size(window)
@@ -272,25 +313,27 @@ proptest! {
             }
         }
         let expected = size - DEFAULT_INITIAL_WINDOW_SIZE;
-        prop_assert_eq!(
+        assert_eq!(
             found,
             Some(expected),
-            "expected connection-level WINDOW_UPDATE with increment {}",
-            expected
+            "expected connection-level WINDOW_UPDATE with increment {expected}",
         );
-    }
+        Ok(())
+    })?;
+    Ok(())
 }
 
-proptest! {
-    /// SETTINGS_WT_ENABLED の 1→0 ダウングレードは許可される
-    ///
-    /// draft-ietf-webtrans-http2-15 Section 3.1: SETTINGS_WT_ENABLED は接続ライフタイム中に
-    /// 更新可能。サーバーが WebTransport を無効化しても既存セッションには影響しない。
-    /// ENABLE_CONNECT_PROTOCOL と異なり、1→0 のダウングレードは合法。
-    #[test]
-    fn prop_wt_enabled_downgrade_allowed(
-        initial_value in prop::bool::ANY,
-    ) {
+/// SETTINGS_WT_ENABLED の 1→0 ダウングレードは許可される
+///
+/// draft-ietf-webtrans-http2-15 Section 3.1: SETTINGS_WT_ENABLED は接続ライフタイム中に
+/// 更新可能。サーバーが WebTransport を無効化しても既存セッションには影響しない。
+/// ENABLE_CONNECT_PROTOCOL と異なり、1→0 のダウングレードは合法。
+#[test]
+fn prop_wt_enabled_downgrade_allowed() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        let initial_value = noprop::sample_bool(ctx);
         let mut client = Connection::client(Limits::default());
         client.initiate().expect("initiate must succeed");
 
@@ -315,20 +358,25 @@ proptest! {
 
         // 1→0 も 0→1 もエラーにならない
         let result = client.process();
-        prop_assert!(
+        assert!(
             result.is_ok(),
             "WT_ENABLED の 1→0 ダウングレードは許可されなければならない (initial={initial_value})"
         );
-    }
+        Ok(())
+    })?;
+    Ok(())
+}
 
-    /// SETTINGS_WT_ENABLED の 1 より大きい値は PROTOCOL_ERROR
-    ///
-    /// draft-ietf-webtrans-http2-15 Section 3.1: クライアントは 1 より大きい値を
-    /// 接続エラー PROTOCOL_ERROR として扱わなければならない (MUST)。
-    #[test]
-    fn prop_wt_enabled_greater_than_one_is_error(
-        value in 2u32..=u32::MAX,
-    ) {
+/// SETTINGS_WT_ENABLED の 1 より大きい値は PROTOCOL_ERROR
+///
+/// draft-ietf-webtrans-http2-15 Section 3.1: クライアントは 1 より大きい値を
+/// 接続エラー PROTOCOL_ERROR として扱わなければならない (MUST)。
+#[test]
+fn prop_wt_enabled_greater_than_one_is_error() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        let value = 2 + noprop::sample_u64_in(ctx, 0..(u32::MAX as u64 - 1)) as u32;
         let mut client = Connection::client(Limits::default());
         client.initiate().expect("initiate must succeed");
 
@@ -356,10 +404,15 @@ proptest! {
         client.feed(&raw).expect("feed must succeed");
 
         let result = client.process();
-        prop_assert!(result.is_err(), "WT_ENABLED={value} は PROTOCOL_ERROR でなければならない");
+        assert!(
+            result.is_err(),
+            "WT_ENABLED={value} は PROTOCOL_ERROR でなければならない"
+        );
         if let Err(e) = result {
-            prop_assert!(e.is_connection_error());
-            prop_assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
+            assert!(e.is_connection_error());
+            assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
         }
-    }
+        Ok(())
+    })?;
+    Ok(())
 }

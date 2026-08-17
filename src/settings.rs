@@ -681,28 +681,36 @@ impl MaxFrameSize {
 #[cfg(test)]
 mod tests {
     mod validated_parts {
-        use proptest::prelude::*;
-
         use crate::settings::{MaxFrameSize, WindowSize};
 
-        proptest! {
-            #[test]
-            fn window_size_validated_matches_new(
-                size in 0u32..=WindowSize::MAX,
-            ) {
+        #[test]
+        fn window_size_validated_matches_new() -> noprop::TestResult {
+            let seed = noprop::seed_from_env_or_time("HTTP2_PBT_SEED")?;
+            let mut runner = noprop::Runner::new(seed);
+            runner.run(256, |ctx| {
+                let size = noprop::sample_u64_in(ctx, 0..=WindowSize::MAX as u64) as u32;
                 let via_new = WindowSize::new(size).expect("valid SETTINGS value");
                 let via_validated = WindowSize::from_validated_parts(size);
-                prop_assert_eq!(via_new, via_validated);
-            }
+                assert_eq!(via_new, via_validated);
+                Ok(())
+            })?;
+            Ok(())
+        }
 
-            #[test]
-            fn max_frame_size_validated_matches_new(
-                size in MaxFrameSize::MIN..=MaxFrameSize::MAX,
-            ) {
+        #[test]
+        fn max_frame_size_validated_matches_new() -> noprop::TestResult {
+            let seed = noprop::seed_from_env_or_time("HTTP2_PBT_SEED")?;
+            let mut runner = noprop::Runner::new(seed);
+            runner.run(256, |ctx| {
+                let size =
+                    noprop::sample_u64_in(ctx, MaxFrameSize::MIN as u64..=MaxFrameSize::MAX as u64)
+                        as u32;
                 let via_new = MaxFrameSize::new(size).expect("valid SETTINGS value");
                 let via_validated = MaxFrameSize::from_validated_parts(size);
-                prop_assert_eq!(via_new, via_validated);
-            }
+                assert_eq!(via_new, via_validated);
+                Ok(())
+            })?;
+            Ok(())
         }
     }
 }
