@@ -16,10 +16,29 @@ const SEED_ENV: &str = "HTTP2_PBT_SEED";
 /// デフォルトのケースバジェット
 const CASES: usize = 256;
 
+/// 0..=max_len の長さを、空・1・上限に 1/5 の確率を付けて引く
+fn sample_len(ctx: &mut noprop::TestCaseContext, max_len: usize) -> usize {
+    match max_len {
+        0 => 0,
+        1 => noprop::sample_with_boundaries(ctx, &[0usize, 1], noprop::Ratio::one_nth(5), |ctx| {
+            noprop::sample_usize_in(ctx, 0..=1)
+        }),
+        _ => noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, max_len],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=max_len),
+        ),
+    }
+}
+
 /// 有効なヘッダー名を生成する (小文字 ASCII)
 fn sample_valid_header_name(ctx: &mut noprop::TestCaseContext) -> Vec<u8> {
     const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789-_";
-    let len = noprop::sample_usize_in(ctx, 1..=32);
+    let len =
+        noprop::sample_with_boundaries(ctx, &[1usize, 32], noprop::Ratio::one_nth(5), |ctx| {
+            noprop::sample_usize_in(ctx, 1..=32)
+        });
     (0..len)
         .map(|_| noprop::sample_choice(ctx, CHARSET))
         .collect()
@@ -30,7 +49,7 @@ fn sample_valid_header_name(ctx: &mut noprop::TestCaseContext) -> Vec<u8> {
 /// RFC 9113 §8.2.1: field-value は内部 SP/HTAB を含んでよいが、両端は不可。
 /// NUL/CR/LF は構築時検査で禁止される。
 fn sample_valid_header_value(ctx: &mut noprop::TestCaseContext) -> Vec<u8> {
-    let len = noprop::sample_usize_in(ctx, 0..=64);
+    let len = sample_len(ctx, 64);
     let v: Vec<u8> = (0..len)
         .map(|_| noprop::sample_u64_in(ctx, 0x20..=0x7E) as u8)
         .collect();
@@ -48,7 +67,7 @@ fn sample_valid_header_value(ctx: &mut noprop::TestCaseContext) -> Vec<u8> {
 
 /// 任意のバイト列 (0..=max_len) を生成する
 fn sample_arbitrary_bytes(ctx: &mut noprop::TestCaseContext, max_len: usize) -> Vec<u8> {
-    let len = noprop::sample_usize_in(ctx, 0..=max_len);
+    let len = sample_len(ctx, max_len);
     noprop::sample_bytes_vec(ctx, len)
 }
 
@@ -86,13 +105,26 @@ fn prop_hpack_roundtrip() -> noprop::TestResult {
 }
 
 /// HPACK 整数エンコード/デコードの往復テスト
+///
+/// プレフィックスに収まる 1 バイト経路と継続バイト経路を等確率で選ぶ。
+/// 一様 u32 では prefix_bits=8 でも 1 バイト経路は 255/2^32 で未到達。
+/// 各分岐未到達は (1/2)^256。
 #[test]
 fn prop_integer_roundtrip() -> noprop::TestResult {
     let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let one_byte_gate = std::cell::Cell::new(0usize);
+    let continuation_gate = std::cell::Cell::new(0usize);
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let value = noprop::sample_u32(ctx) as u64;
-        let prefix_bits = 1 + noprop::sample_u64_in(ctx, 0..=7) as u8;
+        let prefix_bits =
+            noprop::sample_with_boundaries(ctx, &[1u8, 8], noprop::Ratio::one_nth(5), |ctx| {
+                1 + noprop::sample_u64_in(ctx, 0..=7) as u8
+            });
+        let max_prefix = (1u64 << prefix_bits) - 1;
+        let value = match noprop::sample_weighted_index(ctx, &[1, 1]) {
+            0 => noprop::sample_u64_in(ctx, 0..max_prefix),
+            _ => noprop::sample_u64_in(ctx, max_prefix..=u32::MAX as u64),
+        };
         let mut buf = [0u8; 16];
         let encoded_len = shiguredo_http2::hpack::integer::encode(&mut buf, value, prefix_bits, 0)
             .expect("should succeed");
@@ -102,8 +134,21 @@ fn prop_integer_roundtrip() -> noprop::TestResult {
 
         assert_eq!(value, decoded);
         assert_eq!(encoded_len, decoded_len);
+        if encoded_len == 1 {
+            one_byte_gate.set(one_byte_gate.get() + 1);
+        } else {
+            continuation_gate.set(continuation_gate.get() + 1);
+        }
         Ok(())
     })?;
+    assert!(
+        one_byte_gate.get() > 0,
+        "HPACK 整数の 1 バイト経路が一度も実行されなかった\n{runner}"
+    );
+    assert!(
+        continuation_gate.get() > 0,
+        "HPACK 整数の継続バイト経路が一度も実行されなかった\n{runner}"
+    );
     Ok(())
 }
 

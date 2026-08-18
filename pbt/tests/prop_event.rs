@@ -54,7 +54,18 @@ fn sample_header_field(ctx: &mut noprop::TestCaseContext) -> HeaderField {
 
 /// 0..=max_len バイトの任意バイト列を生成する
 fn sample_arbitrary_bytes(ctx: &mut noprop::TestCaseContext, max_len: usize) -> Vec<u8> {
-    let len = noprop::sample_usize_in(ctx, 0..=max_len);
+    let len = match max_len {
+        0 => 0,
+        1 => noprop::sample_with_boundaries(ctx, &[0usize, 1], noprop::Ratio::one_nth(5), |ctx| {
+            noprop::sample_usize_in(ctx, 0..=1)
+        }),
+        _ => noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, max_len],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=max_len),
+        ),
+    };
     noprop::sample_bytes_vec(ctx, len)
 }
 

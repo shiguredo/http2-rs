@@ -72,21 +72,49 @@ fn header_list_size(headers: &[HeaderField]) -> usize {
 #[test]
 fn prop_bomb_is_exactly_bounded() -> noprop::TestResult {
     let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let over_gate = std::cell::Cell::new(0usize);
+    let under_gate = std::cell::Cell::new(0usize);
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let value_len = noprop::sample_usize_in(ctx, 0..=300);
-        let ref_count = noprop::sample_usize_in(ctx, 0..=2000);
-        let max_size = noprop::sample_usize_in(ctx, 0..=65535);
+        let value_len = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, 300],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=300),
+        );
+        let ref_count = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, 2000],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=2000),
+        );
         let huffman_value = noprop::sample_bool(ctx);
         let block = build_bomb(value_len, ref_count, huffman_value);
-
-        let mut decoder = HpackDecoder::new(4096);
-        decoder.set_max_header_list_size(Some(max_size));
 
         // 1 ヘッダーあたりのサイズ = name("x")=1 + value=value_len + 32
         let per_header = value_len + 33;
         // seed 1 個 + 参照 ref_count 個
         let total = (ref_count + 1) * per_header;
+
+        // 上限超過 / 上限以下を独立サンプリングの重なりに頼らず first-class 分岐にする。
+        // 等確率 1/2、N=128 で未到達は (1/2)^128。
+        let max_size = match noprop::sample_weighted_index(ctx, &[1, 1]) {
+            0 => noprop::sample_with_boundaries(
+                ctx,
+                &[0usize, total - 1],
+                noprop::Ratio::one_nth(5),
+                |ctx| noprop::sample_usize_in(ctx, 0..total),
+            ),
+            _ => noprop::sample_with_boundaries(
+                ctx,
+                &[total, total.saturating_add(65_535)],
+                noprop::Ratio::one_nth(5),
+                |ctx| noprop::sample_usize_in(ctx, total..=total.saturating_add(65_535)),
+            ),
+        };
+
+        let mut decoder = HpackDecoder::new(4096);
+        decoder.set_max_header_list_size(Some(max_size));
 
         let result = decoder.decode(&block);
         if total > max_size {
@@ -94,14 +122,24 @@ fn prop_bomb_is_exactly_bounded() -> noprop::TestResult {
                 result.is_err(),
                 "総サイズ {total} が上限 {max_size} を超えるなら必ず Err",
             );
+            over_gate.set(over_gate.get() + 1);
         } else {
             let headers = result.expect("上限以下なら成功する");
             assert_eq!(headers.len(), ref_count + 1);
             assert_eq!(header_list_size(&headers), total);
             assert!(total <= max_size);
+            under_gate.set(under_gate.get() + 1);
         }
         Ok(())
     })?;
+    assert!(
+        over_gate.get() > 0,
+        "ヘッダーリスト上限超過パスが一度も実行されなかった\n{runner}"
+    );
+    assert!(
+        under_gate.get() > 0,
+        "ヘッダーリスト上限以内パスが一度も実行されなかった\n{runner}"
+    );
     Ok(())
 }
 
@@ -111,8 +149,18 @@ fn prop_unlimited_decodes_fully() -> noprop::TestResult {
     let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let value_len = noprop::sample_usize_in(ctx, 0..=200);
-        let ref_count = noprop::sample_usize_in(ctx, 0..=200);
+        let value_len = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, 200],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=200),
+        );
+        let ref_count = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, 200],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=200),
+        );
         let huffman_value = noprop::sample_bool(ctx);
         let block = build_bomb(value_len, ref_count, huffman_value);
 

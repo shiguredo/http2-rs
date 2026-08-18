@@ -1755,7 +1755,12 @@ mod tests {
         match noprop::sample_weighted_index(ctx, &[1, 3]) {
             0 => Vec::new(),
             _ => {
-                let len = noprop::sample_usize_in(ctx, 1..=32);
+                let len = noprop::sample_with_boundaries(
+                    ctx,
+                    &[1usize, 32],
+                    noprop::Ratio::one_nth(5),
+                    |ctx| noprop::sample_usize_in(ctx, 1..=32),
+                );
                 (0..len)
                     .map(|_| {
                         let pick = noprop::sample_usize_in(ctx, 0..FIRST + SECOND);

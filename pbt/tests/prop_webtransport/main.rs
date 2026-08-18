@@ -13,26 +13,83 @@ const SEED_ENV: &str = "HTTP2_PBT_SEED";
 /// デフォルトのケースバジェット
 const CASES: usize = 256;
 
-/// varint の有効な値 (0..=2^62-1) を生成する
+/// RFC 9000 Section 16 Table 4: 1 バイトで表せる最大値
+const MAX_1_BYTE: u64 = 63;
+/// RFC 9000 Section 16 Table 4: 2 バイトで表せる最大値
+const MAX_2_BYTES: u64 = 16_383;
+/// RFC 9000 Section 16 Table 4: 4 バイトで表せる最大値
+const MAX_4_BYTES: u64 = 1_073_741_823;
+
+/// 0..=max_len の長さを、空・1・上限に 1/5 の確率を付けて引く
+fn sample_len(ctx: &mut noprop::TestCaseContext, max_len: usize) -> usize {
+    match max_len {
+        0 => 0,
+        1 => noprop::sample_with_boundaries(ctx, &[0usize, 1], noprop::Ratio::one_nth(5), |ctx| {
+            noprop::sample_usize_in(ctx, 0..=1)
+        }),
+        _ => noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, max_len],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=max_len),
+        ),
+    }
+}
+
+/// varint の有効な値を、エンコード長クラスを等確率で選んで生成する
+///
+/// 0..=MAX_VALUE の一様では 8 バイト級 (2^30 超) がほぼ全体を占め、
+/// 1/2/4 バイト級は N=256 でも未到達になりうる。4 クラス等確率なら
+/// 各クラスの未到達確率は (3/4)^256 ≈ 1.3e-32。
 fn sample_valid_varint_value(ctx: &mut noprop::TestCaseContext) -> u64 {
-    noprop::sample_u64_in(ctx, 0..=MAX_VALUE)
+    match noprop::sample_weighted_index(ctx, &[1, 1, 1, 1]) {
+        0 => noprop::sample_with_boundaries(
+            ctx,
+            &[0u64, MAX_1_BYTE],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_u64_in(ctx, 0..=MAX_1_BYTE),
+        ),
+        1 => noprop::sample_with_boundaries(
+            ctx,
+            &[MAX_1_BYTE + 1, MAX_2_BYTES],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_u64_in(ctx, MAX_1_BYTE + 1..=MAX_2_BYTES),
+        ),
+        2 => noprop::sample_with_boundaries(
+            ctx,
+            &[MAX_2_BYTES + 1, MAX_4_BYTES],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_u64_in(ctx, MAX_2_BYTES + 1..=MAX_4_BYTES),
+        ),
+        _ => noprop::sample_with_boundaries(
+            ctx,
+            &[MAX_4_BYTES + 1, MAX_VALUE],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_u64_in(ctx, MAX_4_BYTES + 1..=MAX_VALUE),
+        ),
+    }
 }
 
 /// 小さい varint 値 (0..=16383、1-2 バイト) を生成する
 fn sample_small_varint_value(ctx: &mut noprop::TestCaseContext) -> u64 {
-    noprop::sample_u64_in(ctx, 0..=16383)
+    noprop::sample_with_boundaries(
+        ctx,
+        &[0u64, MAX_1_BYTE, MAX_1_BYTE + 1, MAX_2_BYTES],
+        noprop::Ratio::one_nth(5),
+        |ctx| noprop::sample_u64_in(ctx, 0..=MAX_2_BYTES),
+    )
 }
 
 /// 任意のバイト列 (0..=max_len) を生成する
 fn sample_arbitrary_bytes(ctx: &mut noprop::TestCaseContext, max_len: usize) -> Vec<u8> {
-    let len = noprop::sample_usize_in(ctx, 0..=max_len);
+    let len = sample_len(ctx, max_len);
     noprop::sample_bytes_vec(ctx, len)
 }
 
 /// 英数字とスペースのみの reason (0..=max_len) を生成する
 fn sample_reason(ctx: &mut noprop::TestCaseContext, max_len: usize) -> String {
     const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
-    let len = noprop::sample_usize_in(ctx, 0..=max_len);
+    let len = sample_len(ctx, max_len);
     (0..len)
         .map(|_| noprop::sample_choice(ctx, CHARSET) as char)
         .collect()
@@ -60,8 +117,10 @@ enum SessionOp {
 }
 
 /// セッション操作を 1 つ生成する
+///
+/// Initiate は Active 以降の状態への前提操作なので重みを 3 にする。
 fn sample_session_op(ctx: &mut noprop::TestCaseContext) -> SessionOp {
-    match noprop::sample_weighted_index(ctx, &[1, 1, 1, 1, 1, 2, 1, 1]) {
+    match noprop::sample_weighted_index(ctx, &[3, 1, 1, 1, 1, 2, 1, 1]) {
         0 => SessionOp::Initiate,
         1 => SessionOp::Drain,
         2 => SessionOp::Close,
@@ -121,26 +180,52 @@ fn prop_varint_roundtrip() -> noprop::TestResult {
 }
 
 /// varint エンコード長テスト (RFC 9000 Section 16 Table 4 の境界値)
+///
+/// 4 クラス等確率 (各 1/4)。N=256 で各クラス未到達は (3/4)^256 ≈ 1.3e-32。
 #[test]
 fn prop_varint_encoded_len() -> noprop::TestResult {
     let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let len1_gate = std::cell::Cell::new(0usize);
+    let len2_gate = std::cell::Cell::new(0usize);
+    let len4_gate = std::cell::Cell::new(0usize);
+    let len8_gate = std::cell::Cell::new(0usize);
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
         let value = sample_valid_varint_value(ctx);
         let len = encoded_len(value);
 
         // 値の範囲に応じたエンコード長
-        if value <= 63 {
+        if value <= MAX_1_BYTE {
             assert_eq!(len, 1);
-        } else if value <= 16383 {
+            len1_gate.set(len1_gate.get() + 1);
+        } else if value <= MAX_2_BYTES {
             assert_eq!(len, 2);
-        } else if value <= 1073741823 {
+            len2_gate.set(len2_gate.get() + 1);
+        } else if value <= MAX_4_BYTES {
             assert_eq!(len, 4);
+            len4_gate.set(len4_gate.get() + 1);
         } else {
             assert_eq!(len, 8);
+            len8_gate.set(len8_gate.get() + 1);
         }
         Ok(())
     })?;
+    assert!(
+        len1_gate.get() > 0,
+        "1 バイト varint が一度も実行されなかった\n{runner}"
+    );
+    assert!(
+        len2_gate.get() > 0,
+        "2 バイト varint が一度も実行されなかった\n{runner}"
+    );
+    assert!(
+        len4_gate.get() > 0,
+        "4 バイト varint が一度も実行されなかった\n{runner}"
+    );
+    assert!(
+        len8_gate.get() > 0,
+        "8 バイト varint が一度も実行されなかった\n{runner}"
+    );
     Ok(())
 }
 
@@ -367,10 +452,11 @@ fn prop_multiple_capsules_roundtrip() -> noprop::TestResult {
     let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let count = noprop::sample_usize_in(ctx, 1..=9);
-        let data_sizes: Vec<usize> = (0..count)
-            .map(|_| noprop::sample_usize_in(ctx, 0..=100))
-            .collect();
+        let count =
+            noprop::sample_with_boundaries(ctx, &[1usize, 9], noprop::Ratio::one_nth(5), |ctx| {
+                noprop::sample_usize_in(ctx, 1..=9)
+            });
+        let data_sizes: Vec<usize> = (0..count).map(|_| sample_len(ctx, 100)).collect();
         let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
 
@@ -434,7 +520,7 @@ fn prop_capsule_padding_roundtrip() -> noprop::TestResult {
     let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let length = noprop::sample_usize_in(ctx, 0..=1000);
+        let length = sample_len(ctx, 1000);
         let mut encoder = CapsuleEncoder::new();
         let mut decoder = CapsuleDecoder::new();
 
@@ -536,7 +622,10 @@ fn prop_capsule_trailing_bytes_rejected() -> noprop::TestResult {
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
         let maximum = sample_small_varint_value(ctx);
-        let trailing_len = 1 + noprop::sample_usize_in(ctx, 0..=7);
+        let trailing_len =
+            noprop::sample_with_boundaries(ctx, &[1usize, 8], noprop::Ratio::one_nth(5), |ctx| {
+                1 + noprop::sample_usize_in(ctx, 0..=7)
+            });
         let trailing: Vec<u8> = noprop::sample_bytes_vec(ctx, trailing_len);
 
         // WT_MAX_DATA を低レベルで構築し、余剰バイトを付加
@@ -575,74 +664,136 @@ fn prop_capsule_trailing_bytes_rejected() -> noprop::TestResult {
 }
 
 /// WT ストリーム送信フロー制御: 上限超過はエラー
+///
+/// 成功/失敗を独立サンプリングの重なりに頼らず first-class 分岐にする。
+/// 等確率 1/2、N=256 で未到達は (1/2)^256。
 #[test]
 fn prop_wt_stream_send_flow_control() -> noprop::TestResult {
     let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let ok_gate = std::cell::Cell::new(0usize);
+    let err_gate = std::cell::Cell::new(0usize);
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let max_data = 1 + noprop::sample_u64_in(ctx, 0..=10000) as u64;
-        let send_size = 1 + noprop::sample_u64_in(ctx, 0..=20000) as u64;
+        let max_data = noprop::sample_with_boundaries(
+            ctx,
+            &[1u64, 10_000],
+            noprop::Ratio::one_nth(5),
+            |ctx| 1 + noprop::sample_u64_in(ctx, 0..=10_000),
+        );
         let mut stream = WtStream::new(0, max_data, max_data, true, true);
 
-        let result = stream.send_data(send_size, false);
-        if send_size <= max_data {
-            assert!(result.is_ok());
-        } else {
-            assert!(result.is_err());
+        match noprop::sample_weighted_index(ctx, &[1, 1]) {
+            0 => {
+                let send_size = noprop::sample_u64_in(ctx, 1..=max_data);
+                stream.send_data(send_size, false).expect("within window");
+                ok_gate.set(ok_gate.get() + 1);
+            }
+            _ => {
+                let send_size = max_data + 1 + noprop::sample_u64_in(ctx, 0..=10_000);
+                assert!(stream.send_data(send_size, false).is_err());
+                err_gate.set(err_gate.get() + 1);
+            }
         }
         Ok(())
     })?;
+    assert!(
+        ok_gate.get() > 0,
+        "送信成功パスが一度も実行されなかった\n{runner}"
+    );
+    assert!(
+        err_gate.get() > 0,
+        "送信超過エラーパスが一度も実行されなかった\n{runner}"
+    );
     Ok(())
 }
 
 /// WT ストリーム受信フロー制御: 上限超過はエラー
+///
+/// 成功/失敗を独立サンプリングの重なりに頼らず first-class 分岐にする。
+/// 等確率 1/2、N=256 で未到達は (1/2)^256。
 #[test]
 fn prop_wt_stream_recv_flow_control() -> noprop::TestResult {
     let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let ok_gate = std::cell::Cell::new(0usize);
+    let err_gate = std::cell::Cell::new(0usize);
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let max_data = 1 + noprop::sample_u64_in(ctx, 0..=10000) as u64;
-        let recv_size = 1 + noprop::sample_u64_in(ctx, 0..=20000) as u64;
+        let max_data = noprop::sample_with_boundaries(
+            ctx,
+            &[1u64, 10_000],
+            noprop::Ratio::one_nth(5),
+            |ctx| 1 + noprop::sample_u64_in(ctx, 0..=10_000),
+        );
         let mut stream = WtStream::new(0, max_data, max_data, true, true);
 
-        let result = stream.recv_data(recv_size, false);
-        if recv_size <= max_data {
-            assert!(result.is_ok());
-        } else {
-            assert!(result.is_err());
+        match noprop::sample_weighted_index(ctx, &[1, 1]) {
+            0 => {
+                let recv_size = noprop::sample_u64_in(ctx, 1..=max_data);
+                stream.recv_data(recv_size, false).expect("within window");
+                ok_gate.set(ok_gate.get() + 1);
+            }
+            _ => {
+                let recv_size = max_data + 1 + noprop::sample_u64_in(ctx, 0..=10_000);
+                assert!(stream.recv_data(recv_size, false).is_err());
+                err_gate.set(err_gate.get() + 1);
+            }
         }
         Ok(())
     })?;
+    assert!(
+        ok_gate.get() > 0,
+        "受信成功パスが一度も実行されなかった\n{runner}"
+    );
+    assert!(
+        err_gate.get() > 0,
+        "受信超過エラーパスが一度も実行されなかった\n{runner}"
+    );
     Ok(())
 }
 
 /// WT ストリームフロー制御: 複数回の送信で累積が上限を超えるとエラー
+///
+/// 1 回目は必ず成功する量、2 回目は成功/超過を first-class 分岐で選ぶ。
+/// 等確率 1/2、N=256 で未到達は (1/2)^256。
 #[test]
 fn prop_wt_stream_cumulative_send_flow_control() -> noprop::TestResult {
     let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
-    // 2 回目の送信で累積超過のエラーパスが実際に探索されたことをゲートする
+    let ok_gate = std::cell::Cell::new(0usize);
     let overflow_gate = std::cell::Cell::new(0usize);
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let max_data = 100 + noprop::sample_u64_in(ctx, 0..=900) as u64;
-        let chunk1 = 1 + noprop::sample_u64_in(ctx, 0..=499) as u64;
-        let chunk2 = 1 + noprop::sample_u64_in(ctx, 0..=499) as u64;
+        let max_data =
+            noprop::sample_with_boundaries(ctx, &[2u64, 1_000], noprop::Ratio::one_nth(5), |ctx| {
+                2 + noprop::sample_u64_in(ctx, 0..=998)
+            });
+        // 1 回目は窓を残す (1..=max_data-1)
+        let chunk1 = noprop::sample_u64_in(ctx, 1..=max_data - 1);
+        let remaining = max_data - chunk1;
         let mut stream = WtStream::new(0, max_data, max_data, true, true);
+        stream
+            .send_data(chunk1, false)
+            .expect("first chunk fits by construction");
 
-        if chunk1 <= max_data {
-            let r1 = stream.send_data(chunk1, false);
-            assert!(r1.is_ok());
-
-            let r2 = stream.send_data(chunk2, false);
-            if chunk1 + chunk2 <= max_data {
-                assert!(r2.is_ok());
-            } else {
-                assert!(r2.is_err());
+        match noprop::sample_weighted_index(ctx, &[1, 1]) {
+            0 => {
+                let chunk2 = noprop::sample_u64_in(ctx, 1..=remaining);
+                stream
+                    .send_data(chunk2, false)
+                    .expect("second chunk fits by construction");
+                ok_gate.set(ok_gate.get() + 1);
+            }
+            _ => {
+                let chunk2 = remaining + 1 + noprop::sample_u64_in(ctx, 0..=100);
+                assert!(stream.send_data(chunk2, false).is_err());
                 overflow_gate.set(overflow_gate.get() + 1);
             }
         }
         Ok(())
     })?;
+    assert!(
+        ok_gate.get() > 0,
+        "累積送信の成功パスが一度も実行されなかった\n{runner}"
+    );
     assert!(
         overflow_gate.get() > 0,
         "累積フロー制御超過のエラーパスが一度も実行されなかった\n{runner}"
@@ -660,16 +811,26 @@ fn prop_session_state_always_valid() -> noprop::TestResult {
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
         let is_client = noprop::sample_bool(ctx);
-        let steps = noprop::sample_usize_in(ctx, 0..=29);
+        let steps = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, 29],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=29),
+        );
         let mut session = if is_client {
             WtSession::client(WtConfig::default(), WtConfig::default())
         } else {
             WtSession::server(WtConfig::default(), WtConfig::default())
         };
-        let mut executed = false;
+
+        // 初期状態 (空列) でも不変条件を検査する
+        {
+            let state = session.state();
+            assert_eq!(session.is_active(), state == WtSessionState::Active);
+            assert_eq!(session.is_closed(), state == WtSessionState::Closed);
+        }
 
         for _ in 0..steps {
-            executed = true;
             let op = sample_session_op(ctx);
             let _ = apply_session_op(&mut session, &op);
 
@@ -687,15 +848,13 @@ fn prop_session_state_always_valid() -> noprop::TestResult {
             // 不変条件: is_active() と is_closed() は状態と整合する
             assert_eq!(session.is_active(), state == WtSessionState::Active);
             assert_eq!(session.is_closed(), state == WtSessionState::Closed);
-        }
-        if executed {
             executed_gate.set(executed_gate.get() + 1);
         }
         Ok(())
     })?;
     assert!(
         executed_gate.get() > 0,
-        "操作列が空で無検証に成功した\n{runner}"
+        "操作後の不変条件が一度も実行されなかった\n{runner}"
     );
     Ok(())
 }
@@ -709,8 +868,16 @@ fn prop_session_closed_is_absorbing() -> noprop::TestResult {
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
         let is_client = noprop::sample_bool(ctx);
-        let before_steps = noprop::sample_usize_in(ctx, 0..=9);
-        let after_steps = 1 + noprop::sample_usize_in(ctx, 0..=9);
+        let before_steps = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, 9],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=9),
+        );
+        let after_steps =
+            noprop::sample_with_boundaries(ctx, &[1usize, 10], noprop::Ratio::one_nth(5), |ctx| {
+                1 + noprop::sample_usize_in(ctx, 0..=9)
+            });
         let mut session = if is_client {
             WtSession::client(WtConfig::default(), WtConfig::default())
         } else {
@@ -727,17 +894,19 @@ fn prop_session_closed_is_absorbing() -> noprop::TestResult {
             let _ = session.initiate();
             let _ = session.close(0, "force close");
         }
+        assert!(
+            session.is_closed(),
+            "force close のあと Closed になっていなければならない"
+        );
 
-        if session.is_closed() {
-            // Closed 後の操作は状態を変えない
-            for _ in 0..after_steps {
-                let op = sample_session_op(ctx);
-                let _ = apply_session_op(&mut session, &op);
-                assert!(
-                    session.is_closed(),
-                    "Closed state should be absorbing, but changed after {op:?}",
-                );
-            }
+        // Closed 後の操作は状態を変えない
+        for _ in 0..after_steps {
+            let op = sample_session_op(ctx);
+            let _ = apply_session_op(&mut session, &op);
+            assert!(
+                session.is_closed(),
+                "Closed state should be absorbing, but changed after {op:?}",
+            );
         }
         Ok(())
     })?;
@@ -754,13 +923,17 @@ fn prop_session_state_monotonicity() -> noprop::TestResult {
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
         let is_client = noprop::sample_bool(ctx);
-        let steps = noprop::sample_usize_in(ctx, 0..=29);
+        let steps = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, 29],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=29),
+        );
         let mut session = if is_client {
             WtSession::client(WtConfig::default(), WtConfig::default())
         } else {
             WtSession::server(WtConfig::default(), WtConfig::default())
         };
-        let mut executed = false;
 
         // 状態の順序を定義
         fn state_order(state: WtSessionState) -> u8 {
@@ -775,7 +948,6 @@ fn prop_session_state_monotonicity() -> noprop::TestResult {
         let mut max_order = state_order(session.state());
 
         for _ in 0..steps {
-            executed = true;
             let op = sample_session_op(ctx);
             let _ = apply_session_op(&mut session, &op);
 
@@ -795,15 +967,13 @@ fn prop_session_state_monotonicity() -> noprop::TestResult {
                 );
             }
             max_order = max_order.max(current_order);
-        }
-        if executed {
             executed_gate.set(executed_gate.get() + 1);
         }
         Ok(())
     })?;
     assert!(
         executed_gate.get() > 0,
-        "操作列が空で無検証に成功した\n{runner}"
+        "操作後の単調性が一度も実行されなかった\n{runner}"
     );
     Ok(())
 }
@@ -819,7 +989,10 @@ fn prop_stream_id_monotonic_invariant() -> noprop::TestResult {
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
         let is_client = noprop::sample_bool(ctx);
-        let steps = 1 + noprop::sample_usize_in(ctx, 0..=18);
+        let steps =
+            noprop::sample_with_boundaries(ctx, &[1usize, 19], noprop::Ratio::one_nth(5), |ctx| {
+                1 + noprop::sample_usize_in(ctx, 0..=18)
+            });
         let mut session = if is_client {
             WtSession::client(WtConfig::default(), WtConfig::default())
         } else {

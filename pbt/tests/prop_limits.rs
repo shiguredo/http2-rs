@@ -27,13 +27,18 @@ fn sample_option_u32(ctx: &mut noprop::TestCaseContext) -> Option<u32> {
 /// RFC 9113 Section 6.9.2: 接続レベルのウィンドウは SETTINGS では縮小できないため、
 /// `LimitsBuilder::connection_window_size` は `DEFAULT_INITIAL_WINDOW_SIZE` 未満を拒否する。
 fn sample_valid_connection_window_size(ctx: &mut noprop::TestCaseContext) -> WindowSize {
-    WindowSize::from_static(
-        DEFAULT_INITIAL_WINDOW_SIZE
-            + noprop::sample_u64_in(
-                ctx,
-                0..=(MAX_INITIAL_WINDOW_SIZE - DEFAULT_INITIAL_WINDOW_SIZE) as u64,
-            ) as u32,
-    )
+    WindowSize::from_static(noprop::sample_with_boundaries(
+        ctx,
+        &[DEFAULT_INITIAL_WINDOW_SIZE, MAX_INITIAL_WINDOW_SIZE],
+        noprop::Ratio::one_nth(5),
+        |ctx| {
+            DEFAULT_INITIAL_WINDOW_SIZE
+                + noprop::sample_u64_in(
+                    ctx,
+                    0..=(MAX_INITIAL_WINDOW_SIZE - DEFAULT_INITIAL_WINDOW_SIZE) as u64,
+                ) as u32
+        },
+    ))
 }
 
 /// 有効な LimitsBuilder 設定で build は常に成功する (WT なし)
@@ -43,14 +48,21 @@ fn prop_valid_limits_build_succeeds() -> noprop::TestResult {
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
         let max_concurrent = sample_option_u32(ctx);
-        let initial_window = WindowSize::from_static(noprop::sample_u64_in(
+        let initial_window = WindowSize::from_static(noprop::sample_with_boundaries(
             ctx,
-            0..=MAX_INITIAL_WINDOW_SIZE as u64,
-        ) as u32);
-        let max_frame = MaxFrameSize::from_static(noprop::sample_u64_in(
+            &[0u32, MAX_INITIAL_WINDOW_SIZE],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_u64_in(ctx, 0..=MAX_INITIAL_WINDOW_SIZE as u64) as u32,
+        ));
+        let max_frame = MaxFrameSize::from_static(noprop::sample_with_boundaries(
             ctx,
-            MIN_MAX_FRAME_SIZE as u64..=MAX_MAX_FRAME_SIZE as u64,
-        ) as u32);
+            &[MIN_MAX_FRAME_SIZE, MAX_MAX_FRAME_SIZE],
+            noprop::Ratio::one_nth(5),
+            |ctx| {
+                noprop::sample_u64_in(ctx, MIN_MAX_FRAME_SIZE as u64..=MAX_MAX_FRAME_SIZE as u64)
+                    as u32
+            },
+        ));
         let max_header_list = sample_option_u32(ctx);
         let header_table = noprop::sample_u32(ctx);
         let connection_window = sample_valid_connection_window_size(ctx);
@@ -208,14 +220,21 @@ fn prop_limits_getter_roundtrip() -> noprop::TestResult {
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
         let max_concurrent = sample_option_u32(ctx);
-        let initial_window = WindowSize::from_static(noprop::sample_u64_in(
+        let initial_window = WindowSize::from_static(noprop::sample_with_boundaries(
             ctx,
-            0..=MAX_INITIAL_WINDOW_SIZE as u64,
-        ) as u32);
-        let max_frame = MaxFrameSize::from_static(noprop::sample_u64_in(
+            &[0u32, MAX_INITIAL_WINDOW_SIZE],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_u64_in(ctx, 0..=MAX_INITIAL_WINDOW_SIZE as u64) as u32,
+        ));
+        let max_frame = MaxFrameSize::from_static(noprop::sample_with_boundaries(
             ctx,
-            MIN_MAX_FRAME_SIZE as u64..=MAX_MAX_FRAME_SIZE as u64,
-        ) as u32);
+            &[MIN_MAX_FRAME_SIZE, MAX_MAX_FRAME_SIZE],
+            noprop::Ratio::one_nth(5),
+            |ctx| {
+                noprop::sample_u64_in(ctx, MIN_MAX_FRAME_SIZE as u64..=MAX_MAX_FRAME_SIZE as u64)
+                    as u32
+            },
+        ));
         let max_header_list = sample_option_u32(ctx);
         let header_table = noprop::sample_u32(ctx);
         let connection_window = sample_valid_connection_window_size(ctx);

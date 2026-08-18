@@ -297,5 +297,5 @@
   - @voluntas
 - [UPDATE] 各 Cargo.toml の依存ライブラリに用途コメントを追加し、`fuzz/Cargo.toml` に `rust-version` を明記する
   - @voluntas
-- [UPDATE] PBT を proptest から noprop に置き換え、マクロなしの命令的なプロパティテストへ移行する。各プロパティに到達ゲート (coverage gate) を追加し、境界値付きサンプリングで従来届かなかったエラーパス (フロー制御ウィンドウ超過等) も探索する
+- [UPDATE] PBT を proptest から noprop に置き換え、マクロなしの命令的なプロパティテストへ移行する。エンコード長クラスや SETTINGS 範囲制約などを first-class 分岐と到達ゲートで探索し、一様サンプリングでは届かない境界・エラーパスをカバーする
   - @voluntas

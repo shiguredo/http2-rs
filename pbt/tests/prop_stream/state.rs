@@ -76,8 +76,16 @@ fn prop_closed_is_absorbing() -> noprop::TestResult {
     let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let before_count = noprop::sample_usize_in(ctx, 0..=9);
-        let after_count = 1 + noprop::sample_usize_in(ctx, 0..=9);
+        let before_count = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, 9],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=9),
+        );
+        let after_count =
+            noprop::sample_with_boundaries(ctx, &[1usize, 10], noprop::Ratio::one_nth(5), |ctx| {
+                1 + noprop::sample_usize_in(ctx, 0..=9)
+            });
         let ops_before: Vec<StreamOp> = (0..before_count).map(|_| sample_stream_op(ctx)).collect();
         let ops_after: Vec<StreamOp> = (0..after_count).map(|_| sample_stream_op(ctx)).collect();
         let mut sm = StateMachine::new();
@@ -113,16 +121,32 @@ fn prop_closed_is_absorbing() -> noprop::TestResult {
 #[test]
 fn prop_can_send_recv_consistency() -> noprop::TestResult {
     let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
-    // 操作列が空だと無検証で成立するため、ループ本体の実行をゲートする
+    // 操作後の検査が実際に走ったことをゲートする (空列は初期 Idle 検査でカバー)
     let executed_gate = std::cell::Cell::new(0usize);
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let steps = noprop::sample_usize_in(ctx, 0..=19);
+        let steps = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, 19],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=19),
+        );
         let mut sm = StateMachine::new();
-        let mut executed = false;
+
+        // 初期 Idle でも述語の対応を検査する
+        {
+            let state = sm.state();
+            assert_eq!(
+                state.can_send(),
+                matches!(state, StreamState::Open | StreamState::HalfClosedRemote)
+            );
+            assert_eq!(
+                state.can_recv(),
+                matches!(state, StreamState::Open | StreamState::HalfClosedLocal)
+            );
+        }
 
         for _ in 0..steps {
-            executed = true;
             let _ = apply_op(&mut sm, sample_stream_op(ctx));
 
             let state = sm.state();
@@ -144,15 +168,13 @@ fn prop_can_send_recv_consistency() -> noprop::TestResult {
                 expected_can_recv,
                 "can_recv mismatch for state {state:?}",
             );
-        }
-        if executed {
             executed_gate.set(executed_gate.get() + 1);
         }
         Ok(())
     })?;
     assert!(
         executed_gate.get() > 0,
-        "操作列が空で without check に成功した\n{runner}"
+        "操作後の can_send/can_recv 検査が一度も実行されなかった\n{runner}"
     );
     Ok(())
 }
@@ -166,12 +188,15 @@ fn prop_valid_transitions_only() -> noprop::TestResult {
     let executed_gate = std::cell::Cell::new(0usize);
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let steps = noprop::sample_usize_in(ctx, 0..=19);
+        let steps = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, 19],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=19),
+        );
         let mut sm = StateMachine::new();
-        let mut executed = false;
 
         for _ in 0..steps {
-            executed = true;
             let op = sample_stream_op(ctx);
             let state_before = sm.state();
             let result = apply_op(&mut sm, op);
@@ -194,15 +219,13 @@ fn prop_valid_transitions_only() -> noprop::TestResult {
                     );
                 }
             }
-        }
-        if executed {
             executed_gate.set(executed_gate.get() + 1);
         }
         Ok(())
     })?;
     assert!(
         executed_gate.get() > 0,
-        "操作列が空で無検証に成功した\n{runner}"
+        "操作後の遷移閉包検査が一度も実行されなかった\n{runner}"
     );
     Ok(())
 }
@@ -215,7 +238,12 @@ fn prop_rst_stream_always_closes() -> noprop::TestResult {
     let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let steps = noprop::sample_usize_in(ctx, 0..=9);
+        let steps = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, 9],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=9),
+        );
         let use_send = noprop::sample_bool(ctx);
         let mut sm = StateMachine::new();
 
@@ -309,12 +337,15 @@ fn prop_end_stream_flags_consistency() -> noprop::TestResult {
     let executed_gate = std::cell::Cell::new(0usize);
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let steps = noprop::sample_usize_in(ctx, 0..=19);
+        let steps = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, 19],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=19),
+        );
         let mut sm = StateMachine::new();
-        let mut executed = false;
 
         for _ in 0..steps {
-            executed = true;
             let _ = apply_op(&mut sm, sample_stream_op(ctx));
 
             let state = sm.state();
@@ -335,15 +366,13 @@ fn prop_end_stream_flags_consistency() -> noprop::TestResult {
                 expected_received,
                 "received_end_stream mismatch for state {state:?}",
             );
-        }
-        if executed {
             executed_gate.set(executed_gate.get() + 1);
         }
         Ok(())
     })?;
     assert!(
         executed_gate.get() > 0,
-        "操作列が空で無検証に成功した\n{runner}"
+        "操作後の END_STREAM フラグ検査が一度も実行されなかった\n{runner}"
     );
     Ok(())
 }

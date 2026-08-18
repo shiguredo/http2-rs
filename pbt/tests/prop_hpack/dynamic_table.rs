@@ -15,7 +15,10 @@ const TOKEN_CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789-_";
 /// HPACK 動的テーブルに挿入可能な field-name を生成する
 /// (token-lowercase + 数字 + '-' + '_', 非空)
 fn sample_name(ctx: &mut noprop::TestCaseContext) -> Vec<u8> {
-    let len = noprop::sample_usize_in(ctx, 1..=99);
+    let len =
+        noprop::sample_with_boundaries(ctx, &[1usize, 99], noprop::Ratio::one_nth(5), |ctx| {
+            noprop::sample_usize_in(ctx, 1..=99)
+        });
     (0..len)
         .map(|_| noprop::sample_choice(ctx, TOKEN_CHARSET))
         .collect()
@@ -26,7 +29,10 @@ fn sample_name(ctx: &mut noprop::TestCaseContext) -> Vec<u8> {
 /// RFC 9113 §8.2.1: visible ASCII + 内部 SP/HTAB 許容、両端 SP/HTAB は除去、
 /// NUL/CR/LF は構築時検査で禁止。
 fn sample_value(ctx: &mut noprop::TestCaseContext) -> Vec<u8> {
-    let len = noprop::sample_usize_in(ctx, 0..=99);
+    let len =
+        noprop::sample_with_boundaries(ctx, &[0usize, 1, 99], noprop::Ratio::one_nth(5), |ctx| {
+            noprop::sample_usize_in(ctx, 0..=99)
+        });
     let v: Vec<u8> = (0..len)
         .map(|_| noprop::sample_u64_in(ctx, 0x20..=0x7E) as u8)
         .collect();
@@ -59,7 +65,12 @@ fn sample_table_op(
             insert_gate.set(insert_gate.get() + 1);
         }
         1 => {
-            let new_max = noprop::sample_usize_in(ctx, 0..=9999);
+            let new_max = noprop::sample_with_boundaries(
+                ctx,
+                &[0usize, 1, 9999],
+                noprop::Ratio::one_nth(5),
+                |ctx| noprop::sample_usize_in(ctx, 0..=9999),
+            );
             table.set_max_size(new_max);
         }
         _ => {
@@ -83,9 +94,19 @@ fn prop_size_invariant() -> noprop::TestResult {
     let insert_gate = std::cell::Cell::new(0usize);
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let max_size = noprop::sample_usize_in(ctx, 0..=9999);
+        let max_size = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, 9999],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=9999),
+        );
         let mut table = DynamicTable::new(max_size);
-        let steps = noprop::sample_usize_in(ctx, 0..=49);
+        let steps = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, 49],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=49),
+        );
 
         for _ in 0..steps {
             sample_table_op(ctx, &mut table, &insert_gate);

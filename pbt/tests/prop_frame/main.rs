@@ -18,7 +18,12 @@ const CASES: usize = 256;
 
 /// 有効なストリーム ID (0 以外) を生成する
 fn sample_valid_stream_id(ctx: &mut noprop::TestCaseContext) -> NonZeroStreamId {
-    let id = 1 + noprop::sample_u64_in(ctx, 0..0x7FFF_FFFFu64) as u32;
+    let id = noprop::sample_with_boundaries(
+        ctx,
+        &[1u32, 0x7FFF_FFFF],
+        noprop::Ratio::one_nth(5),
+        |ctx| 1 + noprop::sample_u64_in(ctx, 0..0x7FFF_FFFFu64) as u32,
+    );
     NonZeroStreamId::new(id).expect("valid non-zero stream ID")
 }
 
@@ -54,7 +59,18 @@ fn sample_valid_setting(ctx: &mut noprop::TestCaseContext) -> Setting {
 
 /// 任意のバイト列 (0..=max_len) を生成する
 fn sample_arbitrary_bytes(ctx: &mut noprop::TestCaseContext, max_len: usize) -> Vec<u8> {
-    let len = noprop::sample_usize_in(ctx, 0..=max_len);
+    let len = match max_len {
+        0 => 0,
+        1 => noprop::sample_with_boundaries(ctx, &[0usize, 1], noprop::Ratio::one_nth(5), |ctx| {
+            noprop::sample_usize_in(ctx, 0..=1)
+        }),
+        _ => noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1, max_len],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=max_len),
+        ),
+    };
     noprop::sample_bytes_vec(ctx, len)
 }
 

@@ -45,7 +45,10 @@ fn sample_lower_or_digit(ctx: &mut noprop::TestCaseContext) -> char {
 /// 有効なヘッダー名を生成する (小文字 ASCII)
 fn sample_valid_header_name(ctx: &mut noprop::TestCaseContext) -> Vec<u8> {
     const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789-_";
-    let len = noprop::sample_usize_in(ctx, 1..=16);
+    let len =
+        noprop::sample_with_boundaries(ctx, &[1usize, 16], noprop::Ratio::one_nth(5), |ctx| {
+            noprop::sample_usize_in(ctx, 1..=16)
+        });
     (0..len)
         .map(|_| noprop::sample_choice(ctx, CHARSET))
         .collect()
@@ -56,7 +59,10 @@ fn sample_valid_header_name(ctx: &mut noprop::TestCaseContext) -> Vec<u8> {
 /// RFC 9113 Section 8.2.1: 先頭/末尾の SP (0x20) / HTAB (0x09) は禁止。
 /// 空値または先頭/末尾が SP/HTAB でない値を生成する。
 fn sample_valid_header_value(ctx: &mut noprop::TestCaseContext) -> Vec<u8> {
-    let len = noprop::sample_usize_in(ctx, 0..=32);
+    let len =
+        noprop::sample_with_boundaries(ctx, &[0usize, 1, 32], noprop::Ratio::one_nth(5), |ctx| {
+            noprop::sample_usize_in(ctx, 0..=32)
+        });
     let mut v: Vec<u8> = (0..len)
         .map(|_| noprop::sample_u64_in(ctx, 0x20..=0x7E) as u8)
         .collect();

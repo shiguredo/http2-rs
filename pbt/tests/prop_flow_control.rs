@@ -13,7 +13,12 @@ const CASES: usize = 256;
 
 /// 有効なウィンドウサイズ (1..=2^31-1) を生成する
 fn sample_valid_window_size(ctx: &mut noprop::TestCaseContext) -> u32 {
-    1 + noprop::sample_u64_in(ctx, 0..MAX_WINDOW_SIZE as u64) as u32
+    noprop::sample_with_boundaries(
+        ctx,
+        &[1u32, MAX_WINDOW_SIZE],
+        noprop::Ratio::one_nth(5),
+        |ctx| 1 + noprop::sample_u64_in(ctx, 0..MAX_WINDOW_SIZE as u64) as u32,
+    )
 }
 
 /// フロー制御の初期化テスト
@@ -67,21 +72,29 @@ fn prop_consume_send() -> noprop::TestResult {
     let err_gate = std::cell::Cell::new(0usize);
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let initial_window = noprop::sample_u64_in(ctx, 100..=65535) as u32;
-        let consume_size = noprop::sample_usize_in(ctx, 0..=65535);
+        let initial_window = noprop::sample_with_boundaries(
+            ctx,
+            &[100u32, 65_535],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_u64_in(ctx, 100..=65_535) as u32,
+        );
         let mut fc = FlowControl::new(initial_window);
-        let result = fc.consume_send(consume_size);
-
-        if consume_size <= initial_window as usize {
-            assert!(result.is_ok());
-            assert_eq!(
-                fc.send_window(),
-                i64::from(initial_window) - consume_size as i64
-            );
-            ok_gate.set(ok_gate.get() + 1);
-        } else {
-            assert!(result.is_err());
-            err_gate.set(err_gate.get() + 1);
+        match noprop::sample_weighted_index(ctx, &[1, 1]) {
+            0 => {
+                let consume_size = noprop::sample_usize_in(ctx, 0..=initial_window as usize);
+                fc.consume_send(consume_size).expect("within window");
+                assert_eq!(
+                    fc.send_window(),
+                    i64::from(initial_window) - consume_size as i64
+                );
+                ok_gate.set(ok_gate.get() + 1);
+            }
+            _ => {
+                let consume_size =
+                    initial_window as usize + 1 + noprop::sample_usize_in(ctx, 0..=65_535);
+                assert!(fc.consume_send(consume_size).is_err());
+                err_gate.set(err_gate.get() + 1);
+            }
         }
         Ok(())
     })?;
@@ -104,8 +117,13 @@ fn prop_send_available() -> noprop::TestResult {
     let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
-        let initial_window = noprop::sample_u64_in(ctx, 1..=65535) as u32;
-        let consume_size = noprop::sample_usize_in(ctx, 0..=65535);
+        let initial_window = noprop::sample_with_boundaries(
+            ctx,
+            &[1u32, 65_535],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_u64_in(ctx, 1..=65_535) as u32,
+        );
+        let consume_size = noprop::sample_usize_in(ctx, 0..=initial_window as usize);
         let mut fc = FlowControl::new(initial_window);
         let consume = consume_size.min(initial_window as usize);
         fc.consume_send(consume).expect("should succeed");
@@ -125,6 +143,7 @@ fn prop_send_available() -> noprop::TestResult {
 #[test]
 fn prop_window_update() -> noprop::TestResult {
     let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let ok_gate = std::cell::Cell::new(0usize);
     let err_gate = std::cell::Cell::new(0usize);
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
@@ -151,9 +170,14 @@ fn prop_window_update() -> noprop::TestResult {
         } else {
             assert!(result.is_ok());
             assert_eq!(fc.send_window(), new_window);
+            ok_gate.set(ok_gate.get() + 1);
         }
         Ok(())
     })?;
+    assert!(
+        ok_gate.get() > 0,
+        "WINDOW_UPDATE 成功パスが一度も実行されなかった\n{runner}"
+    );
     assert!(
         err_gate.get() > 0,
         "ウィンドウオーバーフローエラーパスが一度も実行されなかった\n{runner}"
@@ -168,6 +192,7 @@ fn prop_window_update() -> noprop::TestResult {
 #[test]
 fn prop_update_initial_window_size() -> noprop::TestResult {
     let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let ok_gate = std::cell::Cell::new(0usize);
     let err_gate = std::cell::Cell::new(0usize);
     let mut runner = noprop::Runner::new(seed);
     runner.run(CASES, |ctx| {
@@ -199,9 +224,14 @@ fn prop_update_initial_window_size() -> noprop::TestResult {
             assert!(result.is_ok());
             assert_eq!(fc.send_window(), new_window);
             assert_eq!(fc.send_initial(), new_initial);
+            ok_gate.set(ok_gate.get() + 1);
         }
         Ok(())
     })?;
+    assert!(
+        ok_gate.get() > 0,
+        "初期ウィンドウ更新の成功パスが一度も実行されなかった\n{runner}"
+    );
     assert!(
         err_gate.get() > 0,
         "ウィンドウオーバーフローエラーパスが一度も実行されなかった\n{runner}"
@@ -300,7 +330,10 @@ fn prop_flow_control_invariants() -> noprop::TestResult {
     runner.run(CASES, |ctx| {
         let initial_window = noprop::sample_u64_in(ctx, 1..=65535) as u32;
         let mut fc = FlowControl::new(initial_window);
-        let steps = noprop::sample_usize_in(ctx, 1..=20);
+        let steps =
+            noprop::sample_with_boundaries(ctx, &[1usize, 20], noprop::Ratio::one_nth(5), |ctx| {
+                noprop::sample_usize_in(ctx, 1..=20)
+            });
 
         for _ in 0..steps {
             match noprop::sample_weighted_index(ctx, &[2, 1]) {
