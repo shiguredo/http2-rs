@@ -222,6 +222,8 @@
   - @voluntas
 - [FIX] `Connection` の CONNECT 確立済みストリームへの HEADERS と未知フレームのストリームエラーが `Err` として伝播して接続全体が終了する問題を修正する。ストリームエラーは RST_STREAM (PROTOCOL_ERROR) 送信 + `Event::StreamReset` 通知に変換し、`streams` から削除して接続を維持する (RFC 9113 Section 4.3 / Section 5.4.2 / Section 6.8 / Section 8.5)
   - @voluntas
+- [FIX] `WtServerSession::close()` が driver タスクへのコマンド送信エラーと応答受信エラーを無視していた問題を修正し、driver 終了時に `Error::ConnectionClosed` を返すようにする
+  - @voluntas
 
 ### misc
 
