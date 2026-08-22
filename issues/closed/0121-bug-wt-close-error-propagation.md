@@ -1,7 +1,7 @@
 # WtServerSession::close() がエラーを無視する問題を修正する
 
 - Created: 2026-08-16
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-08-22
 - Branch: feature/fix-wt-close-error-propagation
 - Polished: 2026-08-22
 
@@ -33,3 +33,16 @@
 - driver の ack がエラーの場合（`wt_session.close()` の失敗）に `close()` がエラーを返すこと
 - 正常系では従来通り `Ok(())` が返ること
 - `cargo test -p tokio-http2` が全件通過すること
+
+## 解決方法
+
+`crates/tokio-http2/src/webtransport.rs` の `WtServerSession::close()` を修正した:
+
+- `cmd_tx.send()` の結果を `.map_err(|_| Error::ConnectionClosed)?` で検査し、失敗時は `Error::ConnectionClosed` を返す（`open_bidi` / `drain` 等の他メソッドと同じ契約）
+- `rx.await` が返す `Result<Result<(), Error>, RecvError>` の RecvError と ack 値（`wt_session.close()` の結果）の両方を伝播する
+- `driver.await` は ack 受信後に必ず `Ok(())` を返すため無視するが、その理由をコメントで明示した
+- `close()` の doc コメントに `# Errors` セクションを追記した
+
+`crates/tokio-http2/tests/test_webtransport.rs` に、クライアントが CONNECT ストリームを END_STREAM で閉じて driver を終了させた後に `close()` を呼び、`Error::ConnectionClosed` が返ることを検証する E2E テスト `test_wt_close_errors_when_driver_dead` を追加した。
+
+`CHANGES.md` の `## develop` に [FIX] エントリを追記した。

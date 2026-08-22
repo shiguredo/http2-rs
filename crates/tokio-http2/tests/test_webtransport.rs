@@ -518,6 +518,55 @@ async fn test_wt_close() {
     server_task.await.expect("server join");
 }
 
+/// close(): driver が既に落ちている場合にエラーを返す
+///
+/// クライアントが CONNECT ストリームを END_STREAM で閉じると driver が終了する。
+/// その後に close() を呼ぶと `cmd_tx.send()` が失敗し、`Error::ConnectionClosed` を返す。
+#[tokio::test]
+async fn test_wt_close_errors_when_driver_dead() {
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("bind");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("accept");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let session = req
+            .accept(WtConfig::default(), None, None)
+            .await
+            .expect("wt accept");
+        // クライアントの END_STREAM を driver が処理して終了するのを待つ
+        // (同ファイルの他の driver 処理待ちと同じ 2 秒を使う)
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let err = session
+            .close(0, "done")
+            .await
+            .expect_err("driver が落ちているので close() は失敗する");
+        assert!(
+            matches!(err, tokio_http2::Error::ConnectionClosed),
+            "close() は ConnectionClosed を返すこと: {err:?}"
+        );
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("connect");
+    let connect_stream = perform_connect(&mut client).await;
+    // CONNECT ストリームを END_STREAM で閉じて driver を終了させる
+    client
+        .send_data(connect_stream, vec![], true)
+        .await
+        .expect("send END_STREAM");
+    server_task.await.expect("server join");
+}
+
 /// drain: サーバーが WT_DRAIN_SESSION を送り、クライアントが SessionDraining を受信する
 #[tokio::test]
 async fn test_wt_drain() {

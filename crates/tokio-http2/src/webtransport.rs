@@ -460,18 +460,28 @@ impl WtServerSession {
     }
 
     /// セッションを `WT_CLOSE_SESSION` で終了する
+    ///
+    /// # Errors
+    ///
+    /// driver が既に終了している場合は `Error::ConnectionClosed` を返す。
+    /// セッションが既に閉じている場合は `Error::WebTransport` を返す。
     pub async fn close(mut self, error_code: u32, reason: &str) -> Result<()> {
         let (ack, rx) = oneshot::channel();
-        let _ = self.cmd_tx.send(DriverCmd::Close {
-            error_code,
-            reason: reason.to_string(),
-            ack,
-        });
-        let _ = rx.await;
+        self.cmd_tx
+            .send(DriverCmd::Close {
+                error_code,
+                reason: reason.to_string(),
+                ack,
+            })
+            .map_err(|_| Error::ConnectionClosed)?;
+        let res = rx.await.map_err(|_| Error::ConnectionClosed)?;
+        // ack を受信できた時点で driver は必ず `Ok(())` を返して終了する
+        // (Close 処理は ack 送信後に `Ok(false)` でループを抜ける) ため、
+        // `driver.await` の結果は無視してよい (上の `res` は無視しない)
         if let Some(driver) = self.driver.take() {
             let _ = driver.await;
         }
-        Ok(())
+        res
     }
 
     /// セッションを `WT_DRAIN_SESSION` で drain する
