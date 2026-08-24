@@ -1,7 +1,7 @@
 # driver コマンド処理の失敗原因が Error::ConnectionClosed に丸められる問題を修正する
 
 - Created: 2026-08-22
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-08-24
 - Branch: feature/fix-wt-command-error-masking
 - Polished: 2026-08-24
 
@@ -26,3 +26,16 @@ driver タスクのコマンド処理中に I/O エラー（出力フラッシ�
 - driver のコマンド処理中に I/O エラーが発生した場合、呼び出し側が `Error::ConnectionClosed` ではなく実際のエラーを受け取ること
 - driver が消失している場合は従来通り `Error::ConnectionClosed` が返ること
 - `cargo test -p tokio-http2` が全件通過すること
+
+## 解決方法
+
+`crates/tokio-http2/src/webtransport.rs` の `DriverState::handle_cmd` を修正した。
+
+- 全コマンドで、セッション操作の結果 (成功・失敗) を ack に必ず載せて送信するようにした。出力フラッシュ (`flush_wt_output`) や END_STREAM 送信 (`conn.send_data`) が失敗した場合も、その実際のエラーを ack に含めて呼び出し側へ伝える
+- フラッシュ失敗時は ack 送信後に driver を終了する (送信状態が不整合になるため)。セッション操作自体の失敗は ack に載せるだけで driver は継続する
+- フラッシュを伴う 7 コマンドの ack 必送をヘルパー `send_cmd_result` に共通化した。Close は END_STREAM 送信を伴うため個別に処理する
+- 呼び出し側の `rx.await` は従来どおり RecvError を `Error::ConnectionClosed` にマップするため、driver 消失時は従来通り `Error::ConnectionClosed` が返る
+
+テスト:
+
+- `crates/tokio-http2/tests/test_webtransport.rs` に `test_wt_command_flush_error_not_masked_as_connection_closed` を追加した。初期ウィンドウ (65535) を超える DATAGRAM 送信で出力フラッシュを失敗させ、`Error::ConnectionClosed` ではなく実際のエラー (`Error::Protocol` + send buffer full) が返ることを検証する
