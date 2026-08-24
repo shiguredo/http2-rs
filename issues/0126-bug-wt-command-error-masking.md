@@ -3,7 +3,7 @@
 - Created: 2026-08-22
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-wt-command-error-masking
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-08-24
 
 ## 目的
 
