@@ -3,7 +3,7 @@
 - Created: 2026-08-24
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-wt-closed-recv-capsule
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-08-24
 
 ## 目的
 
