@@ -3,7 +3,7 @@
 - Created: 2026-08-24
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-wt-send-api-varint-panic
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-08-24
 
 ## 目的
 
@@ -27,13 +27,13 @@
 ## 設計方針
 
 - `send_max_data` / `send_max_stream_data` に `maximum > varint::MAX_VALUE` チェックを追加し、超過時は `WtError::flow_control_error` を返す
-- `reset_stream` / `stop_sending` に `error_code > 0xffffffff` チェックを追加し、超過時はエラーを返す (draft-15 Section 6.2 / 6.3 の MUST NOT に整合)
-- `send_max_streams` の既存の 2^60 チェックと同様のスタイルで統一する
+- `reset_stream` / `stop_sending` に `error_code > 0xffffffff` チェックを追加し、超過時は `WtError::flow_control_error` を返す (draft-15 Section 6.2 / 6.3 の MUST NOT に整合)
+- `send_max_streams` の既存の 2^60 チェックと同様のスタイル (`WtErrorKind::FlowControlError`) で統一する
 - 各 API に境界値 (`MAX_VALUE`、`MAX_VALUE + 1`、`0xffffffff`、`0xffffffff + 1`) のテストを追加する
 
 ## 完了条件
 
 - 上記 4 API に範囲外入力を渡しても panic しないこと
-- `send_max_data` / `send_max_stream_data` が `maximum > 2^62-1` で `Err` を返すこと
-- `reset_stream` / `stop_sending` が `error_code > 0xffffffff` で `Err` を返すこと
+- `send_max_data` / `send_max_stream_data` が `maximum > 2^62-1` で `Err` (WtErrorKind::FlowControlError) を返すこと
+- `reset_stream` / `stop_sending` が `error_code > 0xffffffff` で `Err` (WtErrorKind::FlowControlError) を返すこと
 - 境界値のテストが追加され、`cargo test --all` が通過すること
