@@ -3,7 +3,7 @@
 - Created: 2026-08-24
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-wt-config-apply-init-mapping
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-08-24
 
 ## 目的
 
@@ -25,12 +25,12 @@ WebTransport-Init はクライアントが CONNECT リクエストで送信す�
 
 ## 設計方針
 
-- `WtConfig::apply_init` の bl / br マッピングを仕様 (Section 4.3.2) に合わせて修正する
-- もしくは、意味論が曖昧なメソッドとして削除し、`apply_init_as_peer` に一本化する
+- `WtConfig::apply_init` は意味論が曖昧なメソッドであり、削除して `apply_init_as_peer` に一本化する (WebTransport-Init は送信者 (クライアント) の受信上限を伝えるもので、ローカル config へのマージに正当な用途がなく、現状もテスト専用の使用)
+- 残す場合は、送信者視点のマッピング (bl → `initial_max_stream_data_bidi_local`、br → `initial_max_stream_data_bidi_remote`) に修正する。これは `apply_init_as_peer` と同一のマッピングになるため、実質的に削除と等価である
 - テストを「config と peer_config が異なる値」のケースに変更し、bl / br の各分岐を実値で検証する
 
 ## 完了条件
 
-- `apply_init` の bl / br マッピングが仕様と一致すること (または当該メソッドが削除され、`apply_init_as_peer` に統一されていること)
+- `WtConfig::apply_init` が削除され、`apply_init_as_peer` に統一されていること (残す場合は、bl → `initial_max_stream_data_bidi_local`、br → `initial_max_stream_data_bidi_remote` の送信者視点マッピングに修正されていること)
 - config と peer_config を異なる値で構築した bl / br 検証テストが追加されていること
 - `cargo test --all` が通過すること
