@@ -145,7 +145,7 @@ impl WtServerRequest {
         allowed_origin: Option<&[u8]>,
         selected_protocol: Option<&[u8]>,
     ) -> Result<WtServerSession> {
-        // draft-ietf-webtrans-http2-15 Section 7 (L1425-L1438):
+        // draft-ietf-webtrans-http2-15 Section 7 (L1483-L1487):
         // WebTransport over HTTP/2 は TLS 1.3 か、TLS 1.2 + extended master secret を要求する。
         // rustls 0.23 は extended master secret のネゴシエーション状態を外部公開していないため、
         // 動的判定不可。安全側に倒して TLS 1.3 のみを許可する (仕様より厳しい)。
@@ -465,6 +465,8 @@ impl WtServerSession {
     ///
     /// driver が既に終了している場合は `Error::ConnectionClosed` を返す。
     /// セッションが既に閉じている場合は `Error::WebTransport` を返す。
+    /// 出力フラッシュや END_STREAM 送信に失敗した場合は、その実際のエラー
+    /// (I/O / プロトコルエラー等) を返す。
     pub async fn close(mut self, error_code: u32, reason: &str) -> Result<()> {
         let (ack, rx) = oneshot::channel();
         self.cmd_tx
@@ -475,8 +477,8 @@ impl WtServerSession {
             })
             .map_err(|_| Error::ConnectionClosed)?;
         let res = rx.await.map_err(|_| Error::ConnectionClosed)?;
-        // ack を受信できた時点で driver は必ず `Ok(())` を返して終了する
-        // (Close 処理は ack 送信後に `Ok(false)` でループを抜ける) ため、
+        // ack を受信できた時点で driver は必ず正常終了する
+        // (Close 処理は ack 送信後に `false` でループを抜ける) ため、
         // `driver.await` の結果は無視してよい (上の `res` は無視しない)
         if let Some(driver) = self.driver.take() {
             let _ = driver.await;
@@ -857,7 +859,7 @@ impl DriverState {
                 cmd = self.cmd_rx.recv() => {
                     match cmd {
                         Some(cmd) => {
-                            if !self.handle_cmd(cmd).await? {
+                            if !self.handle_cmd(cmd).await {
                                 break;
                             }
                         }
@@ -876,7 +878,11 @@ impl DriverState {
         Ok(())
     }
 
-    async fn handle_cmd(&mut self, cmd: DriverCmd) -> Result<bool> {
+    /// コマンドを処理し、ループ継続可否を返す
+    ///
+    /// 処理結果 (成功・失敗) は必ず ack 経由で呼び出し側へ返す。driver を終了させる
+    /// ケースも `false` で表現するため、本メソッドはエラーを返さない。
+    async fn handle_cmd(&mut self, cmd: DriverCmd) -> bool {
         match cmd {
             DriverCmd::SendStreamData {
                 stream_id,
@@ -888,17 +894,13 @@ impl DriverState {
                     .wt_session
                     .send_stream_data(stream_id, &data, fin)
                     .map_err(Error::from);
-                if res.is_ok() {
-                    self.flush_wt_output().await?;
-                }
-                let _ = ack.send(res);
+                self.send_cmd_result(res, ack).await
             }
             DriverCmd::OpenBidi { ack } => {
                 let res = match self.wt_session.open_bidi_stream() {
                     Ok(stream_id) => {
                         let (tx, rx) = mpsc::unbounded_channel();
                         self.stream_channels.insert(stream_id, tx);
-                        self.flush_wt_output().await?;
                         Ok(WtBidiStream {
                             stream_id,
                             cmd_tx: self.cmd_tx.clone(),
@@ -908,27 +910,21 @@ impl DriverState {
                     }
                     Err(e) => Err(Error::from(e)),
                 };
-                let _ = ack.send(res);
+                self.send_cmd_result(res, ack).await
             }
             DriverCmd::OpenUni { ack } => {
                 let res = match self.wt_session.open_uni_stream() {
-                    Ok(stream_id) => {
-                        self.flush_wt_output().await?;
-                        Ok(WtUniSendStream {
-                            stream_id,
-                            cmd_tx: self.cmd_tx.clone(),
-                        })
-                    }
+                    Ok(stream_id) => Ok(WtUniSendStream {
+                        stream_id,
+                        cmd_tx: self.cmd_tx.clone(),
+                    }),
                     Err(e) => Err(Error::from(e)),
                 };
-                let _ = ack.send(res);
+                self.send_cmd_result(res, ack).await
             }
             DriverCmd::SendDatagram { data, ack } => {
                 let res = self.wt_session.send_datagram(&data).map_err(Error::from);
-                if res.is_ok() {
-                    self.flush_wt_output().await?;
-                }
-                let _ = ack.send(res);
+                self.send_cmd_result(res, ack).await
             }
             DriverCmd::ResetStream {
                 stream_id,
@@ -939,10 +935,7 @@ impl DriverState {
                     .wt_session
                     .reset_stream(stream_id, error_code)
                     .map_err(Error::from);
-                if res.is_ok() {
-                    self.flush_wt_output().await?;
-                }
-                let _ = ack.send(res);
+                self.send_cmd_result(res, ack).await
             }
             DriverCmd::StopSending {
                 stream_id,
@@ -953,39 +946,47 @@ impl DriverState {
                     .wt_session
                     .stop_sending(stream_id, error_code)
                     .map_err(Error::from);
-                if res.is_ok() {
-                    self.flush_wt_output().await?;
-                }
-                let _ = ack.send(res);
+                self.send_cmd_result(res, ack).await
             }
             DriverCmd::Close {
                 error_code,
                 reason,
                 ack,
             } => {
-                let res = self
+                let mut res = self
                     .wt_session
                     .close(error_code, &reason)
                     .map_err(Error::from);
                 if res.is_ok() {
-                    self.flush_wt_output().await?;
-                    // draft-ietf-webtrans-http2-15 Section 6.12 (L1360-L1361):
-                    // WT_CLOSE_SESSION 送信後は MUST half-close the stream。
-                    // RFC 9113 Section 6.9.1: 空 DATA + END_STREAM はフロー制御ウィンドウ空きなしでも送信可能。
-                    self.conn
+                    // draft-ietf-webtrans-http2-15 Section 6.12 (L1405-L1406):
+                    // WT_CLOSE_SESSION 送信後は MUST half-close the stream。このため
+                    // 出力フラッシュに続けて空 DATA + END_STREAM を送信する。
+                    // RFC 9113 Section 6.9.1: 空 DATA + END_STREAM はフロー制御ウィンドウ
+                    // 空きなしでも送信可能。
+                    // フラッシュや END_STREAM 送信の失敗は ack に載せて呼び出し側へ伝える。
+                    // 注: 送信ウィンドウ枯渇時、sans-io 層はデータをバッファへ積むだけで
+                    // Ok を返す (実際には未送信) ことがある。その場合も driver 終了で
+                    // コネクションごと破棄され、close 処理の出力 (WT_CLOSE_SESSION /
+                    // END_STREAM) はピアへ届かない。
+                    if let Err(e) = self.flush_wt_output().await {
+                        res = Err(e);
+                    } else if let Err(e) = self
+                        .conn
                         .send_data(self.connect_stream_id, vec![], true)
-                        .await?;
-                    self.responded_end_stream_on_close = true;
+                        .await
+                    {
+                        res = Err(e);
+                    } else {
+                        self.responded_end_stream_on_close = true;
+                    }
                 }
                 let _ = ack.send(res);
-                return Ok(false);
+                // Close は結果に関わらずループを抜けて driver を終了する
+                false
             }
             DriverCmd::Drain { ack } => {
                 let res = self.wt_session.drain().map_err(Error::from);
-                if res.is_ok() {
-                    self.flush_wt_output().await?;
-                }
-                let _ = ack.send(res);
+                self.send_cmd_result(res, ack).await
             }
             DriverCmd::ExportKeyingMaterial {
                 app_label,
@@ -1012,9 +1013,52 @@ impl DriverState {
                     Ok(output)
                 })();
                 let _ = ack.send(res);
+                true
             }
         }
-        Ok(true)
+    }
+
+    /// セッション操作の結果を ack で必ず呼び出し側へ返す
+    ///
+    /// 本メソッドはフラッシュを伴うセッション操作 (ストリーム送信・ストリーム開設・
+    /// DATAGRAM 送信・リセット・STOP_SENDING・drain) に使用する。END_STREAM 送信を
+    /// 伴う Close と、WT 出力を生まない `ExportKeyingMaterial` は handle_cmd 内で
+    /// 直接処理する。
+    ///
+    /// セッション操作が成功した場合は WT 出力をフラッシュする。フラッシュの失敗は
+    /// ack にエラーとして載せて呼び出し側へ実際の失敗原因を伝えたうえで `false` を
+    /// 返して driver を終了する。フラッシュ失敗はコネクションが使えない状態か、
+    /// 送信バッファ (ピアの初期ウィンドウサイズ) に収まらない出力を一度に送ろうとした
+    /// 状態 (send buffer full) であり、capsule が部分的にしか積まれていない。このまま
+    /// 継続すると破損した capsule を送信してしまうため、終了が安全側の選択である。
+    /// セッション操作自体の失敗 (例: クローズ済みストリームへの送信・送信ウィンドウ
+    /// 枯渇) は ack に載せるだけで driver は継続する。ストリーム個別の失敗で
+    /// コネクション全体を終了させる必要はないため。
+    ///
+    /// 返り値は `run()` のループ継続判定で、`true` は継続・`false` は終了を表す。
+    /// エラーはすべて ack 経由で呼び出し側へ届くため、本メソッドはエラーを返さない。
+    async fn send_cmd_result<T>(
+        &mut self,
+        res: Result<T>,
+        ack: oneshot::Sender<Result<T>>,
+    ) -> bool {
+        let value = match res {
+            Ok(value) => value,
+            Err(e) => {
+                let _ = ack.send(Err(e));
+                return true;
+            }
+        };
+        match self.flush_wt_output().await {
+            Ok(()) => {
+                let _ = ack.send(Ok(value));
+                true
+            }
+            Err(e) => {
+                let _ = ack.send(Err(e));
+                false
+            }
+        }
     }
 
     async fn handle_event(&mut self, ev: Event) -> Result<()> {
@@ -1042,7 +1086,7 @@ impl DriverState {
                     self.dispatch_wt_event(wt_ev).await?;
                 }
 
-                // draft-ietf-webtrans-http2-15 Section 6.12 (L1364-L1365):
+                // draft-ietf-webtrans-http2-15 Section 6.12 (L1407-L1409):
                 // WT_CLOSE_SESSION 受信時は MUST close the stream with END_STREAM。
                 // end_stream=true と WT_CLOSE_SESSION が同一 DATA フレームに
                 // 含まれている場合でも、先に END_STREAM を返信する必要があるため

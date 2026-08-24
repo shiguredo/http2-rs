@@ -567,6 +567,57 @@ async fn test_wt_close_errors_when_driver_dead() {
     server_task.await.expect("server join");
 }
 
+/// コマンド処理中の出力フラッシュ失敗が `Error::ConnectionClosed` に丸められず、
+/// 呼び出し側へ実際の失敗原因が伝わることを確認する。
+///
+/// クライアントが広告する初期ウィンドウ (デフォルト 65535) を超える DATAGRAM を
+/// 送信すると、driver の出力フラッシュが sans-io 層のフロー制御エラー
+/// (send buffer full) で失敗する。
+#[tokio::test]
+async fn test_wt_command_flush_error_not_masked_as_connection_closed() {
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("parse should succeed"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("bind");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("accept");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let mut session = req
+            .accept(WtConfig::default(), None, None)
+            .await
+            .expect("wt accept");
+
+        // 初期ウィンドウを超える DATAGRAM を送ると、出力フラッシュが失敗する
+        let err = session
+            .send_datagram(vec![0u8; 200_000])
+            .await
+            .expect_err("出力フラッシュが失敗するので send_datagram はエラーになる");
+        assert!(
+            matches!(&err, tokio_http2::Error::Protocol(_)),
+            "フラッシュ失敗は Error::Protocol として伝わること: {err}"
+        );
+        assert!(
+            format!("{err}").contains("send buffer full"),
+            "実際の失敗原因が伝わること: {err}"
+        );
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("connect");
+    // WINDOW_UPDATE を送らないままサーバーの処理完了を待つ
+    let _connect_stream = perform_connect(&mut client).await;
+
+    server_task.await.expect("server join");
+}
+
 /// drain: サーバーが WT_DRAIN_SESSION を送り、クライアントが SessionDraining を受信する
 #[tokio::test]
 async fn test_wt_drain() {
@@ -628,7 +679,7 @@ async fn test_wt_drain() {
 /// サーバーが close() を呼んだ後、クライアントが CONNECT ストリーム上で
 /// END_STREAM を受信することを確認する。
 ///
-/// draft-ietf-webtrans-http2-15 Section 6.12 (L1360-L1361) の MUST 要件:
+/// draft-ietf-webtrans-http2-15 Section 6.12 (L1405-L1406) の MUST 要件:
 /// WT_CLOSE_SESSION 送信後は END_STREAM で half-close しなければならない。
 #[tokio::test]
 async fn test_wt_close_sends_end_stream() {
@@ -698,7 +749,7 @@ async fn test_wt_close_sends_end_stream() {
 /// クライアントが WT_CLOSE_SESSION + END_STREAM を送信した後、
 /// サーバーが END_STREAM を返信することを確認する。
 ///
-/// draft-ietf-webtrans-http2-15 Section 6.12 (L1364-L1365):
+/// draft-ietf-webtrans-http2-15 Section 6.12 (L1407-L1409):
 /// WT_CLOSE_SESSION の受信者は END_STREAM で応答しなければならない (MUST)。
 #[tokio::test]
 async fn test_wt_close_received_sends_end_stream() {
@@ -1004,7 +1055,7 @@ async fn test_wt_origin_rejected() {
     server_task.await.expect("server join");
 }
 
-/// draft-ietf-webtrans-http2-15 Section 7 (L1425-L1438):
+/// draft-ietf-webtrans-http2-15 Section 7 (L1483-L1487):
 /// TLS 1.3 で WebTransport セッションを要求した場合は `accept()` が成功する。
 /// (既存テストでも TLS 1.3 経路は通っているが、リグレッション防止のため明示テストを置く)
 #[tokio::test]
@@ -1039,7 +1090,7 @@ async fn test_wt_tls13_accept() {
     server_task.await.expect("サーバータスクの join に失敗");
 }
 
-/// draft-ietf-webtrans-http2-15 Section 7 (L1425-L1438) + RFC 9113 Section 8.1.1 (L2463-L2465):
+/// draft-ietf-webtrans-http2-15 Section 7 (L1483-L1487) + RFC 9113 Section 8.1.1 (L2463-L2465):
 /// TLS 1.2 で WebTransport セッションを要求した場合は malformed として扱い、
 /// CONNECT ストリームに `RST_STREAM(PROTOCOL_ERROR)` を送出して拒否する。
 #[tokio::test]
