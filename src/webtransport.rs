@@ -31,7 +31,7 @@ pub mod varint;
 use std::collections::{HashMap, VecDeque};
 
 use crate::connection::Role;
-use crate::webtransport::capsule::MAX_CLOSE_REASON_LEN;
+use crate::webtransport::capsule::{MAX_APPLICATION_ERROR_CODE, MAX_CLOSE_REASON_LEN};
 
 /// RFC 9110 Section 5.6.2: tchar の定義
 ///
@@ -516,7 +516,24 @@ impl WtSession {
     }
 
     /// ストリームをリセットする
+    ///
+    /// `error_code` が 0xffffffff を超える場合は `flow_control_error` を返す
+    /// (draft-ietf-webtrans-http2-15 Section 6.2 の MUST NOT)。
     pub fn reset_stream(&mut self, stream_id: WtStreamId, error_code: u64) -> WtResult<()> {
+        // draft-ietf-webtrans-http2-15 Section 6.2:
+        // Application Protocol Error Code は 0xffffffff 以下でなければならない (MUST NOT)。
+        // 超過時は仕様違反の capsule を送信することになり、varint 上限 (2^62-1) を超える
+        // 値は CapsuleEncoder 内で panic するため、事前に拒否する。
+        // 受信側 (capsule.rs の decode_payload) は仕様どおり WT_ERROR 相当の
+        // session_state_error で処理するが、送信 API の引数検証はローカルな入力エラーであり、
+        // 他の範囲チェック (send_max_streams の 2^60 上限等) と同様に flow_control_error で
+        // 統一する。
+        if error_code > MAX_APPLICATION_ERROR_CODE {
+            return Err(WtError::flow_control_error(format!(
+                "WT_RESET_STREAM error code {error_code:#x} exceeds maximum {MAX_APPLICATION_ERROR_CODE:#x}"
+            )));
+        }
+
         let stream = self
             .streams
             .get_mut(&stream_id)
@@ -551,7 +568,24 @@ impl WtSession {
     }
 
     /// ストリーム送信停止を要求する
+    ///
+    /// `error_code` が 0xffffffff を超える場合は `flow_control_error` を返す
+    /// (draft-ietf-webtrans-http2-15 Section 6.3 の MUST NOT)。
     pub fn stop_sending(&mut self, stream_id: WtStreamId, error_code: u64) -> WtResult<()> {
+        // draft-ietf-webtrans-http2-15 Section 6.3:
+        // Application Protocol Error Code は 0xffffffff 以下でなければならない (MUST NOT)。
+        // 超過時は仕様違反の capsule を送信することになり、varint 上限 (2^62-1) を超える
+        // 値は CapsuleEncoder 内で panic するため、事前に拒否する。
+        // 受信側 (capsule.rs の decode_payload) は仕様どおり WT_ERROR 相当の
+        // session_state_error で処理するが、送信 API の引数検証はローカルな入力エラーであり、
+        // 他の範囲チェック (send_max_streams の 2^60 上限等) と同様に flow_control_error で
+        // 統一する。
+        if error_code > MAX_APPLICATION_ERROR_CODE {
+            return Err(WtError::flow_control_error(format!(
+                "WT_STOP_SENDING error code {error_code:#x} exceeds maximum {MAX_APPLICATION_ERROR_CODE:#x}"
+            )));
+        }
+
         let stream = self
             .streams
             .get_mut(&stream_id)
@@ -641,7 +675,17 @@ impl WtSession {
     ///
     /// draft-ietf-webtrans-http2-15 Section 6.5: 受信側が受信可能なバイト数を通知する。
     /// 単調増加でなければならない (現在値より小さい値を指定すると `flow_control_error`)。
+    ///
+    /// `maximum` が varint 上限 (2^62-1) を超える場合は `flow_control_error` を返す
+    /// (RFC 9000 Section 16)。
     pub fn send_max_data(&mut self, maximum: u64) -> WtResult<()> {
+        // RFC 9000 Section 16: Maximum は varint でエンコードされるため、上限 (2^62-1) を
+        // 超える値は CapsuleEncoder 内で panic する。事前に拒否する。
+        if maximum > MAX_VALUE {
+            return Err(WtError::flow_control_error(format!(
+                "WT_MAX_DATA value {maximum} exceeds varint maximum {MAX_VALUE}"
+            )));
+        }
         let capsule = Capsule::WtMaxData { maximum };
         self.capsule_encoder.encode(&capsule);
         self.output_buffer.extend(self.capsule_encoder.take());
@@ -653,8 +697,17 @@ impl WtSession {
     /// draft-ietf-webtrans-http2-15 Section 6.6: 指定ストリームの受信可能バイト数を通知する。
     ///
     /// 同一ストリームに対して既に `WT_STOP_SENDING` を送信済みの場合は
-    /// `stream_state_error` を返す (Section 6.6 の MUST)。
+    /// `stream_state_error` を返す (Section 6.6 の MUST)。`maximum` が varint 上限
+    /// (2^62-1) を超える場合は `flow_control_error` を返す (RFC 9000 Section 16)。
     pub fn send_max_stream_data(&mut self, stream_id: WtStreamId, maximum: u64) -> WtResult<()> {
+        // RFC 9000 Section 16: Maximum は varint でエンコードされるため、上限 (2^62-1) を
+        // 超える値は CapsuleEncoder 内で panic する。事前に拒否する。
+        if maximum > MAX_VALUE {
+            return Err(WtError::flow_control_error(format!(
+                "WT_MAX_STREAM_DATA value {maximum} exceeds varint maximum {MAX_VALUE}"
+            )));
+        }
+
         let stream = self
             .streams
             .get(&stream_id)
