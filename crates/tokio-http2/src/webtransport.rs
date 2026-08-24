@@ -93,7 +93,7 @@ impl WtServerRequest {
 
     /// `WebTransport-Init` ヘッダー値 (RFC 8941 Dictionary バイト列) を取得する
     ///
-    /// draft-ietf-webtrans-http2-15 Section 4.3.2 (L519-L541) で規定される
+    /// draft-ietf-webtrans-http2-15 Section 4.3.2 (L583-L590) で規定される
     /// 初期フロー制御値のヘッダー。HTTP/2 では field name は小文字なので
     /// `webtransport-init` (lowercase) で照合する。
     ///
@@ -220,7 +220,7 @@ impl WtServerRequest {
         let mut peer_config = WtConfig::default();
         peer_config.overlay_settings(conn.remote_settings());
 
-        // draft-ietf-webtrans-http2-15 Section 4.3 (L480-L483) / Section 4.3.2 (L525-L540):
+        // draft-ietf-webtrans-http2-15 Section 4.3 (L509-L530) / Section 4.3.2 (L583-L590):
         // WebTransport-Init はクライアントが送信するヘッダーであり、クライアントの広告値を含む。
         // ピア用 config には bl/br のマッピングが逆転するため apply_init_as_peer を使う。
         // パース失敗・型不一致・値範囲外は MUST 4xx 拒否。

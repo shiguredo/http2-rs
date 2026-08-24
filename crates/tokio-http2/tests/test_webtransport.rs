@@ -1228,7 +1228,7 @@ async fn test_wt_origin_missing_accepted() {
     server_task.await.expect("server join");
 }
 
-/// draft-ietf-webtrans-http2-15 Section 4.3 (L480-L483):
+/// draft-ietf-webtrans-http2-15 Section 4.3 (L524-L528):
 /// WebTransport-Init で SETTINGS より大きい値を送ると `accept()` が成功し、
 /// セッションが確立できる (パースが成功する経路の確認)。
 #[tokio::test]
@@ -1330,7 +1330,7 @@ async fn test_wt_init_accept_with_small_value() {
     server_task.await.expect("サーバータスクの join に失敗");
 }
 
-/// draft-ietf-webtrans-http2-15 Section 4.3.2 (L525-L540):
+/// draft-ietf-webtrans-http2-15 Section 4.3.2 (L583-L590):
 /// WebTransport-Init のパース失敗 (負値) で `:status=400` レスポンスが返り、
 /// CONNECT ストリームが END_STREAM で閉じられる。
 #[tokio::test]

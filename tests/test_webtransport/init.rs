@@ -1,6 +1,6 @@
 //! `WtInit` パーサーと `WtConfig::apply_init` マージ規則の単体テスト
 //!
-//! draft-ietf-webtrans-http2-15 Section 4.3.2 (L519-L541) と RFC 8941
+//! draft-ietf-webtrans-http2-15 Section 4.3.2 (L583-L604) と RFC 8941
 //! Section 4.2 (Parsing Structured Fields) の動作を境界値・型不一致を含めて検証する。
 //! 加えて、`apply_init` 後の `WtConfig` が `WtSession` の初期最大データ量に
 //! 反映されることを Sans I/O 層で確認する。

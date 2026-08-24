@@ -151,7 +151,7 @@ impl WtConfig {
     /// **WebTransport-Init を受信した側** の `WtConfig` に対し、ヘッダー由来の値を
     /// SETTINGS 由来の値とマージする
     ///
-    /// draft-ietf-webtrans-http2-15 Section 4.3 (L480-L483) の MUST 規則:
+    /// draft-ietf-webtrans-http2-15 Section 4.3 (L524-L528) の MUST 規則:
     /// > If both the SETTINGS and the header field are present when a WebTransport
     /// > session is established, the endpoint MUST use the greater of the two values
     /// > for each corresponding initial flow control value.
@@ -187,7 +187,7 @@ impl WtConfig {
     /// - `bl` → `initial_max_stream_data_bidi_local` (ピア自身が開始するストリームの送信上限)
     /// - `br` → `initial_max_stream_data_bidi_remote` (ピア視点で remote = ローカル開始の送信上限)
     ///
-    /// draft-ietf-webtrans-http2-15 Section 4.3 (L480-L483) の MUST 規則に従い、
+    /// draft-ietf-webtrans-http2-15 Section 4.3 (L524-L528) の MUST 規則に従い、
     /// SETTINGS 値と Init 値の大きい方を採用する。
     pub fn apply_init_as_peer(&mut self, init: &WtInit) {
         if let Some(u) = init.u {
@@ -801,7 +801,7 @@ impl WtSession {
                 error_code,
                 reliable_size,
             } => {
-                // draft-ietf-webtrans-http2-15 Section 6.2 (L826-L835):
+                // draft-ietf-webtrans-http2-15 Section 6.2 (L876-L882):
                 // 存在しないストリームへの WT_RESET_STREAM は MUST でエラー。
                 let stream = self.streams.get_mut(&stream_id).ok_or_else(|| {
                     WtError::stream_state_error(format!(
