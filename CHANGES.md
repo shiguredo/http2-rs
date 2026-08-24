@@ -301,3 +301,5 @@
   - @voluntas
 - [UPDATE] PBT を proptest から noprop に置き換え、マクロなしの命令的なプロパティテストへ移行する。エンコード長クラスや SETTINGS 範囲制約などを first-class 分岐と到達ゲートで探索し、一様サンプリングでは届かない境界・エラーパスをカバーする
   - @voluntas
+- [FIX] WebTransport ドライバーのコマンド処理で出力フラッシュや END_STREAM 送信が失敗した場合に、ack へ実際の失敗原因を載せて呼び出し側へ返すように修正する (従来は常に `Error::ConnectionClosed` に丸められていた)
+  - @voluntas
