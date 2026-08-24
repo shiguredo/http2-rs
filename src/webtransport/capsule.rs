@@ -79,7 +79,7 @@ pub(crate) const MAX_CLOSE_REASON_LEN: usize = 1024;
 ///
 /// draft-ietf-webtrans-http2-15 Section 6.2, 6.3:
 /// Application Protocol Error Code は 0xffffffff 以下でなければならない。
-const MAX_APPLICATION_ERROR_CODE: u64 = 0xffff_ffff;
+pub(crate) const MAX_APPLICATION_ERROR_CODE: u64 = 0xffff_ffff;
 
 /// Capsule 構造体 (draft-ietf-webtrans-http2-15 Section 6)
 #[derive(Debug, Clone, PartialEq, Eq)]

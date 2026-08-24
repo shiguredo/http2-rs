@@ -224,6 +224,10 @@
   - @voluntas
 - [FIX] `WtServerSession::close()` が driver タスクへのコマンド送信エラーと応答受信エラーを無視していた問題を修正し、driver 終了時に `Error::ConnectionClosed` を返すようにする
   - @voluntas
+- [FIX] WebTransport ドライバーのコマンド処理で出力フラッシュや END_STREAM 送信が失敗した場合に、ack へ実際の失敗原因を載せて呼び出し側へ返すように修正する (従来は常に `Error::ConnectionClosed` に丸められていた)
+  - @voluntas
+- [FIX] WebTransport の送信系 API (`send_max_data` / `send_max_stream_data` / `reset_stream` / `stop_sending`) が範囲外の引数で panic しないよう、varint 上限 (2^62-1) とアプリケーションエラーコード上限 (0xffffffff) を事前検証して `flow_control_error` を返すように修正する (draft-ietf-webtrans-http2-15 Section 6.2 / 6.3 / RFC 9000 Section 16)
+  - @voluntas
 
 ### misc
 
@@ -300,6 +304,4 @@
 - [UPDATE] 各 Cargo.toml の依存ライブラリに用途コメントを追加し、`fuzz/Cargo.toml` に `rust-version` を明記する
   - @voluntas
 - [UPDATE] PBT を proptest から noprop に置き換え、マクロなしの命令的なプロパティテストへ移行する。エンコード長クラスや SETTINGS 範囲制約などを first-class 分岐と到達ゲートで探索し、一様サンプリングでは届かない境界・エラーパスをカバーする
-  - @voluntas
-- [FIX] WebTransport ドライバーのコマンド処理で出力フラッシュや END_STREAM 送信が失敗した場合に、ack へ実際の失敗原因を載せて呼び出し側へ返すように修正する (従来は常に `Error::ConnectionClosed` に丸められていた)
   - @voluntas

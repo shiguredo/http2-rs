@@ -1,5 +1,5 @@
 use shiguredo_http2::webtransport::{
-    Capsule, CapsuleDecoder, CapsuleEncoder, WtConfig, WtEvent, WtSession, WtStreamId,
+    Capsule, CapsuleDecoder, CapsuleEncoder, MAX_VALUE, WtConfig, WtEvent, WtSession, WtStreamId,
     stream::stream_id as wt_stream_id,
 };
 
@@ -252,6 +252,155 @@ fn send_max_data_emits_capsule() {
         Capsule::WtMaxData { maximum } => assert_eq!(maximum, 9_999_999),
         other => panic!("expected WtMaxData, got {other:?}"),
     }
+}
+
+/// アプリケーションエラーコードの最大値 (draft-ietf-webtrans-http2-15 Section 6.2 / 6.3)
+const MAX_APP_ERROR_CODE: u64 = 0xffff_ffff;
+
+/// `send_max_data` が varint 上限 (2^62-1) を超える値を拒否することを確認する
+///
+/// varint でエンコードできない値は CapsuleEncoder 内で panic するため、
+/// 公開 API が事前にエラーを返す必要がある (RFC 9000 Section 16)。
+#[test]
+fn send_max_data_rejects_varint_overflow() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("initiate は成功すること");
+
+    // 32-bit 上限 (0xffffffff) を超えるが varint 上限以下の値は成功する
+    // (WT_MAX_DATA の Maximum は varint 制約のみ。RFC 9000 Section 16)
+    session
+        .send_max_data(0x1_0000_0000)
+        .expect("0xffffffff 超は varint 制約のみで拒否されないこと");
+    let _ = session.poll_output();
+
+    // 上限ちょうどは成功し、8 バイト varint として往復できる
+    session
+        .send_max_data(MAX_VALUE)
+        .expect("MAX_VALUE は成功すること");
+    let out = session.poll_output().expect("出力が得られること");
+    let capsule = decode_single_capsule(&out);
+    match capsule {
+        Capsule::WtMaxData { maximum } => assert_eq!(maximum, MAX_VALUE),
+        other => panic!("WtMaxData を期待したが、実際は {other:?}"),
+    }
+
+    // 上限 + 1 は flow_control_error で拒否される (panic しない)
+    let err = session
+        .send_max_data(MAX_VALUE + 1)
+        .expect_err("varint 上限超過はエラーになること");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError,
+        "予期しないエラー種別: {err}"
+    );
+}
+
+/// `send_max_stream_data` が varint 上限 (2^62-1) を超える値を拒否することを確認する
+#[test]
+fn send_max_stream_data_rejects_varint_overflow() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("initiate は成功すること");
+    let stream_id = session.open_bidi_stream().expect("ストリームを開けること");
+
+    // 32-bit 上限 (0xffffffff) を超えるが varint 上限以下の値は成功する
+    session
+        .send_max_stream_data(stream_id, 0x1_0000_0000)
+        .expect("0xffffffff 超は varint 制約のみで拒否されないこと");
+
+    // 上限ちょうどは成功する
+    session
+        .send_max_stream_data(stream_id, MAX_VALUE)
+        .expect("MAX_VALUE は成功すること");
+
+    // 上限 + 1 は flow_control_error で拒否される (panic しない)
+    let err = session
+        .send_max_stream_data(stream_id, MAX_VALUE + 1)
+        .expect_err("varint 上限超過はエラーになること");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError,
+        "予期しないエラー種別: {err}"
+    );
+}
+
+/// `reset_stream` が 0xffffffff を超える error_code を拒否することを確認する
+///
+/// draft-ietf-webtrans-http2-15 Section 6.2: error_code は 0xffffffff 以下でなければ
+/// ならない (MUST NOT)。0xffffffff 超は仕様違反であり、varint 上限 (2^62-1) 超では
+/// CapsuleEncoder 内で panic するため、事前に拒否する。
+#[test]
+fn reset_stream_rejects_error_code_overflow() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("initiate は成功すること");
+
+    // 上限ちょうど (0xffffffff) は成功する
+    let stream_id = session.open_bidi_stream().expect("ストリームを開けること");
+    session
+        .reset_stream(stream_id, MAX_APP_ERROR_CODE)
+        .expect("0xffffffff は成功すること");
+
+    // 上限 + 1 (仕様違反だが varint で表現可能) は flow_control_error で拒否される
+    let stream_id = session.open_bidi_stream().expect("ストリームを開けること");
+    let err = session
+        .reset_stream(stream_id, MAX_APP_ERROR_CODE + 1)
+        .expect_err("0xffffffff 超過はエラーになること");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError,
+        "予期しないエラー種別: {err}"
+    );
+
+    // varint 上限 (2^62-1) を超える値も同じ 0xffffffff チェックで拒否される
+    // (エンコード時に CapsuleEncoder 内で panic する値のため、事前に拒否する)
+    let stream_id = session.open_bidi_stream().expect("ストリームを開けること");
+    let err = session
+        .reset_stream(stream_id, u64::MAX)
+        .expect_err("varint 上限超過はエラーになること");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError,
+        "予期しないエラー種別: {err}"
+    );
+}
+
+/// `stop_sending` が 0xffffffff を超える error_code を拒否することを確認する
+///
+/// draft-ietf-webtrans-http2-15 Section 6.3: error_code は 0xffffffff 以下でなければ
+/// ならない (MUST NOT)。0xffffffff 超は仕様違反であり、varint 上限 (2^62-1) 超では
+/// CapsuleEncoder 内で panic するため、事前に拒否する。
+#[test]
+fn stop_sending_rejects_error_code_overflow() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("initiate は成功すること");
+
+    // 上限ちょうど (0xffffffff) は成功する
+    let stream_id = session.open_bidi_stream().expect("ストリームを開けること");
+    session
+        .stop_sending(stream_id, MAX_APP_ERROR_CODE)
+        .expect("0xffffffff は成功すること");
+
+    // 上限 + 1 (仕様違反だが varint で表現可能) は flow_control_error で拒否される
+    let stream_id = session.open_bidi_stream().expect("ストリームを開けること");
+    let err = session
+        .stop_sending(stream_id, MAX_APP_ERROR_CODE + 1)
+        .expect_err("0xffffffff 超過はエラーになること");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError,
+        "予期しないエラー種別: {err}"
+    );
+
+    // varint 上限 (2^62-1) を超える値も同じ 0xffffffff チェックで拒否される
+    // (エンコード時に CapsuleEncoder 内で panic する値のため、事前に拒否する)
+    let stream_id = session.open_bidi_stream().expect("ストリームを開けること");
+    let err = session
+        .stop_sending(stream_id, u64::MAX)
+        .expect_err("varint 上限超過はエラーになること");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError,
+        "予期しないエラー種別: {err}"
+    );
 }
 
 /// peer 起点の bidi ストリーム到着後、`stream()` と `flow_control()` getter が動作する

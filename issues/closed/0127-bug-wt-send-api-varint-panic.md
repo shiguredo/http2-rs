@@ -1,7 +1,7 @@
 # WtSession の送信系 API が varint 上限超過入力で panic する
 
 - Created: 2026-08-24
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-08-24
 - Branch: feature/fix-wt-send-api-varint-panic
 - Polished: 2026-08-24
 
@@ -37,3 +37,18 @@
 - `send_max_data` / `send_max_stream_data` が `maximum > 2^62-1` で `Err` (WtErrorKind::FlowControlError) を返すこと
 - `reset_stream` / `stop_sending` が `error_code > 0xffffffff` で `Err` (WtErrorKind::FlowControlError) を返すこと
 - 境界値のテストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+`src/webtransport.rs` の `WtSession` の送信系 API 4 つに引数範囲チェックを追加した。
+
+- `send_max_data` / `send_max_stream_data` に `maximum > varint::MAX_VALUE (2^62-1)` チェックを追加し、超過時は `WtError::flow_control_error` を返す (RFC 9000 Section 16)
+- `reset_stream` / `stop_sending` に `error_code > 0xffffffff` チェックを追加し、超過時は `WtError::flow_control_error` を返す (draft-ietf-webtrans-http2-15 Section 6.2 / 6.3 の MUST NOT)。このチェックが varint 上限超過による panic も包含して防ぐ
+- 既存の `send_max_streams` の 2^60 チェックと同様に引数検証を関数冒頭に置き、4 API で検証順序を統一した
+- `src/webtransport/capsule.rs` の `MAX_APPLICATION_ERROR_CODE` を `pub(crate)` 化し、受信側の検証と定数を共有した
+- 公開 doc に新設エラー条件を追記し、エラー種別選択の根拠 (送信 API の引数検証はローカルな入力エラーであり、他の範囲チェックと `flow_control_error` で統一) をコメントに明記した
+
+テスト:
+
+- `tests/test_webtransport/integration.rs` に 4 テストを追加した。各 API について、上限ちょうど (成功)・上限 + 1 (FlowControlError)・varint 上限超過 (u64::MAX、panic しないこと)・32-bit 超成功 (varint 制約のみ) を検証する
+- `send_max_data(MAX_VALUE)` の出力をデコードし、8 バイト varint の往復を検証する
