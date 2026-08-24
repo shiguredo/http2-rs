@@ -3,7 +3,7 @@
 - Created: 2026-08-24
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-wt-stop-sending-inflight-abort
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-08-24
 
 ## 目的
 
@@ -13,7 +13,7 @@
 
 `crates/tokio-http2/src/webtransport.rs` の `DriverState::dispatch_wt_event` は受信データ (`WtEvent::StreamData`) ごとに `maybe_grow_stream_window` を呼ぶ。`maybe_grow_stream_window` は `WtSession::grow_stream_recv_window` (`src/webtransport.rs`) を呼び、`grow_stream_recv_window` は `stream.stop_sending_sent()` が true だと `stream_state_error` を返す。
 
-その結果、アプリが STOP_SENDING を送信済みのストリームにピアからの在路データが届くと、`dispatch_wt_event` は `abort_session_with_wt_error` を呼び、CONNECT ストリームへの RST_STREAM 送信 + セッション終了となる。
+その結果、アプリが STOP_SENDING を送信済みのストリームに、`maybe_grow_stream_window` の受信ウィンドウ拡張しきい値 (`recv_available < initial/2`) を下回る量の在路データが届くと、`grow_stream_recv_window` が `stream_state_error` を返し、`dispatch_wt_event` は `abort_session_with_wt_error` を呼んで、CONNECT ストリームへの RST_STREAM 送信 + セッション終了となる。少量の在路データではしきい値に達せず abort は発生しないため、再現にはしきい値を越えるデータ量が必要である。
 
 さらに `dispatch_wt_event` は STOP_SENDING 後も受信データをアプリのチャネル (`StreamPacket::Data`) に配送しており、停止要求後のデータがアプリに渡り続ける。
 
@@ -25,6 +25,6 @@
 
 ## 完了条件
 
-- STOP_SENDING 送信後にピアから在路データが届いても、セッションが継続すること
+- STOP_SENDING 送信後にピアから在路データ (受信ウィンドウ拡張しきい値を越える量) が届いても、セッションが継続すること
 - STOP_SENDING 後の受信データがアプリのチャネルに配送されないこと
 - テストが追加され、`cargo test --all` が通過すること
