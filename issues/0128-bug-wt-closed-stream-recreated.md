@@ -3,7 +3,7 @@
 - Created: 2026-08-24
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-wt-closed-stream-recreated
-- Polished: 2026-08-24
+- Polished: 2026-08-28
 
 ## 目的
 
