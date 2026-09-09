@@ -1,7 +1,7 @@
 # WtConfig::apply_init の bl / br マッピングが仕様と不一致
 
 - Created: 2026-08-24
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-09
 - Branch: feature/fix-wt-config-apply-init-mapping
 - Polished: 2026-09-09
 
@@ -35,3 +35,11 @@ WebTransport-Init はクライアントが CONNECT リクエストで送信す�
 - `apply_init_as_peer` の `bl` → `initial_max_stream_data_bidi_local`、`br` → `initial_max_stream_data_bidi_remote` の各分岐を実値で直接検証するテストが追加されていること。既存の `apply_init` を使うテストは削除または書き換えられていること
 - `apply_init` を参照する doc・rustdoc リンク・コメント・`skills/shiguredo-http2/SKILL.md` が更新されていること
 - `cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/webtransport.rs` の `WtConfig::apply_init` を削除し、WebTransport-Init のマージを `apply_init_as_peer` に一本化した
+- `apply_init_as_peer` の doc を更新し、`u` / `bl` / `br` のマッピング (`bl` → `initial_max_stream_data_bidi_local`、`br` → `initial_max_stream_data_bidi_remote`) を明記した。`overlay_settings` の rustdoc リンクも `apply_init_as_peer` に更新した
+- `tests/test_webtransport/init.rs` の `test_apply_init_*` を `apply_init_as_peer` 向けに書き換え、`bl` と `br` に異なる値を与えてマッピングの取り違えを検出できるようにした。小さい値が無視されることも `u`/`bl`/`br` の 3 キーで検証する
+- `crates/tokio-http2` のコメントと `skills/shiguredo-http2/SKILL.md` の `apply_init` 記載を更新した
+- `CHANGES.md` の `## develop` に `[CHANGE]` エントリを追加した (公開 API 削除のため)

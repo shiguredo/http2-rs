@@ -210,7 +210,6 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 
 | メソッド | 説明 |
 |---------|------|
-| `apply_init(&WtInit)` | `WebTransport-Init` ヘッダー値をローカル設定に反映 |
 | `apply_init_as_peer(&WtInit)` | ピア側設定として `WebTransport-Init` を反映 |
 | `overlay_settings(&Settings)` | HTTP/2 SETTINGS の `SETTINGS_WT_INITIAL_MAX_*` を上書き適用 (`accept()` で自動呼出) |
 
