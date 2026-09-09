@@ -1,7 +1,7 @@
 # SETTINGS_INITIAL_WINDOW_SIZE 増加時にキュー済み送信データがフラッシュされない
 
 - Created: 2026-08-24
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-10
 - Branch: feature/fix-settings-window-flush
 - Polished: 2026-09-09
 
@@ -32,3 +32,11 @@
 - ストリーム送信ウィンドウ枯渇で `send_buffer` に滞留した DATA が、接続レベル送信ウィンドウに空きがある状態で SETTINGS_INITIAL_WINDOW_SIZE が増加すると自動的に送信されること
 - SETTINGS ACK が滞留 DATA より先に送信されること
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/connection.rs` の `handle_settings` で、SETTINGS ACK を送信した後に `flush_all_stream_data` を呼び、SETTINGS_INITIAL_WINDOW_SIZE の増加でストリーム送信ウィンドウが正になった滞留 DATA を送信するようにした (RFC 9113 Section 6.9.2)。ACK を先に送出することで Settings Synchronization の MUST を守る (RFC 9113 Section 6.5.3)
+- 接続レベル送信ウィンドウは SETTINGS では変化せず、枯渇時は `flush_stream_data` が何も送らないため、滞留 DATA は保持され後続の WINDOW_UPDATE で送信される
+- `send_data` の doc に、SETTINGS_INITIAL_WINDOW_SIZE の増加時にもフラッシュされることを追記した
+- `tests/test_connection.rs` に、クライアントが小さい INITIAL_WINDOW_SIZE を広告してストリーム送信ウィンドウを枯渇させた後に SETTINGS で増加させると、滞留 DATA が対象ストリームへ送信され、SETTINGS ACK が DATA より先に送信されることを検証するテストを追加した
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
