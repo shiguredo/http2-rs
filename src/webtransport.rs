@@ -335,6 +335,9 @@ impl WtSession {
     }
 
     /// Capsule を処理してイベントを生成する
+    ///
+    /// セッションが `WtSessionState::Closed` の場合は受信 capsule を無視して
+    /// `Ok(())` を返す (draft-ietf-webtrans-http2-15 Section 6.12)。
     pub fn process(&mut self) -> WtResult<()> {
         while let Some(capsule) = self.capsule_decoder.decode()? {
             self.handle_capsule(capsule)?;
@@ -820,6 +823,14 @@ impl WtSession {
 
     /// Capsule を処理する
     fn handle_capsule(&mut self, capsule: Capsule) -> WtResult<()> {
+        // draft-ietf-webtrans-http2-15 Section 6.12: WT_CLOSE_SESSION 受信後は
+        // END_STREAM 応答でストリームを閉じることを MUST とする。H2 draft は
+        // Closed 後の capsule 処理を規定しないが、ここで Section 6.4 のストリーム
+        // エラーを返すと `process` が Err になり、ドライバが END_STREAM 応答に
+        // 到達できなくなるため、吸収状態として無視する。
+        if self.state == WtSessionState::Closed {
+            return Ok(());
+        }
         match capsule {
             Capsule::Datagram { data } => {
                 self.events.push_back(WtEvent::DatagramReceived { data });
@@ -963,16 +974,13 @@ impl WtSession {
                 // ピアがストリーム数制限でブロックされていることを通知
             }
             Capsule::WtCloseSession { error_code, reason } => {
-                // Closed 状態は吸収状態: 既に Closed なら無視
-                if self.state != WtSessionState::Closed {
-                    self.state = WtSessionState::Closed;
-                    self.events
-                        .push_back(WtEvent::SessionClosed { error_code, reason });
-                }
+                // 冒頭のガードで Closed は除外済みのため、ここでは必ず遷移する
+                self.state = WtSessionState::Closed;
+                self.events
+                    .push_back(WtEvent::SessionClosed { error_code, reason });
             }
             Capsule::WtDrainSession => {
-                // Closed 状態は吸収状態: 既に Closed または Draining なら無視
-                // (Draining -> Draining は冪等性を維持)
+                // Draining -> Draining は冪等性を維持する (Closed は冒頭ガードで除外済み)
                 if self.state == WtSessionState::Active {
                     self.state = WtSessionState::Draining;
                     self.events.push_back(WtEvent::SessionDraining);
