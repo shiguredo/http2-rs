@@ -399,6 +399,131 @@ fn test_connect_ipv6_authority_accepted() {
     assert!(validate_request_headers(&headers).is_ok());
 }
 
+// RFC 9112 Section 3.2.3 / RFC 3986 Section 3.2.2: CONNECT の :authority の host 部に
+// SP を含む値は拒否される (uri-host は SP を許さない)。
+#[test]
+fn test_connect_authority_with_space_in_host_rejected() {
+    let headers = vec![h(":method", "CONNECT"), h(":authority", "foo bar:80")];
+    assert!(validate_request_headers(&headers).is_err());
+}
+
+// RFC 3986 Section 3.2.2: host 部に制御文字を含む値は拒否される
+// (validate_field_value を通過する 0x01 / 0x7f / 値内部 HTAB で検証する)。
+#[test]
+fn test_connect_authority_with_control_char_in_host_rejected() {
+    for value in ["foo\u{1}bar:80", "foo\u{7f}bar:80", "foo\tbar:80"] {
+        let headers = vec![h(":method", "CONNECT"), h(":authority", value)];
+        assert!(
+            validate_request_headers(&headers).is_err(),
+            "制御文字入り host は拒否されるはず: {value:?}"
+        );
+    }
+}
+
+// RFC 3986 Section 3.2.2: host 部に非 ASCII バイトを含む値は拒否される。
+#[test]
+fn test_connect_authority_with_non_ascii_host_rejected() {
+    let headers = vec![
+        h(":method", "CONNECT"),
+        h(":authority", "foo\u{00e9}bar:80"),
+    ];
+    assert!(validate_request_headers(&headers).is_err());
+}
+
+// RFC 3986 Section 3.2.2: uri-host に許可されない文字を含む値は拒否される。
+#[test]
+fn test_connect_authority_with_invalid_host_char_rejected() {
+    for value in [
+        "foo/bar:80",
+        "foo?bar:80",
+        "foo#bar:80",
+        "foo{bar}:80",
+        "foo|bar:80",
+        "foo\\bar:80",
+        "foo^bar:80",
+        "foo\"bar:80",
+        "foo<bar>:80",
+        "foo:bar:80",
+        "foo%zz:80",
+        "foo%:80",
+        "foo%4:80",
+        "foo%4g:80",
+    ] {
+        let headers = vec![h(":method", "CONNECT"), h(":authority", value)];
+        assert!(
+            validate_request_headers(&headers).is_err(),
+            "不正文字入り host は拒否されるはず: {value:?}"
+        );
+    }
+}
+
+// RFC 3986 Section 3.2.2: IPv6 リテラル内部に不正文字を含む値は拒否される。
+#[test]
+fn test_connect_authority_with_invalid_ipv6_literal_rejected() {
+    for value in ["[:: 1]:443", "[]:443", "[zz]:443", "[::g]:443"] {
+        let headers = vec![h(":method", "CONNECT"), h(":authority", value)];
+        assert!(
+            validate_request_headers(&headers).is_err(),
+            "不正な IPv6 リテラルは拒否されるはず: {value:?}"
+        );
+    }
+}
+
+// RFC 3986 Section 3.2.2: pct-encoded を含む host は受理される。
+#[test]
+fn test_connect_authority_with_pct_encoded_host_accepted() {
+    let headers = vec![h(":method", "CONNECT"), h(":authority", "foo%20bar:80")];
+    assert!(validate_request_headers(&headers).is_ok());
+}
+
+// RFC 3986 Section 3.2.2: unreserved / sub-delims を含む host は受理される。
+#[test]
+fn test_connect_authority_with_unreserved_and_sub_delims_accepted() {
+    let headers = vec![
+        h(":method", "CONNECT"),
+        h(":authority", "a-b_c~d!e$f&g'h(i)j*k+l,m;n=o:80"),
+    ];
+    assert!(validate_request_headers(&headers).is_ok());
+}
+
+// RFC 3986 Section 3.2.3: ポート範囲外 (65535 超) は拒否される (既存挙動の回帰)。
+#[test]
+fn test_connect_authority_with_port_out_of_range_rejected() {
+    let headers = vec![
+        h(":method", "CONNECT"),
+        h(":authority", "example.com:65536"),
+    ];
+    assert!(validate_request_headers(&headers).is_err());
+}
+
+// RFC 9113 Section 8.3.1: CONNECT の :authority に userinfo (@) を含む値は拒否される
+// (既存挙動の回帰)。
+#[test]
+fn test_connect_authority_with_userinfo_rejected() {
+    let headers = vec![
+        h(":method", "CONNECT"),
+        h(":authority", "user@example.com:80"),
+    ];
+    assert!(validate_request_headers(&headers).is_err());
+}
+
+// authority-form は host を要求するため、空 host は拒否される。
+#[test]
+fn test_connect_authority_with_empty_host_rejected() {
+    let headers = vec![h(":method", "CONNECT"), h(":authority", ":80")];
+    assert!(validate_request_headers(&headers).is_err());
+}
+
+// RFC 3986 Section 3.2.2: 埋め込み IPv4 を含む IPv6 リテラルは受理される。
+#[test]
+fn test_connect_authority_with_ipv4_embedded_ipv6_accepted() {
+    let headers = vec![
+        h(":method", "CONNECT"),
+        h(":authority", "[::ffff:192.168.0.1]:443"),
+    ];
+    assert!(validate_request_headers(&headers).is_ok());
+}
+
 // RFC 9113 Section 8.3.1: OPTIONS 以外のメソッドで :path = "*" は拒否される。
 #[test]
 fn test_asterisk_path_on_non_options_rejected() {

@@ -545,7 +545,9 @@ fn validate_forbidden_header_common(name: &[u8]) -> Result<(), Error> {
 /// RFC 9113 Section 8.5: CONNECT の :authority が authority-form (host:port) か検証する
 ///
 /// authority-form = uri-host ":" port (RFC 9112 Section 3.2.3)
-/// IPv6 リテラル ([::1]:443) を考慮する。
+/// uri-host は RFC 3986 Section 3.2.2 の host 文法 (IP-literal / IPv4address / reg-name)
+/// に従う。IP-literal は IPv6address 相当の文字集合のみを受理し、IPvFuture と zone ID は
+/// 受理しない。IPv6 リテラル ([::1]:443) を考慮する。
 fn is_valid_connect_authority(authority: &[u8]) -> bool {
     if authority.is_empty() {
         return false;
@@ -556,6 +558,10 @@ fn is_valid_connect_authority(authority: &[u8]) -> bool {
         let Some(bracket_end) = authority.iter().position(|&b| b == b']') else {
             return false;
         };
+        // `[` と `]` の間の文字集合を検査する
+        if !is_valid_ipv6_literal_chars(&authority[1..bracket_end]) {
+            return false;
+        }
         let rest = &authority[bracket_end + 1..];
         if !rest.starts_with(b":") || rest.len() < 2 {
             return false;
@@ -568,11 +574,77 @@ fn is_valid_connect_authority(authority: &[u8]) -> bool {
     let Some(colon_pos) = authority.iter().rposition(|&b| b == b':') else {
         return false;
     };
-    if colon_pos == 0 {
+    // host 部 (uri-host) を検査する (空 host は is_valid_reg_name が拒否する)
+    if !is_valid_reg_name(&authority[..colon_pos]) {
         return false;
     }
     let port = &authority[colon_pos + 1..];
     is_valid_port(port)
+}
+
+/// RFC 3986 Section 3.2.2: `reg-name = *( unreserved / pct-encoded / sub-delims )` を検証する
+///
+/// `%` は pct-encoded の導入として扱い、後続 2 バイトが HEXDIG であることを要求する。
+/// authority-form は host を要求するため、空文字列は拒否する。
+fn is_valid_reg_name(host: &[u8]) -> bool {
+    if host.is_empty() {
+        return false;
+    }
+    let mut i = 0;
+    while i < host.len() {
+        let b = host[i];
+        if b == b'%' {
+            // pct-encoded = "%" HEXDIG HEXDIG
+            if i + 2 >= host.len()
+                || !host[i + 1].is_ascii_hexdigit()
+                || !host[i + 2].is_ascii_hexdigit()
+            {
+                return false;
+            }
+            i += 3;
+            continue;
+        }
+        if !is_reg_name_byte(b) {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// RFC 3986 Section 3.2.2: `unreserved / sub-delims` の 1 バイトか
+fn is_reg_name_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric()
+        || matches!(
+            b,
+            // unreserved
+            b'-' | b'.'
+                | b'_'
+                | b'~'
+                // sub-delims
+                | b'!'
+                | b'$'
+                | b'&'
+                | b'\''
+                | b'('
+                | b')'
+                | b'*'
+                | b'+'
+                | b','
+                | b';'
+                | b'='
+        )
+}
+
+/// RFC 3986 Section 3.2.2: IP-literal の内部の文字集合を検証する
+///
+/// hex digit / `:` / `.` のみを許容し、空文字列は拒否する。IPv6 アドレスとしての
+/// 構造的正しさ (`::` の回数やグループ数など) は検証せず、IPvFuture と zone ID は受理しない。
+fn is_valid_ipv6_literal_chars(inner: &[u8]) -> bool {
+    !inner.is_empty()
+        && inner
+            .iter()
+            .all(|&b| b.is_ascii_hexdigit() || b == b':' || b == b'.')
 }
 
 /// ポート番号が有効かどうかを検証する (RFC 3986 Section 3.2.3: port = *DIGIT。0-65535 は TCP ポート範囲としての実装上の制限)
