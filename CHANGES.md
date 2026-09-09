@@ -37,5 +37,7 @@
   - @voluntas
 - [FIX] ローカル開始 uni ストリーム (送信専用) への WT_STREAM を WT_STREAM_STATE_ERROR として拒否し、送信専用ストリームにピアデータが配送されないようにする (draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1 / Section 19.8)
   - @voluntas
+- [FIX] WebTransport の自動ウィンドウ拡張のしきい値を切り上げ除算にし、`initial_max_data` / `initial_max_stream_data_*` が 1 でも受信ウィンドウが拡張されるようにする (draft-ietf-webtrans-http2-15 Section 6.5 / Section 6.6)
+  - @voluntas
 
 ### misc

@@ -109,6 +109,42 @@ fn test_should_send_max_data() {
     assert!(fc.should_send_max_data(65536));
 }
 
+/// `initial_max_data == 1` でも 1 バイト受信後にウィンドウ拡張が必要と
+/// 判定されることを確認する (`initial / 2` の切り捨てでしきい値が 0 になり
+/// 拡張されない問題の回帰テスト)。
+#[test]
+fn test_should_send_max_data_initial_one() {
+    let mut fc = WtFlowControl::new(1, 1, 100, 100, 50, 50);
+
+    // 初期状態 (recv_available = 1) はしきい値 (div_ceil(2) = 1) 未満ではない
+    assert!(!fc.should_send_max_data(1));
+
+    // 1 バイト受信すると recv_available = 0 になり拡張が必要になる
+    fc.consume_recv(1).expect("should succeed");
+    assert!(fc.should_send_max_data(1));
+
+    // initial_max_data == 0 は従来どおり拡張しない
+    assert!(!fc.should_send_max_data(0));
+}
+
+/// `initial_max_data` が奇数のときの切り上げしきい値を確認する
+/// (`initial = 3` は `div_ceil(2) = 2` となり `recv_available = 1` でも拡張する)。
+#[test]
+fn test_should_send_max_data_odd_initial() {
+    let mut fc = WtFlowControl::new(3, 3, 100, 100, 50, 50);
+
+    // recv_available = 3 はしきい値 2 未満ではない
+    assert!(!fc.should_send_max_data(3));
+
+    // recv_available = 2 もしきい値 2 未満ではない
+    fc.consume_recv(1).expect("should succeed");
+    assert!(!fc.should_send_max_data(3));
+
+    // recv_available = 1 でしきい値 2 未満になり拡張する
+    fc.consume_recv(1).expect("should succeed");
+    assert!(fc.should_send_max_data(3));
+}
+
 /// add_recv_max が varint MAX_VALUE を超えた場合にエラーを返すことを確認する
 #[test]
 fn test_add_recv_max_varint_overflow() {

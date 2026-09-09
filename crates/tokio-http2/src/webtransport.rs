@@ -1235,7 +1235,9 @@ impl DriverState {
         } else {
             self.wt_session.config().initial_max_stream_data_uni
         };
-        if recv_available < initial / 2 {
+        // しきい値は切り上げ除算にする。切り捨てだと initial == 1 で 0 になり
+        // ウィンドウが一度も拡張されない (initial == 0 は 0 のまま拡張しない)。
+        if recv_available < initial.div_ceil(2) {
             self.wt_session
                 .grow_stream_recv_window(stream_id, initial)?;
         }

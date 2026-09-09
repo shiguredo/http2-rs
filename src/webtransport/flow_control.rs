@@ -265,11 +265,13 @@ impl WtFlowControl {
         self.opened_streams_uni >= self.max_streams_uni_remote
     }
 
-    /// WINDOW_UPDATE を送信すべきかどうかを返す
+    /// `WT_MAX_DATA` を送信すべきかどうかを返す
     ///
-    /// 受信ウィンドウが初期サイズの半分以下になったら更新を推奨
+    /// 受信ウィンドウが初期サイズの半分 (切り上げ) 未満になったら更新を推奨する。
+    /// 切り捨てだと `initial_max_data == 1` でしきい値が 0 になり拡張されないため、
+    /// 切り上げ除算を使う (`initial_max_data == 0` は 0 のまま拡張しない)。
     #[must_use]
     pub fn should_send_max_data(&self, initial_max_data: u64) -> bool {
-        self.recv_available() < initial_max_data / 2
+        self.recv_available() < initial_max_data.div_ceil(2)
     }
 }

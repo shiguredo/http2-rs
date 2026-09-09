@@ -117,6 +117,26 @@ fn asymmetric_server_limits() -> Limits {
         .expect("非対称 Limits の構築に失敗した")
 }
 
+/// `initial_max_stream_data_uni = 1` を広告するサーバー Limits
+///
+/// `initial / 2` の切り捨てでしきい値が 0 になると受信ウィンドウが
+/// 拡張されなくなる問題の回帰テスト用。
+fn initial_one_server_limits() -> Limits {
+    Limits::builder()
+        .enable_connect_protocol(true)
+        .wt_enabled(true)
+        .webtransport(
+            Some(1 << 20),
+            Some(1),
+            Some(64 * 1024),
+            Some(10),
+            Some(10),
+            Some(64 * 1024),
+        )
+        .build()
+        .expect("サーバー Limits の構築に失敗した")
+}
+
 /// draft-ietf-webtrans-http2-15: クライアント → サーバー bidi ストリームへの送信をサーバーがエコーし、
 /// クライアントで同じデータを受信できることを確認する。
 #[tokio::test]
@@ -760,6 +780,108 @@ async fn test_wt_local_bidi_window_grows_with_asymmetric_limits() {
         }
     }
     assert!(grown, "サーバー開始 bidi の送信ウィンドウが拡張されるはず");
+    server_task.await.expect("サーバータスクの終了に失敗した");
+}
+
+/// 受信ウィンドウの自動拡張が `initial_max_stream_data_uni = 1` でも動作することを
+/// 確認する (`initial / 2` の切り捨てでしきい値が 0 になり拡張されない問題の
+/// 回帰テスト)。
+#[tokio::test]
+async fn test_wt_stream_window_grows_with_initial_one() {
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("アドレスのパースに失敗した"),
+        tls,
+        initial_one_server_limits(),
+    )
+    .await
+    .expect("サーバーのバインドに失敗した");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続の受け入れに失敗した");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let mut session = req
+            .accept(WtConfig::default(), None, None)
+            .await
+            .expect("WebTransport セッションの受け入れに失敗した");
+
+        // クライアントから 1 バイト受信すると maybe_grow_stream_window が動く
+        let mut uni = session
+            .accept_uni()
+            .await
+            .expect("uni ストリームを受け入れられない");
+        let data = uni
+            .recv()
+            .await
+            .expect("recv に失敗した")
+            .expect("データが無い");
+        assert_eq!(data, b"x", "受信データが一致しない");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗した");
+    let connect_stream = perform_connect(&mut client).await;
+
+    // サーバーが広告する uni = 1 を peer_config に反映する
+    let peer_config = WtConfig {
+        initial_max_stream_data_uni: 1,
+        ..WtConfig::default()
+    };
+    let mut wt_client = WtSession::client(WtConfig::default(), peer_config);
+    wt_client.initiate().expect("セッション開始に失敗した");
+
+    // ローカル開始 uni ストリームを開き 1 バイト送る
+    let uni_id = wt_client
+        .open_uni_stream()
+        .expect("uni ストリームを開けない");
+    assert_eq!(
+        wt_client
+            .stream(uni_id)
+            .expect("ストリームが存在しない")
+            .send_available(),
+        1,
+        "初期送信ウィンドウは uni の初期値 1 のはず"
+    );
+    wt_client
+        .send_stream_data(uni_id, b"x", false)
+        .expect("1 バイトの送信に失敗した");
+    let out = wt_client.poll_output().expect("出力が無い");
+    client
+        .send_data(connect_stream, out, false)
+        .await
+        .expect("データの送信に失敗した");
+
+    // サーバーの WT_MAX_STREAM_DATA を処理して送信ウィンドウが増えることを確認する
+    let mut grown = false;
+    for _ in 0..50 {
+        let ev = tokio::time::timeout(Duration::from_secs(5), client.next_event())
+            .await
+            .expect("クライアントイベントの受信がタイムアウトした")
+            .expect("クライアントイベントの受信に失敗した");
+        if let Event::DataReceived {
+            stream_id, data, ..
+        } = ev
+            && stream_id == connect_stream
+        {
+            wt_client.feed(&data).expect("feed に失敗した");
+            wt_client.process().expect("process に失敗した");
+            while wt_client.poll_event().is_some() {}
+            if wt_client
+                .stream(uni_id)
+                .expect("ストリームが存在しない")
+                .send_available()
+                > 0
+            {
+                grown = true;
+                break;
+            }
+        }
+    }
+    assert!(grown, "initial = 1 でも送信ウィンドウが拡張されるはず");
     server_task.await.expect("サーバータスクの終了に失敗した");
 }
 
