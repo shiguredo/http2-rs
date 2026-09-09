@@ -4830,4 +4830,85 @@ mod reset_stream {
             "拒否時に END_STREAM 付き HEADERS が送信されてはならない"
         );
     }
+
+    /// SETTINGS_INITIAL_WINDOW_SIZE の増加でストリーム送信ウィンドウが拡張されると、
+    /// 滞留していた送信 DATA が SETTINGS ACK の後に送信される
+    ///
+    /// RFC 9113 Section 6.9.2: SETTINGS 変更でストリームウィンドウを調整する。
+    /// RFC 9113 Section 6.5.3: 全値処理後は即座に ACK を送出する (MUST)。
+    #[test]
+    fn test_settings_initial_window_increase_flushes_queued_data() {
+        // クライアントが INITIAL_WINDOW_SIZE=100 を広告する
+        let mut server = Connection::server(Limits::default());
+        server.mark_preface_received();
+        server.initiate().expect("initiate should succeed");
+        let mut settings = SettingsFrame::new();
+        settings.add(Setting::InitialWindowSize(WindowSize::from_static(100)));
+        server
+            .feed(&encode_frame(&Frame::Settings(settings)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        open_stream_on_server(&mut server, 1);
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        server
+            .send_response(
+                client_stream_id(1),
+                vec![HeaderField::new(":status", "200").expect("valid header field")],
+                false,
+            )
+            .expect("send_response should succeed");
+
+        // ストリーム送信ウィンドウ (100) を使い切り、さらに 100 バイトを滞留させる
+        server
+            .send_data(client_stream_id(1), vec![0u8; 100], false)
+            .expect("send_data should succeed");
+        server
+            .send_data(client_stream_id(1), vec![0u8; 100], false)
+            .expect("send_data should succeed");
+        let _ = server.poll_output();
+
+        // クライアントが SETTINGS で INITIAL_WINDOW_SIZE を 200 に増やす
+        let mut settings = SettingsFrame::new();
+        settings.add(Setting::InitialWindowSize(WindowSize::from_static(200)));
+        server
+            .feed(&encode_frame(&Frame::Settings(settings)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        // SETTINGS ACK の後に滞留 DATA が送信される
+        let output = server.poll_output().expect("output expected");
+        let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+        decoder.feed(&output);
+        let mut saw_ack = false;
+        let mut sent_data = 0usize;
+        let mut data_before_ack = false;
+        while let Some(frame) = decoder.decode().expect("decode should succeed") {
+            match frame {
+                Frame::Settings(f) if f.is_ack() => saw_ack = true,
+                Frame::Data(d) => {
+                    if !saw_ack {
+                        data_before_ack = true;
+                    }
+                    assert_eq!(
+                        d.stream_id.as_u32(),
+                        1,
+                        "滞留 DATA は対象ストリームへ送信されるはず"
+                    );
+                    sent_data += d.data.len();
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_ack, "SETTINGS ACK が送信されるはず");
+        assert_eq!(sent_data, 100, "滞留していた 100 バイトが送信されるはず");
+        assert!(
+            !data_before_ack,
+            "SETTINGS ACK が滞留 DATA より先に送信されるはず"
+        );
+    }
 }

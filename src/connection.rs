@@ -623,7 +623,8 @@ impl Connection {
     ///
     /// フロー制御に従い、送信可能な分だけ送信する。
     /// 送信できないデータは内部バッファにキューイングされ、
-    /// WINDOW_UPDATE 受信時に自動的に送信される。
+    /// WINDOW_UPDATE 受信時または SETTINGS_INITIAL_WINDOW_SIZE の増加時に
+    /// 自動的に送信される。
     pub fn send_data(
         &mut self,
         stream_id: StreamId,
@@ -1336,6 +1337,12 @@ impl Connection {
 
             // RFC 9113 Section 6.5.3 (Settings Synchronization): 全値処理後、即座に ACK 付き SETTINGS を送出しなければならない (MUST)
             self.send_frame(&Frame::Settings(SettingsFrame::ack()))?;
+
+            // SETTINGS 処理後に滞留 DATA を送信する。SETTINGS_INITIAL_WINDOW_SIZE の
+            // 増加でストリーム送信ウィンドウが正になると滞留が解消する
+            // (拡張していない場合や接続ウィンドウ枯渇時は実質 no-op)。
+            // ACK を先に送出することで Settings Synchronization の MUST を守る。
+            self.flush_all_stream_data()?;
 
             self.events
                 .push_back(Event::SettingsReceived { ack: false });
