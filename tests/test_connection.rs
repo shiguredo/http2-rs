@@ -4692,4 +4692,142 @@ mod reset_stream {
             "リセット後の新規 HEADERS で StreamReset が生成されてはならない"
         );
     }
+
+    /// 送信ウィンドウ枯渇で送信バッファに滞留 DATA がある状態で trailers を送ると
+    /// 拒否され、WINDOW_UPDATE で回復すると滞留 DATA が送信される
+    ///
+    /// RFC 9113 Section 8.1: 滞留 DATA が残ったまま END_STREAM 付き HEADERS を送ると
+    /// データが破棄されるため、事前に拒否する。
+    #[test]
+    fn test_send_trailers_with_queued_data_is_rejected() {
+        let mut server = setup_server();
+        // リクエストを END_STREAM 付きで受信させ、送信側が HalfClosedRemote の状態で
+        // 滞留 DATA を作る (この状態だけが修正前の streams.remove による消失経路になる)
+        let request = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_request_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(request)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // 最終レスポンス (END_STREAM なし)
+        server
+            .send_response(
+                client_stream_id(1),
+                vec![HeaderField::new(":status", "200").expect("valid header field")],
+                false,
+            )
+            .expect("send_response should succeed");
+
+        // 送信ウィンドウ (65535) を使い切り、追加データを送信バッファに滞留させる
+        server
+            .send_data(client_stream_id(1), vec![0u8; 65535], false)
+            .expect("send_data should succeed");
+        server
+            .send_data(client_stream_id(1), vec![0u8; 100], false)
+            .expect("send_data should succeed");
+        let _ = server.poll_output();
+
+        // 滞留 DATA がある状態で trailers を送ると拒否される
+        let err = server
+            .send_trailers(
+                client_stream_id(1),
+                vec![HeaderField::new("x-trailer", "v").expect("valid header field")],
+            )
+            .expect_err("滞留 DATA がある状態の trailers は拒否されるはず");
+        assert_eq!(
+            err.error_code(),
+            Some(ErrorCode::StreamClosed),
+            "予期しないエラー: {err}"
+        );
+        assert!(
+            server.poll_output().is_none(),
+            "拒否時に END_STREAM 付き HEADERS が送信されてはならない"
+        );
+
+        // ストリームと滞留 DATA が保持され、WINDOW_UPDATE で送信される
+        server
+            .feed(&encode_frame(&Frame::WindowUpdate(
+                WindowUpdateFrame::for_stream(
+                    NonZeroStreamId::from_static(1),
+                    WindowIncrement::from_static(65535),
+                ),
+            )))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        server
+            .feed(&encode_frame(&Frame::WindowUpdate(
+                WindowUpdateFrame::for_connection(WindowIncrement::from_static(65535)),
+            )))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        // 滞留 DATA が送信された後は trailers を送信できる
+        server
+            .send_trailers(
+                client_stream_id(1),
+                vec![HeaderField::new("x-trailer", "v").expect("valid header field")],
+            )
+            .expect("滞留 DATA 解消後の trailers は成功するはず");
+    }
+
+    /// 滞留 DATA がある状態で最終レスポンスを END_STREAM 付きで送ると拒否される
+    /// (通常のメッセージ順序では到達しない防御検査)
+    #[test]
+    fn test_send_response_end_stream_with_queued_data_is_rejected() {
+        let mut server = setup_server();
+        // リクエストを END_STREAM 付きで受信させ、送信側を HalfClosedRemote にする
+        let request = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_request_headers(),
+        )
+        .with_end_headers(true)
+        .with_end_stream(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(request)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // 1xx 情報レスポンス (END_STREAM なし) を送ってから DATA を滞留させる
+        server
+            .send_response(
+                client_stream_id(1),
+                vec![HeaderField::new(":status", "100").expect("valid header field")],
+                false,
+            )
+            .expect("send_response should succeed");
+        server
+            .send_data(client_stream_id(1), vec![0u8; 65535], false)
+            .expect("send_data should succeed");
+        server
+            .send_data(client_stream_id(1), vec![0u8; 100], false)
+            .expect("send_data should succeed");
+        let _ = server.poll_output();
+
+        // 滞留 DATA がある状態で最終レスポンスを END_STREAM 付きで送ると拒否される
+        let err = server
+            .send_response(
+                client_stream_id(1),
+                vec![HeaderField::new(":status", "200").expect("valid header field")],
+                true,
+            )
+            .expect_err("滞留 DATA がある状態の END_STREAM は拒否されるはず");
+        assert_eq!(
+            err.error_code(),
+            Some(ErrorCode::StreamClosed),
+            "予期しないエラー: {err}"
+        );
+        assert!(
+            server.poll_output().is_none(),
+            "拒否時に END_STREAM 付き HEADERS が送信されてはならない"
+        );
+    }
 }
