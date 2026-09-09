@@ -3,7 +3,7 @@
 - Created: 2026-09-09
 - Completed: {YYYY-MM-DD}
 - Branch: feature/add-wt-stream-state-error-e2e-test
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-09-10
 
 ## 目的
 
@@ -16,6 +16,8 @@
 ## 設計方針
 
 - クライアントがクローズ済みストリーム ID へ WT_STREAM を送り、サーバーのドライバが CONNECT ストリームを `RST_STREAM(WT_STREAM_STATE_ERROR)` で終了することを検証する E2E テストを追加する
+  - クライアント側 `WtSession::send_stream_data` は FIN 送信でローカル開始 uni ストリームを `remove_if_closed` により削除済みのため、同じ ID へ再送できない。`CapsuleEncoder` で `Capsule::WtStream` を手動エンコードし、`Client::send_data` で CONNECT ストリームへ直接送る
+  - サーバー側で `closed_streams` に記録された後に届くよう、FIN を含む DATA フレームと WT_STREAM は別フレームで送る
 - 既存の `test_wt_command_flush_error_not_masked_as_connection_closed` と同じハーネスを使う
 - `cargo test --all` が通過することを確認する
 
