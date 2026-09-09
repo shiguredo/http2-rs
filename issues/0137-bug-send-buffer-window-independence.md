@@ -1,7 +1,7 @@
 # 送信バッファ容量をピアの SETTINGS_INITIAL_WINDOW_SIZE に固定し、超過時に接続エラーを返す
 
 - Created: 2026-08-24
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-10
 - Branch: feature/fix-send-buffer-window-independence
 - Polished: 2026-09-09
 
@@ -30,3 +30,15 @@ RFC 9113 Section 6.9 のフロー制御は「送信ウィンドウが枯渇し�
 - 送信バッファ容量がピアの初期ウィンドウに依存しないこと (ピアが 0 を広告しても容量が 0 にならない)
 - バッファ超過時に部分データがバッファに残らないこと (全量拒否)
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/stream.rs` の `Stream::new` の送信バッファ容量をピアの `SETTINGS_INITIAL_WINDOW_SIZE` から分離し、固定値 `DEFAULT_INITIAL_WINDOW_SIZE` (65535) とした。ピアが 0 を広告しても容量が 0 にならない
+- `src/stream/buffer.rs` の `SendBuffer` に `can_push` を追加し、`src/connection.rs` の `queue_data` は全量を追加できる場合のみ `push` するようにした (部分挿入を避ける原子性)。バッファ超過は接続エラーではなく `Error::stream_error(ErrorCode::FlowControlError, ...)` のストリームエラーとした
+- `send_data` と `Stream::new` の doc に固定容量とエラー契約を追記し、`crates/tokio-http2` の陳腐化したコメントを修正した
+- `tests/test_connection.rs` に、ピアが 0 を広告してもデータが滞留し WINDOW_UPDATE 後に送信されること、固定容量超過がストリームエラーになり部分挿入されないこと、容量がピアウィンドウに依存せず固定であること、累積容量が既存データ長を含めて判定されることを検証するテストを追加した
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
+
+## 残懸念
+
+- `crates/tokio-http2/src/webtransport.rs` の `flush_wt_output` が WT 出力全体を 1 回の `send_data` で送るため、ピアが 65535 超の初期ウィンドウを広告する構成で大きな WT 送信がストリームエラーになる退行がある。本 issue の変更対象外のため別 issue (`issues/0144-bug-wt-flush-output-split-large-send.md`) で対応する
