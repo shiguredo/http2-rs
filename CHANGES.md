@@ -25,5 +25,7 @@
   - @voluntas
 - [FIX] `Connection::send_response` / `Connection::send_trailers` が送信バッファに滞留 DATA がある状態で END_STREAM 付き HEADERS を送るのを拒否し、データの無通知消失を防ぐ (RFC 9113 Section 8.1)
   - @voluntas
+- [FIX] SETTINGS_INITIAL_WINDOW_SIZE の増加でストリーム送信ウィンドウが拡張された後、滞留していた送信 DATA をフラッシュする (RFC 9113 Section 6.9.2)
+  - @voluntas
 
 ### misc
