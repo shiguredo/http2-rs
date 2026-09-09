@@ -3,7 +3,7 @@
 - Created: 2026-09-09
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-wt-grow-window-threshold-initial-one
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-09-10
 
 ## 目的
 
