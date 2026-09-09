@@ -1,7 +1,7 @@
 # send_response / send_trailers が END_STREAM 送信時にキュー済み送信データを黙って破棄する
 
 - Created: 2026-08-24
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-10
 - Branch: feature/fix-send-response-drop-queued-data
 - Polished: 2026-09-09
 
@@ -33,3 +33,11 @@
 - `send_response(end_stream=true)` でも同様に、滞留 DATA がある場合はエラーが返ること (防御検査)
 - エラー後に送信ウィンドウが回復 (WINDOW_UPDATE 受信) すると滞留 DATA が送信されること
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/connection/headers.rs` の `send_response` / `send_trailers` で、`send_headers(end_stream)` を呼ぶ前に送信バッファが空であることを検査する共通ヘルパー `check_send_buffer_empty` を追加した。滞留 DATA がある場合は `ErrorCode::StreamClosed` のストリームエラーを返し、ストリームと滞留 DATA を保持する (WINDOW_UPDATE 受信時に `flush_stream_data` で送信される)
+- 検査は状態遷移・HPACK エンコード・HEADERS 送信の前に行い、拒否時に HPACK 動的テーブルや状態を変更しないようにした
+- `send_response` / `send_trailers` の doc に、滞留 DATA がある場合の `StreamClosed` エラー契約を追記した
+- `tests/test_connection.rs` に、リクエストを END_STREAM 付きで受信させた HalfClosedRemote 経路で、滞留 DATA がある状態の `send_trailers` / `send_response(end_stream=true)` が拒否され、END_STREAM 付き HEADERS が送信されず、WINDOW_UPDATE 後に滞留 DATA が送信されて `send_trailers` が再試行できることを検証するテストを追加した
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した

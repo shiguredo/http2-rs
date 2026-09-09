@@ -11,9 +11,35 @@ use crate::stream::{Stream, StreamState};
 use crate::validation;
 
 impl Connection {
+    /// END_STREAM 付き HEADERS を送る前に送信バッファが空であることを検査する
+    ///
+    /// RFC 9113 Section 8.1 はメッセージ最後のフレームに END_STREAM を要求する。
+    /// 滞留 DATA を残したまま END_STREAM を送ると、ストリームが Closed になる場合は
+    /// `streams.remove` でバッファごと消え、Closed にならない場合も END_STREAM 後に
+    /// DATA が送出される。いずれも避けるため `send_headers` の前に拒否する。
+    /// 検査を状態遷移の後に置くと、HEADERS 未送信のまま状態だけ Closed に進む。
+    fn check_send_buffer_empty(&self, stream_id: u32) -> Result<()> {
+        if self
+            .streams
+            .get(&stream_id)
+            .is_some_and(|s| !s.send_buffer().is_empty())
+        {
+            return Err(Error::stream_error(
+                ErrorCode::StreamClosed,
+                "cannot send END_STREAM: send buffer still has queued DATA",
+            ));
+        }
+        Ok(())
+    }
+
     /// レスポンスヘッダーを送信する (サーバー用)
     ///
     /// 既存のストリームにレスポンスヘッダーを送信する。
+    ///
+    /// # Errors
+    ///
+    /// `end_stream` が true で送信バッファに未送信 DATA が滞留している場合は
+    /// `ErrorCode::StreamClosed` を返す (`WINDOW_UPDATE` 後に再試行すること)。
     pub fn send_response(
         &mut self,
         stream_id: StreamId,
@@ -76,6 +102,11 @@ impl Connection {
             }
         }
 
+        // END_STREAM 送信前に滞留 DATA がないことを検査する (RFC 9113 Section 8.1)
+        if end_stream {
+            self.check_send_buffer_empty(sid)?;
+        }
+
         let is_closed = {
             let stream = self
                 .streams
@@ -132,6 +163,11 @@ impl Connection {
     ///
     /// サーバーの場合は最終レスポンス送信後にのみ送信可能。
     /// クライアントの場合はリクエストヘッダー送信後に使用する。
+    ///
+    /// # Errors
+    ///
+    /// 送信バッファに未送信 DATA が滞留している場合は `ErrorCode::StreamClosed` を
+    /// 返す (`WINDOW_UPDATE` 後に再試行すること)。
     pub fn send_trailers(&mut self, stream_id: StreamId, headers: Vec<HeaderField>) -> Result<()> {
         let sid = stream_id.as_u32();
 
@@ -177,6 +213,9 @@ impl Connection {
 
         // RFC 9113 Section 8.1: トレーラーは常に END_STREAM を伴う
         let end_stream = true;
+
+        // END_STREAM 送信前に滞留 DATA がないことを検査する (RFC 9113 Section 8.1)
+        self.check_send_buffer_empty(sid)?;
 
         let is_closed = {
             let stream = self
