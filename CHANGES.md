@@ -29,5 +29,7 @@
   - @voluntas
 - [FIX] `Connection::send_goaway` を複数回呼び出しても last-stream-id が増加しないようにする (RFC 9113 Section 6.8)
   - @voluntas
+- [FIX] 送信バッファ容量をピアの SETTINGS_INITIAL_WINDOW_SIZE から分離して 65535 に固定し、バッファ超過を接続エラーではなくストリームエラーとして返す。1 回の `send_data` で渡せるのは 65535 bytes までとなり、それ以上は呼び出し側で分割する必要がある (RFC 9113 Section 6.9)
+  - @voluntas
 
 ### misc

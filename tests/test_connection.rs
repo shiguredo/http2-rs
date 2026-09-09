@@ -5006,4 +5006,235 @@ mod reset_stream {
             "2 回目の last-stream-id は既送信値に固定されるはず"
         );
     }
+
+    /// ピアが SETTINGS_INITIAL_WINDOW_SIZE=0 を広告しても、固定容量内の送信データは
+    /// 接続エラーにならず滞留し、WINDOW_UPDATE 後に送信される
+    ///
+    /// RFC 9113 Section 6.9.1: フロー制御は「送信不可なら保留」であり、
+    /// ウィンドウ不足はエラーではない。
+    #[test]
+    fn test_send_data_with_zero_initial_window_is_queued() {
+        // クライアントが INITIAL_WINDOW_SIZE=0 を広告する
+        let mut server = Connection::server(Limits::default());
+        server.mark_preface_received();
+        server.initiate().expect("initiate should succeed");
+        let mut settings = SettingsFrame::new();
+        settings.add(Setting::InitialWindowSize(WindowSize::from_static(0)));
+        server
+            .feed(&encode_frame(&Frame::Settings(settings)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        open_stream_on_server(&mut server, 1);
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        server
+            .send_response(
+                client_stream_id(1),
+                vec![HeaderField::new(":status", "200").expect("valid header field")],
+                false,
+            )
+            .expect("send_response should succeed");
+        let _ = server.poll_output();
+
+        // 初期ウィンドウが 0 でも、固定容量内のデータは接続エラーにならず滞留する
+        server
+            .send_data(client_stream_id(1), vec![0u8; 100], false)
+            .expect("send_data should not be a connection error");
+
+        // ウィンドウ 0 のため DATA は送信されない
+        if let Some(output) = server.poll_output() {
+            let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+            decoder.feed(&output);
+            while let Some(frame) = decoder.decode().expect("decode should succeed") {
+                assert!(
+                    !matches!(frame, Frame::Data(_)),
+                    "ウィンドウ 0 では DATA は送信されないはず"
+                );
+            }
+        }
+
+        // WINDOW_UPDATE でウィンドウが回復すると滞留 DATA が送信される
+        server
+            .feed(&encode_frame(&Frame::WindowUpdate(
+                WindowUpdateFrame::for_stream(
+                    NonZeroStreamId::from_static(1),
+                    WindowIncrement::from_static(100),
+                ),
+            )))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+
+        let output = server.poll_output().expect("output expected");
+        let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+        decoder.feed(&output);
+        let mut sent_data = 0usize;
+        while let Some(frame) = decoder.decode().expect("decode should succeed") {
+            if let Frame::Data(d) = frame {
+                sent_data += d.data.len();
+            }
+        }
+        assert_eq!(
+            sent_data, 100,
+            "ウィンドウ回復後に滞留 DATA が送信されるはず"
+        );
+    }
+
+    /// 送信バッファの固定容量を超える send_data はストリームエラーになり、
+    /// 部分挿入されない (原子性)
+    #[test]
+    fn test_send_data_buffer_overflow_is_stream_error_and_atomic() {
+        let mut server = setup_server();
+        open_stream_on_server(&mut server, 1);
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+        server
+            .send_response(
+                client_stream_id(1),
+                vec![HeaderField::new(":status", "200").expect("valid header field")],
+                false,
+            )
+            .expect("send_response should succeed");
+        let _ = server.poll_output();
+
+        // 固定容量 (65535) を超えるデータはストリームエラーになり、部分挿入されない
+        let err = server
+            .send_data(client_stream_id(1), vec![0u8; 65536], false)
+            .expect_err("容量超過はエラーになるはず");
+        assert!(
+            err.is_stream_error(),
+            "接続エラーではなくストリームエラーのはず: {err}"
+        );
+        assert_eq!(
+            err.error_code(),
+            Some(ErrorCode::FlowControlError),
+            "予期しないエラー: {err}"
+        );
+
+        // 部分挿入されていないため、容量内のデータは改めて送信できる
+        server
+            .send_data(client_stream_id(1), vec![0u8; 100], false)
+            .expect("部分挿入がなければ改めて送信できるはず");
+    }
+
+    /// 送信バッファ容量がピアの初期ウィンドウに依存せず固定であること
+    ///
+    /// ピアが 65535 を超える SETTINGS_INITIAL_WINDOW_SIZE を広告しても、
+    /// 1 回の send_data は固定容量 (65535) までに限られる。
+    #[test]
+    fn test_send_buffer_capacity_is_fixed_regardless_of_peer_window() {
+        // クライアントが INITIAL_WINDOW_SIZE=1MiB を広告する
+        let mut server = Connection::server(Limits::default());
+        server.mark_preface_received();
+        server.initiate().expect("initiate should succeed");
+        let mut settings = SettingsFrame::new();
+        settings.add(Setting::InitialWindowSize(WindowSize::from_static(1 << 20)));
+        server
+            .feed(&encode_frame(&Frame::Settings(settings)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        open_stream_on_server(&mut server, 1);
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+        server
+            .send_response(
+                client_stream_id(1),
+                vec![HeaderField::new(":status", "200").expect("valid header field")],
+                false,
+            )
+            .expect("send_response should succeed");
+        let _ = server.poll_output();
+
+        // 固定容量ちょうどは成功する
+        server
+            .send_data(client_stream_id(1), vec![0u8; 65535], false)
+            .expect("固定容量ちょうどは成功するはず");
+
+        // 固定容量 + 1 は、ピアウィンドウが 1MiB でもストリームエラーになる
+        let err = server
+            .send_data(client_stream_id(1), vec![0u8; 65536], false)
+            .expect_err("固定容量超過はエラーになるはず");
+        assert!(err.is_stream_error(), "ストリームエラーのはず: {err}");
+        assert_eq!(
+            err.error_code(),
+            Some(ErrorCode::FlowControlError),
+            "予期しないエラー: {err}"
+        );
+    }
+
+    /// 送信バッファの容量判定が既存データ長を含めた累積で行われること
+    ///
+    /// ピアウィンドウ 0 で 65500 bytes を滞留させた後、100 bytes を追加すると
+    /// 単体では 65535 以下でも合計が容量を超えるためストリームエラーになり、
+    /// 滞留中の 65500 bytes は保持される (部分挿入なし)。
+    #[test]
+    fn test_send_buffer_cumulative_capacity_includes_existing_data() {
+        // クライアントが INITIAL_WINDOW_SIZE=0 を広告する
+        let mut server = Connection::server(Limits::default());
+        server.mark_preface_received();
+        server.initiate().expect("initiate should succeed");
+        let mut settings = SettingsFrame::new();
+        settings.add(Setting::InitialWindowSize(WindowSize::from_static(0)));
+        server
+            .feed(&encode_frame(&Frame::Settings(settings)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        open_stream_on_server(&mut server, 1);
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+        server
+            .send_response(
+                client_stream_id(1),
+                vec![HeaderField::new(":status", "200").expect("valid header field")],
+                false,
+            )
+            .expect("send_response should succeed");
+        let _ = server.poll_output();
+
+        // ウィンドウ 0 のため 65500 bytes は滞留する
+        server
+            .send_data(client_stream_id(1), vec![0u8; 65500], false)
+            .expect("固定容量内は滞留できるはず");
+
+        // 追加 100 bytes は単体では 65535 以下だが、合計が容量を超えるためエラー
+        let err = server
+            .send_data(client_stream_id(1), vec![0u8; 100], false)
+            .expect_err("累積容量超過はエラーになるはず");
+        assert!(err.is_stream_error(), "ストリームエラーのはず: {err}");
+        assert_eq!(
+            err.error_code(),
+            Some(ErrorCode::FlowControlError),
+            "予期しないエラー: {err}"
+        );
+
+        // 滞留中の 65500 bytes が保持されていることを WINDOW_UPDATE 後の送信で確認する
+        server
+            .feed(&encode_frame(&Frame::WindowUpdate(
+                WindowUpdateFrame::for_stream(
+                    NonZeroStreamId::from_static(1),
+                    WindowIncrement::from_static(65500),
+                ),
+            )))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        let output = server.poll_output().expect("output expected");
+        let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+        decoder.feed(&output);
+        let mut sent_data = 0usize;
+        while let Some(frame) = decoder.decode().expect("decode should succeed") {
+            if let Frame::Data(d) = frame {
+                sent_data += d.data.len();
+            }
+        }
+        assert_eq!(sent_data, 65500, "滞留中の 65500 bytes が送信されるはず");
+    }
 }
