@@ -21,7 +21,7 @@ RFC 9113 Section 6.9 のフロー制御は「送信ウィンドウが枯渇し�
 - `Connection::queue_data` のバッファ超過は、接続エラー (`FlowControlError`) ではなくストリームエラー (`Error::stream_error(ErrorCode::FlowControlError, ...)`) とする。ローカルな資源上限であり、接続全体を GOAWAY で落とす必要はない
 - バッファ超過時は部分 push しない。受け入れ可能量を超える `send_data` は全量を拒否し、バッファとストリームの状態を変更しない (原子性)。`SendBuffer::push` が部分挿入して残バイト数を返す現状の挙動は接続エラーで接続が終了する前提だったため問題にならなかったが、ストリームエラーに変えると部分データが残り、再送でデータが破損しうる
 - `SETTINGS_INITIAL_WINDOW_SIZE=0` を広告したピアに対して送信データがエラーにならず、WINDOW_UPDATE 受信後に送信されることを検証するテストを追加する
-- 0138 は `send_data` が「送信できずにバッファへ積んだだけ」でも Ok を返す問題を扱う。本 issue は容量の分離と超過時のエラー種別に閉じ、`send_data` の Ok 返却仕様は 0138 に委ねる。0134・0135 とも変更対象が近接するが、本 issue は `Stream::new` と `queue_data` に閉じる
+- 0138 は `send_data` が「送信できずにバッファへ積んだだけ」でも Ok を返す挙動を扱う。本 issue は容量の分離と超過時のエラー種別に閉じ、`send_data` の Ok 返却仕様の是非は 0138 に委ねる。0134・0135 とも変更対象が近接するが、本 issue は `Stream::new` と `queue_data` に閉じる
 
 ## 完了条件
 
