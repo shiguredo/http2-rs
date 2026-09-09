@@ -3,7 +3,7 @@
 - Created: 2026-08-24
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-wt-close-silent-not-send
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-09-09
 
 ## 目的
 
@@ -16,20 +16,23 @@
 ここで、CONNECT ストリームの送信ウィンドウが枯渇している場合 (クライアントが WINDOW_UPDATE を送らない等)、sans-io 層の `Connection::send_data` は以下の挙動となる:
 
 - `src/connection.rs` の `queue_data` は送信バッファに余裕があればデータを積むだけでエラーにしない
-- `flush_stream_data` はウィンドウが 0 (`available == 0`) だと `return Ok(())` して送信せず、バッファにデータを残したまま成功を返す
+- `flush_stream_data` は送信バッファが非空かつ `available == 0` だと `return Ok(())` して送信せず、バッファにデータを残したまま成功を返す (空 DATA + END_STREAM は RFC 9113 Section 6.9.1 によりウィンドウ 0 でも送信できるが、バッファが非空のため早期 return で到達しない)
 
-このため close() は ack に Ok を載せて戻るが、WT_CLOSE_SESSION capsule と END_STREAM は送信バッファに積まれたまま、driver 終了によるコネクション drop で破棄される。ピア側は接続断でセッションが異常終了したように見え、呼び出し側は「正常に close された」と誤認する。
+このため close() は ack に Ok を載せて戻るが、WT_CLOSE_SESSION capsule は `send_buffer` に、END_STREAM は `pending_end_stream` フラグに残ったまま、driver 終了によるコネクション drop で破棄される。ピア側は接続断でセッションが異常終了したように見え、呼び出し側は「正常に close された」と誤認する。
 
 送信バッファが完全に満杯の場合は `send buffer full` エラーになり ack 経由でエラーが伝わるが、バッファに余裕がある場合 (ウィンドウ枯渇による silent buffering) は Ok のまま戻るため、エラーにはならない。
 
 ## 設計方針
 
-- 本質的な原因は sans-io 層の `Connection::send_data` が「送信できずにバッファへ積んだだけ」の状態でも Ok を返すことにある。`src/connection.rs` の `send_data` / `flush_stream_data` の挙動を見直し、送信できなかったデータが残る場合に Ok を返さない (エラーにする、または送信待ち状態を明示する) ことが本筋
-- もしくは、close() が Ok を返す条件を「END_STREAM が実際に送信できた場合」に限定する
-- sans-io 層の変更は影響範囲が広い (全 send 経路に波及する) ため、実装方法の決定には設計判断が必要。方針が割れる場合は実装前に確認する
+- sans-io 層の `Connection::send_data` が「送信できずにバッファへ積んだだけ」でも Ok を返す挙動は、RFC 9113 Section 6.9 の保留モデルとして正しく、0137 の完了条件 (ウィンドウ枯渇時はエラーにせず滞留させ、WINDOW_UPDATE 後に送信する) および既存テストが前提としている。したがってこの案は採らず、`send_data` の Ok 仕様は変更しない
+- close() 側で「実際に送信されたか」を判定する。sans-io `Connection` に、指定ストリームの送信待ちデータ (`send_buffer`) または保留中の END_STREAM (`pending_end_stream`) が残っているかを返す公開メソッドを追加し、tokio-http2 の `Connection` / `ServerConnection` から委譲する。CODEBASE.md の公開 API 規約に従いテストを追加する
+- `DriverState::handle_cmd` の Close 処理は、`flush_wt_output()` と `send_data(connect_stream_id, vec![], true)` の後に上記メソッドで CONNECT ストリームの送信待ちを検査し、残っていれば ack に Err を載せる。driver は Close で終了するため capsule はピアへ届かないが、呼び出し側は「送信されていない」ことを認識できる
+- driver を終了させず WINDOW_UPDATE を待って送信する案は、ピアが WINDOW_UPDATE を送らない場合に close() がハングするため採らない
+- 0134 は `send_response` / `send_trailers` に閉じ、`send_data` の Ok 返却仕様は本 issue に委ねると明記している。本 issue は `send_data` の仕様を変えず、0137 の保留モデルを維持する
 
 ## 完了条件
 
-- 送信ウィンドウ枯渇時に close() を呼んだ場合、呼び出し側が「実際には送信されていない」ことを認識できる (エラーが返る、またはドキュメント・型で明示される)
-- 正常時 (ウィンドウに余裕がある場合) は従来通り close() が成功し、WT_CLOSE_SESSION と END_STREAM がピアへ届くこと
-- `cargo test -p tokio-http2` が全件通過すること
+- 送信ウィンドウ枯渇時に close() を呼ぶと Err が返ること (E2E テストで検証)
+- 正常時 (ウィンドウに余裕がある場合) は close() が Ok を返し、WT_CLOSE_SESSION と END_STREAM がピアへ届くこと
+- 送信待ちデータの有無を返す新規公開 API のテストが追加されていること
+- `cargo test --all` が通過すること
