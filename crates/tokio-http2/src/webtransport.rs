@@ -21,7 +21,7 @@ use shiguredo_http2::webtransport::{
     WtStreamId, serialize_exporter_context, serialize_wt_protocol,
     stream::stream_id as wt_stream_id,
 };
-use shiguredo_http2::{ErrorCode, Event, HeaderField, StreamId};
+use shiguredo_http2::{ErrorCode, Event, HeaderField, Role, StreamId};
 
 use crate::error::{Error, Result};
 use crate::server::ServerConnection;
@@ -1198,7 +1198,20 @@ impl DriverState {
             None => return Ok(()),
         };
         let initial = if bidirectional {
-            self.wt_session.config().initial_max_stream_data_bidi_remote
+            // draft-ietf-webtrans-http2-15 Section 11.2:
+            // ローカル開始 bidi の recv_max は bidi_local、ピア開始 bidi は bidi_remote で
+            // 初期化されるため、しきい値・拡張量も開始主体に応じて選ぶ
+            // 現在の DriverState はサーバー専用のため Role::Client は到達しないが、
+            // 将来のクライアントドライバ追加に備えて role ごとに判定する
+            let locally_initiated = match self.wt_session.role() {
+                Role::Client => wt_stream_id::is_client_initiated(stream_id),
+                Role::Server => wt_stream_id::is_server_initiated(stream_id),
+            };
+            if locally_initiated {
+                self.wt_session.config().initial_max_stream_data_bidi_local
+            } else {
+                self.wt_session.config().initial_max_stream_data_bidi_remote
+            }
         } else {
             self.wt_session.config().initial_max_stream_data_uni
         };

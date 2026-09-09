@@ -1,7 +1,7 @@
 # tokio ドライバの自動ウィンドウ拡張がローカル開始 bidi ストリームに誤った初期値を使用する
 
 - Created: 2026-08-24
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-09
 - Branch: feature/fix-wt-grow-stream-window-initial-value
 - Polished: 2026-09-09
 
@@ -28,3 +28,9 @@
 - `initial_max_stream_data_bidi_remote = 0` かつ `initial_max_stream_data_bidi_local > 0` の非対称設定で、ローカル開始 bidi の受信ウィンドウが拡張されるテストが追加されていること
 - テストは tokio-http2 のドライバ経路 (`crates/tokio-http2/tests/`) に置く。sans-io 層の `WtSession::grow_stream_recv_window` は正しいため、sans-io 層のテストでは本バグを検出できない
 - `cargo test --all` が通過すること
+
+## 解決方法
+
+- `crates/tokio-http2/src/webtransport.rs` の `maybe_grow_stream_window` で、bidi ストリームの開始主体を `WtSession::role()` と `stream::stream_id::is_client_initiated` / `is_server_initiated` で判定し、ローカル開始 bidi には `initial_max_stream_data_bidi_local`、ピア開始 bidi には `initial_max_stream_data_bidi_remote` をしきい値・拡張量に使うようにした (draft-ietf-webtrans-http2-15 Section 11.2)。uni は従来どおり `initial_max_stream_data_uni`
+- `crates/tokio-http2/tests/test_webtransport.rs` に、`bidi_remote=0` かつ `bidi_local>0` の非対称 Limits を広告するサーバーで、サーバー開始 bidi の受信ウィンドウが拡張されることを検証するテストを追加した (`asymmetric_server_limits` ヘルパー)
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した

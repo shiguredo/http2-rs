@@ -95,6 +95,27 @@ fn server_limits() -> Limits {
         .expect("valid server limits")
 }
 
+/// ローカル開始 bidi の受信上限 (`bidi_local`) を非ゼロ、ピア開始 bidi の
+/// 受信上限 (`bidi_remote`) を 0 にした非対称 Limits
+///
+/// `initial_max_stream_data_bidi_remote = 0` により、ローカル開始 bidi に
+/// `bidi_remote` を誤用すると受信ウィンドウが拡張されなくなる。
+fn asymmetric_server_limits() -> Limits {
+    Limits::builder()
+        .enable_connect_protocol(true)
+        .wt_enabled(true)
+        .webtransport(
+            Some(1 << 20),
+            Some(64 * 1024),
+            Some(64 * 1024),
+            Some(10),
+            Some(10),
+            Some(0),
+        )
+        .build()
+        .expect("非対称 Limits の構築に失敗した")
+}
+
 /// draft-ietf-webtrans-http2-15: クライアント → サーバー bidi ストリームへの送信をサーバーがエコーし、
 /// クライアントで同じデータを受信できることを確認する。
 #[tokio::test]
@@ -616,6 +637,129 @@ async fn test_wt_command_flush_error_not_masked_as_connection_closed() {
     let _connect_stream = perform_connect(&mut client).await;
 
     server_task.await.expect("server join");
+}
+
+/// ローカル開始 bidi ストリームの自動ウィンドウ拡張が
+/// `initial_max_stream_data_bidi_local` を基準に動作することを確認する
+/// (draft-ietf-webtrans-http2-15 Section 11.2)。
+#[tokio::test]
+async fn test_wt_local_bidi_window_grows_with_asymmetric_limits() {
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("アドレスのパースに失敗した"),
+        tls,
+        asymmetric_server_limits(),
+    )
+    .await
+    .expect("サーバーのバインドに失敗した");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続の受け入れに失敗した");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let mut session = req
+            .accept(WtConfig::default(), None, None)
+            .await
+            .expect("WebTransport セッションの受け入れに失敗した");
+
+        // ローカル開始 bidi を開き、クライアントへストリームを知らせる
+        let bidi = session
+            .open_bidi()
+            .await
+            .expect("bidi ストリームを開けない");
+        bidi.send(b"hello".to_vec(), false)
+            .await
+            .expect("hello の送信に失敗した");
+        // クライアントのデータ受信で maybe_grow_stream_window が動く
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗した");
+    let connect_stream = perform_connect(&mut client).await;
+
+    // サーバーが広告する非対称値を peer_config に反映する
+    // (asymmetric_server_limits の bidi_local / bidi_remote と一致させること)
+    let peer_config = WtConfig {
+        initial_max_stream_data_bidi_local: 64 * 1024,
+        initial_max_stream_data_bidi_remote: 0,
+        ..WtConfig::default()
+    };
+    let mut wt_client = WtSession::client(WtConfig::default(), peer_config);
+    wt_client.initiate().expect("セッション開始に失敗した");
+
+    // サーバーが開始した bidi ストリーム (クライアント視点ではピア開始) を認識する
+    let mut bidi_id = None;
+    for _ in 0..50 {
+        let ev = tokio::time::timeout(Duration::from_secs(5), client.next_event())
+            .await
+            .expect("クライアントイベントの受信がタイムアウトした")
+            .expect("クライアントイベントの受信に失敗した");
+        if let Event::DataReceived {
+            stream_id, data, ..
+        } = ev
+            && stream_id == connect_stream
+        {
+            wt_client.feed(&data).expect("feed に失敗した");
+            wt_client.process().expect("process に失敗した");
+            while let Some(wt_ev) = wt_client.poll_event() {
+                if let WtEvent::StreamOpened { stream_id, .. } = wt_ev {
+                    bidi_id = Some(stream_id);
+                }
+            }
+        }
+        if bidi_id.is_some() {
+            break;
+        }
+    }
+    let bidi_id = bidi_id.expect("サーバー開始 bidi ストリームを認識できなかった");
+
+    let before = wt_client
+        .stream(bidi_id)
+        .expect("ストリームが存在しない")
+        .send_available();
+    assert_eq!(before, 64 * 1024, "初期送信ウィンドウは bidi_local のはず");
+
+    // bidi_local (64KiB) の半分を超えるデータを送り、ウィンドウ拡張を誘発する
+    wt_client
+        .send_stream_data(bidi_id, &vec![0u8; 40 * 1024], false)
+        .expect("40KiB の送信に失敗した");
+    let out = wt_client.poll_output().expect("出力が無い");
+    client
+        .send_data(connect_stream, out, false)
+        .await
+        .expect("データの送信に失敗した");
+
+    // サーバーの WT_MAX_STREAM_DATA を処理して送信ウィンドウが増えることを確認する
+    let mut grown = false;
+    for _ in 0..50 {
+        let ev = tokio::time::timeout(Duration::from_secs(5), client.next_event())
+            .await
+            .expect("クライアントイベントの受信がタイムアウトした")
+            .expect("クライアントイベントの受信に失敗した");
+        if let Event::DataReceived {
+            stream_id, data, ..
+        } = ev
+            && stream_id == connect_stream
+        {
+            wt_client.feed(&data).expect("feed に失敗した");
+            wt_client.process().expect("process に失敗した");
+            while wt_client.poll_event().is_some() {}
+            if wt_client
+                .stream(bidi_id)
+                .expect("ストリームが存在しない")
+                .send_available()
+                > before
+            {
+                grown = true;
+                break;
+            }
+        }
+    }
+    assert!(grown, "サーバー開始 bidi の送信ウィンドウが拡張されるはず");
+    server_task.await.expect("サーバータスクの終了に失敗した");
 }
 
 /// STOP_SENDING 送信後にピアから在路データが届いてもセッションが継続し、
