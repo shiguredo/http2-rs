@@ -2,8 +2,9 @@
 //!
 //! Sans I/O パターンで HTTP/2 接続を管理する。
 
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
+use crate::bounded_set::BoundedSet;
 use crate::error::{Error, ErrorCode, Result};
 use crate::event::Event;
 use crate::flow_control::{FlowControl, MAX_WINDOW_SIZE};
@@ -45,41 +46,10 @@ pub enum ConnectionState {
     Closed,
 }
 
-/// 上限付きクローズ済みストリーム ID 集合
+/// クローズ済みストリーム ID 集合の上限
 ///
-/// ストリーム ID は単調増加するため、上限を超えた場合は最も小さいエントリ
-/// （最も古いストリーム ID）を削除する。
-#[derive(Debug)]
-struct BoundedClosedStreams {
-    inner: BTreeSet<u32>,
-    max_size: usize,
-}
-
-impl BoundedClosedStreams {
-    const DEFAULT_MAX_SIZE: usize = 10000;
-
-    fn new() -> Self {
-        Self {
-            inner: BTreeSet::new(),
-            max_size: Self::DEFAULT_MAX_SIZE,
-        }
-    }
-
-    fn insert(&mut self, stream_id: u32) {
-        self.inner.insert(stream_id);
-        while self.inner.len() > self.max_size {
-            let oldest = *self
-                .inner
-                .first()
-                .expect("inner is non-empty because len > max_size > 0");
-            self.inner.remove(&oldest);
-        }
-    }
-
-    fn contains(&self, stream_id: &u32) -> bool {
-        self.inner.contains(stream_id)
-    }
-}
+/// 上限を超えた場合は最も小さい ID を追い出す。
+const CLOSED_STREAMS_MAX_SIZE: usize = 10000;
 
 /// HTTP/2 接続
 #[derive(Debug)]
@@ -101,7 +71,7 @@ pub struct Connection {
     /// RFC 9113 Section 5.1: マップから削除されたストリームの ID を追跡する。
     /// RST_STREAM 送信後や END_STREAM による正常クローズ後に到着する遅延フレームを
     /// 接続エラーではなく破棄として処理するために使用する。
-    closed_streams: BoundedClosedStreams,
+    closed_streams: BoundedSet<u32>,
     /// 次のストリーム ID
     next_stream_id: u32,
     /// 最後に受信したストリーム ID
@@ -243,7 +213,7 @@ impl Connection {
             remote_settings: Settings::new(),
             flow_control,
             streams: HashMap::new(),
-            closed_streams: BoundedClosedStreams::new(),
+            closed_streams: BoundedSet::new(CLOSED_STREAMS_MAX_SIZE),
             next_stream_id,
             last_recv_stream_id: 0,
             last_successful_stream_id: 0,
@@ -2095,71 +2065,6 @@ mod tests {
                 assert!(e.is_stream_error());
                 assert_eq!(e.error_code(), Some(ErrorCode::RefusedStream));
             }
-        }
-    }
-
-    mod bounded_closed_streams {
-        use super::BoundedClosedStreams;
-
-        #[test]
-        fn oldest_entry_evicted_on_overflow() {
-            let mut set = BoundedClosedStreams::new();
-
-            // 上限 (10000) まで挿入する
-            for i in 0..BoundedClosedStreams::DEFAULT_MAX_SIZE {
-                set.insert(i as u32);
-            }
-
-            // 上限まで挿入されたエントリは全て含まれている
-            for i in 0..BoundedClosedStreams::DEFAULT_MAX_SIZE {
-                assert!(
-                    set.contains(&(i as u32)),
-                    "上限以内のエントリ {i} は含まれていること"
-                );
-            }
-
-            // 上限 + 1 のエントリを挿入すると、最も古いエントリ (0) が削除される
-            set.insert(BoundedClosedStreams::DEFAULT_MAX_SIZE as u32);
-
-            assert!(
-                !set.contains(&0),
-                "上限超過により最も古いエントリ 0 は削除されていること"
-            );
-            assert!(set.contains(&1), "2 番目に古いエントリ 1 は残っていること");
-            assert!(
-                set.contains(&(BoundedClosedStreams::DEFAULT_MAX_SIZE as u32)),
-                "最新のエントリは含まれていること"
-            );
-        }
-
-        #[test]
-        fn oldest_entries_evicted_continuously_past_limit() {
-            let mut set = BoundedClosedStreams::new();
-
-            // 上限まで挿入
-            for i in 0..BoundedClosedStreams::DEFAULT_MAX_SIZE {
-                set.insert(i as u32);
-            }
-
-            // 上限を超えてさらに 100 件挿入する
-            let extra = 100;
-            for i in 0..extra {
-                set.insert((BoundedClosedStreams::DEFAULT_MAX_SIZE + i) as u32);
-            }
-
-            // 0..extra のエントリは全て削除されている
-            for i in 0..extra {
-                assert!(
-                    !set.contains(&(i as u32)),
-                    "上限超過により古いエントリ {i} は削除されていること"
-                );
-            }
-
-            // extra 以降のエントリは残っている
-            assert!(
-                set.contains(&(extra as u32)),
-                "extra 番目のエントリは残っていること"
-            );
         }
     }
 }

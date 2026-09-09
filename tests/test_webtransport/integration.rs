@@ -1087,3 +1087,144 @@ fn flow_control_cumulative_count_works_after_stream_removal() {
         shiguredo_http2::webtransport::WtErrorKind::FlowControlError
     );
 }
+
+/// FIN でクローズ済みのピア開始 uni ストリームへの後続 WT_STREAM が
+/// `stream_state_error` になることを確認する
+/// (draft-ietf-webtrans-http2-15 Section 6.4 の MUST)。
+#[test]
+fn wt_stream_after_fin_closed_peer_uni_stream_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // ピア (クライアント) 開始 uni ストリーム (ID=2) に FIN 付きデータを送る
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: 2,
+        data: b"data".to_vec(),
+        fin: true,
+    });
+    session.feed(&encoder.take()).expect("feed できるはず");
+    session.process().expect("process できるはず");
+
+    // poll_event で FIN を読み取るとストリームが削除・記録される
+    while let Some(event) = session.poll_event() {
+        if let WtEvent::StreamData { fin: true, .. } = event {
+            break;
+        }
+    }
+    assert!(
+        session.stream(2).is_none(),
+        "FIN 後のストリームは削除されるはず"
+    );
+
+    // 同じ ID への後続 WT_STREAM は stream_state_error になる
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: 2,
+        data: b"again".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed できるはず");
+    let err = session
+        .process()
+        .expect_err("クローズ済みストリームへの WT_STREAM は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError,
+        "予期しないエラー種別: {err}"
+    );
+
+    // クローズ済みストリームの StreamOpened が再発行されないこと
+    while let Some(event) = session.poll_event() {
+        assert!(
+            !matches!(event, WtEvent::StreamOpened { .. }),
+            "クローズ済みストリームの StreamOpened が再発行されてはならない"
+        );
+    }
+}
+
+/// リセットでクローズ済みのピア開始 uni ストリームへの後続 WT_STREAM が
+/// `stream_state_error` になることを確認する
+/// (draft-ietf-webtrans-http2-15 Section 6.4 の MUST)。
+#[test]
+fn wt_stream_after_reset_closed_peer_uni_stream_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // ピア開始 uni ストリーム (ID=2) にデータを送る (FIN なし)
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: 2,
+        data: b"data".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed できるはず");
+    session.process().expect("process できるはず");
+
+    // WT_RESET_STREAM でリセットする (reliable_size は受信済みバイト数と一致必須)
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtResetStream {
+        stream_id: 2,
+        error_code: 0,
+        reliable_size: 4,
+    });
+    session.feed(&encoder.take()).expect("feed できるはず");
+    session.process().expect("process できるはず");
+    assert!(
+        session.stream(2).is_none(),
+        "リセット後のストリームは削除されるはず"
+    );
+
+    // ここまでのイベント (初回 StreamOpened / StreamReset) をドレインする
+    while session.poll_event().is_some() {}
+
+    // 同じ ID への後続 WT_STREAM は stream_state_error になる
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: 2,
+        data: b"again".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed できるはず");
+    let err = session
+        .process()
+        .expect_err("クローズ済みストリームへの WT_STREAM は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError,
+        "予期しないエラー種別: {err}"
+    );
+
+    // クローズ済みストリームの StreamOpened が再発行されないこと
+    while let Some(event) = session.poll_event() {
+        assert!(
+            !matches!(event, WtEvent::StreamOpened { .. }),
+            "クローズ済みストリームの StreamOpened が再発行されてはならない"
+        );
+    }
+}
+
+/// 記録に無い新規ピア開始ストリームへの WT_STREAM は従来どおり
+/// `StreamOpened` を生成することを確認する。
+#[test]
+fn wt_stream_for_new_peer_stream_still_opens() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: 6,
+        data: b"new".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed できるはず");
+    session.process().expect("process できるはず");
+
+    let mut got_opened = false;
+    while let Some(event) = session.poll_event() {
+        if let WtEvent::StreamOpened { stream_id: 6, .. } = event {
+            got_opened = true;
+        }
+    }
+    assert!(got_opened, "新規ストリームは StreamOpened を生成するはず");
+}
