@@ -132,6 +132,15 @@ where
         self.flush().await
     }
 
+    /// 指定ストリームに未送信の送信データまたは保留中の END_STREAM があるかを返す
+    ///
+    /// `send_data` は送信ウィンドウ枯渇時にデータをバッファへ積むだけで `Ok(())` を
+    /// 返すことがある。本メソッドで実際に送信が完了したかを判定できる。
+    #[must_use]
+    pub fn has_pending_send_data(&self, stream_id: StreamId) -> bool {
+        self.inner.has_pending_send_data(stream_id)
+    }
+
     /// ストリームをリセット
     pub async fn reset_stream(&mut self, stream_id: StreamId, error_code: ErrorCode) -> Result<()> {
         self.inner.reset_stream(stream_id, error_code)?;

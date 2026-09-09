@@ -6,6 +6,7 @@ use std::time::Duration;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
+use shiguredo_http2::WindowSize;
 use shiguredo_http2::webtransport::{
     WtConfig, WtEvent, WtSession, stream::stream_id as wt_stream_id,
 };
@@ -2175,4 +2176,54 @@ async fn test_wt_scheme_http_rejected() {
     );
 
     server_task.abort();
+}
+
+/// 送信ウィンドウ枯渇時に close() が Ok を返しても WT_CLOSE_SESSION / END_STREAM が
+/// 送信されない問題を修正したことの確認
+///
+/// クライアントが SETTINGS_INITIAL_WINDOW_SIZE=0 を広告すると、サーバーの CONNECT
+/// ストリーム送信ウィンドウが 0 になり、close() の出力は送信バッファに滞留する。
+/// この場合 close() はエラーを返し、呼び出し側が「送信されていない」ことを認識できる。
+#[tokio::test]
+async fn test_wt_close_errors_when_output_cannot_be_sent() {
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("アドレスのパースに失敗した"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("サーバーのバインドに失敗した");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続の受け入れに失敗した");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let session = req
+            .accept(WtConfig::default(), None, None)
+            .await
+            .expect("WebTransport セッションの受け入れに失敗した");
+        // 送信ウィンドウ 0 のため close 出力が送信されず、エラーが返る
+        let err = session
+            .close(0, "")
+            .await
+            .expect_err("送信できない場合の close はエラーになるはず");
+        assert!(
+            matches!(err, tokio_http2::Error::ConnectionClosed),
+            "ConnectionClosed が返るはず: {err}"
+        );
+    });
+
+    // クライアントが INITIAL_WINDOW_SIZE=0 を広告する
+    let client_limits = Limits::builder()
+        .initial_window_size(WindowSize::from_static(0))
+        .build()
+        .expect("Limits の構築に失敗した");
+    let mut client = Client::connect_insecure(addr, "localhost", client_limits)
+        .await
+        .expect("接続に失敗した");
+    let _connect_stream = perform_connect(&mut client).await;
+    // WINDOW_UPDATE を送らないままサーバーの処理完了を待つ
+    server_task.await.expect("サーバータスクの終了に失敗した");
 }

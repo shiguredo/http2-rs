@@ -468,7 +468,9 @@ impl WtServerSession {
     /// driver が既に終了している場合は `Error::ConnectionClosed` を返す。
     /// セッションが既に閉じている場合は `Error::WebTransport` を返す。
     /// 出力フラッシュや END_STREAM 送信に失敗した場合は、その実際のエラー
-    /// (I/O / プロトコルエラー等) を返す。
+    /// (I/O / プロトコルエラー等) を返す。送信ウィンドウ枯渇等で WT_CLOSE_SESSION /
+    /// END_STREAM が送信バッファに残ったままの場合も `Error::ConnectionClosed` を返す
+    /// (driver は終了し、未送信の出力は破棄される)。
     pub async fn close(mut self, error_code: u32, reason: &str) -> Result<()> {
         let (ack, rx) = oneshot::channel();
         self.cmd_tx
@@ -583,6 +585,14 @@ impl WtSessionHandle {
     }
 
     /// セッションを `WT_CLOSE_SESSION` で終了する
+    ///
+    /// # Errors
+    ///
+    /// `WtServerSession::close` と同じ条件でエラーを返す。driver が既に終了している
+    /// 場合は `Error::ConnectionClosed`、セッションが既に閉じている場合は
+    /// `Error::WebTransport`、出力フラッシュや END_STREAM 送信に失敗した場合はその
+    /// 実際のエラーを返す。送信ウィンドウ枯渇等で WT_CLOSE_SESSION / END_STREAM が
+    /// 送信バッファに残ったままの場合も `Error::ConnectionClosed` を返す。
     pub async fn close(&self, error_code: u32, reason: &str) -> Result<()> {
         let (ack, rx) = oneshot::channel();
         self.cmd_tx
@@ -997,6 +1007,11 @@ impl DriverState {
                         .await
                     {
                         res = Err(e);
+                    } else if self.conn.has_pending_send_data(self.connect_stream_id) {
+                        // 送信ウィンドウ枯渇で出力がバッファに残ったままの場合は、
+                        // 呼び出し側が「実際には送信されていない」ことを認識できるよう
+                        // エラーを返す (driver 終了で出力は破棄される)。
+                        res = Err(Error::ConnectionClosed);
                     } else {
                         self.responded_end_stream_on_close = true;
                     }
@@ -1119,6 +1134,9 @@ impl DriverState {
                     self.conn
                         .send_data(self.connect_stream_id, vec![], true)
                         .await?;
+                    // 送信ウィンドウ枯渇で送信バッファに滞留データがある場合、
+                    // この END_STREAM も未送信のまま driver 終了で破棄され得る。
+                    // 受信側応答のため呼び出し側へ通知する手段がなく既知の制限である。
                     self.responded_end_stream_on_close = true;
                     return Err(Error::ConnectionClosed);
                 }
