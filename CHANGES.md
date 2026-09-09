@@ -27,5 +27,7 @@
   - @voluntas
 - [FIX] SETTINGS_INITIAL_WINDOW_SIZE の増加でストリーム送信ウィンドウが拡張された後、滞留していた送信 DATA をフラッシュする (RFC 9113 Section 6.9.2)
   - @voluntas
+- [FIX] `Connection::send_goaway` を複数回呼び出しても last-stream-id が増加しないようにする (RFC 9113 Section 6.8)
+  - @voluntas
 
 ### misc
