@@ -61,6 +61,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 | `start_stream(Vec<HeaderField>, end_stream)` | `Result<StreamId>` | リクエストを送信し新しい `StreamId` を返す (クライアント用) |
 | `send_response(StreamId, Vec<HeaderField>, end_stream)` | `Result<()>` | レスポンスヘッダーを送信 (サーバー用) |
 | `send_data(StreamId, Vec<u8>, end_stream)` | `Result<()>` | DATA フレームを送信 |
+| `has_pending_send_data(StreamId)` | `bool` | 指定ストリームに未送信の送信データまたは保留 END_STREAM があるか判定 |
 | `send_trailers(StreamId, Vec<HeaderField>)` | `Result<()>` | トレーラーを END_STREAM 付きで送信 |
 | `reset_stream(StreamId, ErrorCode)` | `Result<()>` | RST_STREAM を送信 |
 | `send_ping([u8; 8])` | `Result<()>` | PING を送信 |

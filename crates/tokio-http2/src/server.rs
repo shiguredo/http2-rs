@@ -123,6 +123,15 @@ impl ServerConnection {
         self.conn.send_data(stream_id, data, end_stream).await
     }
 
+    /// 指定ストリームに未送信の送信データまたは保留中の END_STREAM があるかを返す
+    ///
+    /// `send_data` は送信ウィンドウ枯渇時にデータをバッファへ積むだけで `Ok(())` を
+    /// 返すことがある。本メソッドで実際に送信が完了したかを判定できる。
+    #[must_use]
+    pub fn has_pending_send_data(&self, stream_id: StreamId) -> bool {
+        self.conn.has_pending_send_data(stream_id)
+    }
+
     /// イベントを取得
     pub fn poll_event(&mut self) -> Option<Event> {
         self.conn.poll_event()

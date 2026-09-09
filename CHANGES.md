@@ -13,6 +13,8 @@
 
 - [CHANGE] `WtConfig::apply_init` を削除し、WebTransport-Init のマージを `apply_init_as_peer` に一本化する (draft-ietf-webtrans-http2-15 Section 4.3.2)
   - @voluntas
+- [ADD] `shiguredo_http2::Connection` / `tokio_http2::Connection` / `tokio_http2::ServerConnection` に、ストリームの送信待ちデータの有無を返す `has_pending_send_data` を追加する
+  - @voluntas
 - [FIX] クローズ済みの WebTransport ストリームへの WT_STREAM を WT_STREAM_STATE_ERROR として拒否し、新規ストリームとして再作成されないようにする (draft-ietf-webtrans-http2-15 Section 6.4)
   - @voluntas
 - [FIX] STOP_SENDING 送信後にピアから在路データが届いても WebTransport セッションが abort されず、停止要求後の受信データをアプリへ配送しないようにする (RFC 9000 Section 3.5)
@@ -30,6 +32,8 @@
 - [FIX] `Connection::send_goaway` を複数回呼び出しても last-stream-id が増加しないようにする (RFC 9113 Section 6.8)
   - @voluntas
 - [FIX] 送信バッファ容量をピアの SETTINGS_INITIAL_WINDOW_SIZE から分離して 65535 に固定し、バッファ超過を接続エラーではなくストリームエラーとして返す。1 回の `send_data` で渡せるのは 65535 bytes までとなり、それ以上は呼び出し側で分割する必要がある (RFC 9113 Section 6.9)
+  - @voluntas
+- [FIX] 送信ウィンドウ枯渇時に `WtServerSession::close()` / `WtSessionHandle::close()` が Ok を返しても WT_CLOSE_SESSION / END_STREAM が送信されない場合はエラーを返し、呼び出し側が未送信を認識できるようにする (draft-ietf-webtrans-http2-15 Section 6.12)
   - @voluntas
 
 ### misc

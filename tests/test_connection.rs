@@ -5237,4 +5237,61 @@ mod reset_stream {
         }
         assert_eq!(sent_data, 65500, "滞留中の 65500 bytes が送信されるはず");
     }
+
+    /// `has_pending_send_data` が送信バッファの滞留データを検出すること
+    ///
+    /// (`pending_end_stream` 単独で true になる状態は公開 API 経由では作れないため、
+    /// 本テストは送信バッファ滞留のみを検証する)
+    #[test]
+    fn test_has_pending_send_data() {
+        let mut server = setup_server();
+        open_stream_on_server(&mut server, 1);
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // 存在しないストリーム ID は false
+        assert!(!server.has_pending_send_data(client_stream_id(999)));
+
+        // ストリーム生成直後は送信待ちなし
+        assert!(!server.has_pending_send_data(client_stream_id(1)));
+
+        // 送信ウィンドウ (65535) を使い切るまでは滞留しない
+        server
+            .send_data(client_stream_id(1), vec![0u8; 65535], false)
+            .expect("send_data は成功するはず");
+        assert!(
+            !server.has_pending_send_data(client_stream_id(1)),
+            "送信済みなら送信待ちなしのはず"
+        );
+
+        // ウィンドウ枯渇後のデータは滞留する
+        server
+            .send_data(client_stream_id(1), vec![0u8; 100], false)
+            .expect("send_data は成功するはず");
+        assert!(
+            server.has_pending_send_data(client_stream_id(1)),
+            "滞留データがあれば true のはず"
+        );
+
+        // WINDOW_UPDATE (ストリーム / 接続) で送信されると false に戻る
+        server
+            .feed(&encode_frame(&Frame::WindowUpdate(
+                WindowUpdateFrame::for_stream(
+                    NonZeroStreamId::from_static(1),
+                    WindowIncrement::from_static(100),
+                ),
+            )))
+            .expect("feed できるはず");
+        server.process().expect("process できるはず");
+        server
+            .feed(&encode_frame(&Frame::WindowUpdate(
+                WindowUpdateFrame::for_connection(WindowIncrement::from_static(100)),
+            )))
+            .expect("feed できるはず");
+        server.process().expect("process できるはず");
+        assert!(
+            !server.has_pending_send_data(client_stream_id(1)),
+            "送信後は false に戻るはず"
+        );
+    }
 }

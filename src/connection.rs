@@ -845,6 +845,19 @@ impl Connection {
         }
     }
 
+    /// 指定ストリームに未送信の送信データまたは保留中の END_STREAM があるかを返す
+    ///
+    /// `Connection::send_data` は送信ウィンドウ枯渇時にデータをバッファへ積むだけで
+    /// `Ok(())` を返すことがある。本メソッドは、送信が実際に完了したかを呼び出し側が
+    /// 判定するために使用する。ストリームが存在しない (未作成または削除済み) 場合は
+    /// false を返す。
+    #[must_use]
+    pub fn has_pending_send_data(&self, stream_id: StreamId) -> bool {
+        self.streams
+            .get(&stream_id.as_u32())
+            .is_some_and(|stream| !stream.send_buffer().is_empty() || stream.pending_end_stream())
+    }
+
     /// ストリームをリセットする
     ///
     /// 生成される `Event::StreamReset` の `connection_window_consumed` は常に 0 であり、

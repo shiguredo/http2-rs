@@ -1,7 +1,7 @@
 # 送信ウィンドウ枯渇時に close() が Ok を返しても WT_CLOSE_SESSION / END_STREAM が送信されない問題を修正する
 
 - Created: 2026-08-24
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-10
 - Branch: feature/fix-wt-close-silent-not-send
 - Polished: 2026-09-09
 
@@ -36,3 +36,11 @@
 - 正常時 (ウィンドウに余裕がある場合) は close() が Ok を返し、WT_CLOSE_SESSION と END_STREAM がピアへ届くこと
 - 送信待ちデータの有無を返す新規公開 API のテストが追加されていること
 - `cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/connection.rs` の `Connection` に、指定ストリームに未送信の送信データまたは保留中の END_STREAM があるかを返す公開メソッド `has_pending_send_data` を追加し、tokio-http2 の `Connection` / `ServerConnection` から委譲した
+- `crates/tokio-http2/src/webtransport.rs` の `DriverState::handle_cmd` の Close 処理で、`flush_wt_output()` と `send_data(connect_stream_id, vec![], true)` の後に `has_pending_send_data` を検査し、出力が送信バッファに残っていれば ack に `Error::ConnectionClosed` を載せるようにした。呼び出し側は「実際には送信されていない」ことを認識できる
+- `WtServerSession::close()` / `WtSessionHandle::close()` の doc に、送信バッファ滞留時に `Error::ConnectionClosed` を返すことを追記した。受信側の WT_CLOSE_SESSION 応答は呼び出し側へ通知する手段がないため既知の制限としてコメントを追加した
+- `tests/test_connection.rs` に `has_pending_send_data` の判定 (滞留の有無、存在しないストリーム)、`crates/tokio-http2/tests/test_webtransport.rs` にクライアントが INITIAL_WINDOW_SIZE=0 を広告した状態で `close()` がエラーを返す E2E テストを追加した
+- `CHANGES.md` の `## develop` に `[ADD]` (公開 API 追加) と `[FIX]` エントリを追加し、`skills/shiguredo-http2/SKILL.md` に `has_pending_send_data` を追記した
