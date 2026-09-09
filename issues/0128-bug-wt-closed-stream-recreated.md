@@ -3,7 +3,7 @@
 - Created: 2026-08-24
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-wt-closed-stream-recreated
-- Polished: 2026-08-28
+- Polished: 2026-09-09
 
 ## 目的
 
@@ -24,10 +24,11 @@ tokio ドライバ (`crates/tokio-http2/src/webtransport.rs` の `DriverState::h
 - クローズ済みストリーム ID を記録する仕組みを追加し (`remove_if_closed` で削除する際に ID を保持)、`handle_stream_data` でクローズ済み ID への WT_STREAM を `WtError::stream_state_error` で拒否する
 - `WT_RESET_STREAM` 側と同様のエラー処理に揃える
 - クローズ済み ID の記録は無制限に肥大化しないよう上限を持つ (HTTP/2 側の `BoundedClosedStreams` と同様の設計を参考にする)。上限超過で追い出された ID への WT_STREAM は再作成を許す既知の制限であり、完了条件は「記録に残っている」クローズ済み ID を対象とする
+- テストにはピア開始ストリームを使う。ローカル開始ストリーム ID は `handle_stream_data` の `is_peer_initiated` 検証で既に `stream_state_error` になるため、ローカル開始ストリームを使うと修正前でも完了条件を満たしてしまい回帰テストにならない。ピア開始 uni ストリームの FIN、またはピア開始 bidi ストリームの両方向クローズで `remove_if_closed` により削除・記録された ID を使う
 
 ## 完了条件
 
-- FIN でクローズ済みで、記録に残っているストリーム ID への WT_STREAM 受信が `stream_state_error` を返すこと
-- リセットでクローズ済みで、記録に残っているストリーム ID への WT_STREAM 受信が `stream_state_error` を返すこと
+- FIN でクローズ済みで、記録に残っているピア開始ストリーム ID への WT_STREAM 受信が `stream_state_error` を返すこと (修正前は新規ストリームとして再作成されること)
+- リセットでクローズ済みで、記録に残っているピア開始ストリーム ID への WT_STREAM 受信が `stream_state_error` を返すこと (修正前は新規ストリームとして再作成されること)
 - 新規ストリーム ID への WT_STREAM は従来どおり `StreamOpened` を生成すること
 - テストが追加され、`cargo test --all` が通過すること
