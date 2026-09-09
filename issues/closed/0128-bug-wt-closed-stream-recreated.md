@@ -1,7 +1,7 @@
 # クローズ済みストリームへの WT_STREAM が新規ストリームとして再作成される
 
 - Created: 2026-08-24
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-09
 - Branch: feature/fix-wt-closed-stream-recreated
 - Polished: 2026-09-09
 
@@ -23,7 +23,7 @@ tokio ドライバ (`crates/tokio-http2/src/webtransport.rs` の `DriverState::h
 
 - クローズ済みストリーム ID を記録する仕組みを追加し (`remove_if_closed` で削除する際に ID を保持)、`handle_stream_data` でクローズ済み ID への WT_STREAM を `WtError::stream_state_error` で拒否する
 - `WT_RESET_STREAM` 側と同様のエラー処理に揃える
-- クローズ済み ID の記録は無制限に肥大化しないよう上限を持つ (HTTP/2 側の `BoundedClosedStreams` と同様の設計を参考にする)。上限超過で追い出された ID への WT_STREAM は再作成を許す既知の制限であり、完了条件は「記録に残っている」クローズ済み ID を対象とする
+- クローズ済み ID の記録は無制限に肥大化しないよう上限を持つ (HTTP/2 側の上限付きクローズ済みストリーム集合と同様の設計を参考にする。実装では汎用 `BoundedSet<T>` として共有する)。上限超過で追い出された ID への WT_STREAM は再作成を許す既知の制限であり、完了条件は「記録に残っている」クローズ済み ID を対象とする
 - テストにはピア開始ストリームを使う。ローカル開始ストリーム ID は `handle_stream_data` の `is_peer_initiated` 検証で既に `stream_state_error` になるため、ローカル開始ストリームを使うと修正前でも完了条件を満たしてしまい回帰テストにならない。ピア開始 uni ストリームの FIN、またはピア開始 bidi ストリームの両方向クローズで `remove_if_closed` により削除・記録された ID を使う
 
 ## 完了条件
@@ -32,3 +32,10 @@ tokio ドライバ (`crates/tokio-http2/src/webtransport.rs` の `DriverState::h
 - リセットでクローズ済みで、記録に残っているピア開始ストリーム ID への WT_STREAM 受信が `stream_state_error` を返すこと (修正前は新規ストリームとして再作成されること)
 - 新規ストリーム ID への WT_STREAM は従来どおり `StreamOpened` を生成すること
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/webtransport.rs` の `WtSession` に、クローズ済みストリーム ID を保持する上限付き集合 `closed_streams` を追加した。`remove_if_closed` でストリームを削除する際に ID を記録し、`handle_stream_data` の冒頭で記録済み ID への WT_STREAM を `WtError::stream_state_error` で拒否する (draft-ietf-webtrans-http2-15 Section 6.4)
+- 上限付き集合のロジックが HTTP/2 側と同一だったため、`src/bounded_set.rs` に汎用の `BoundedSet<T>` を抽出し、`src/connection.rs` のクローズ済みストリーム集合と `WtSession` の両方で共有するようにした
+- `tests/test_webtransport/integration.rs` に、FIN でクローズ済み・リセットでクローズ済みのピア開始 uni ストリームへの後続 WT_STREAM が `stream_state_error` になり `StreamOpened` が再発行されないこと、新規ピア開始ストリームは従来どおり `StreamOpened` を生成することを検証するテストを追加した
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した

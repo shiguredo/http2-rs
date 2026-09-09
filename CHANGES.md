@@ -11,4 +11,7 @@
 
 ## develop
 
+- [FIX] クローズ済みの WebTransport ストリームへの WT_STREAM を WT_STREAM_STATE_ERROR として拒否し、新規ストリームとして再作成されないようにする (draft-ietf-webtrans-http2-15 Section 6.4)
+  - @voluntas
+
 ### misc

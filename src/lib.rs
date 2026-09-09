@@ -35,6 +35,7 @@ pub mod stream_id;
 pub mod validation;
 pub mod webtransport;
 
+pub(crate) mod bounded_set;
 pub(crate) mod syntax;
 
 pub use connection::{Connection, ConnectionState, Role};

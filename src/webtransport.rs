@@ -30,6 +30,7 @@ pub mod varint;
 
 use std::collections::{HashMap, VecDeque};
 
+use crate::bounded_set::BoundedSet;
 use crate::connection::Role;
 use crate::webtransport::capsule::{MAX_APPLICATION_ERROR_CODE, MAX_CLOSE_REASON_LEN};
 
@@ -231,6 +232,12 @@ impl WtConfig {
     }
 }
 
+/// クローズ済み WebTransport ストリーム ID 集合の上限
+///
+/// 上限を超えた場合は最も小さい ID を追い出す。追い出された ID への
+/// WT_STREAM は再作成を許す既知の制限がある。
+const CLOSED_STREAMS_MAX_SIZE: usize = 10000;
+
 /// WebTransport セッション (Sans I/O)
 ///
 /// HTTP/2 CONNECT ストリーム上で動作する WebTransport セッションを管理する。
@@ -246,6 +253,11 @@ pub struct WtSession {
     state: WtSessionState,
     /// ストリーム一覧
     streams: HashMap<WtStreamId, WtStream>,
+    /// クローズ済みストリーム ID の集合
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 6.4: クローズ済みストリームへの
+    /// WT_STREAM 受信を拒否するために使用する。
+    closed_streams: BoundedSet<WtStreamId>,
     /// フロー制御
     flow_control: WtFlowControl,
     /// Capsule デコーダー
@@ -299,6 +311,7 @@ impl WtSession {
             peer_config,
             state: WtSessionState::Initial,
             streams: HashMap::new(),
+            closed_streams: BoundedSet::new(CLOSED_STREAMS_MAX_SIZE),
             flow_control,
             capsule_decoder: CapsuleDecoder::new(),
             capsule_encoder: CapsuleEncoder::new(),
@@ -1011,6 +1024,15 @@ impl WtSession {
         data: Vec<u8>,
         fin: bool,
     ) -> WtResult<()> {
+        // draft-ietf-webtrans-http2-15 Section 6.4: クローズ済みまたはリセット済みの
+        // ストリームへの WT_STREAM は WT_STREAM_STATE_ERROR のストリームエラーとする。
+        // 記録から追い出された ID は対象外 (既知の制限)。
+        if self.closed_streams.contains(&stream_id) {
+            return Err(WtError::stream_state_error(format!(
+                "WT_STREAM received for closed stream {stream_id}"
+            )));
+        }
+
         let is_new_stream = !self.streams.contains_key(&stream_id);
 
         // draft-ietf-webtrans-http2-15 Section 6.4: empty capsule チェック
@@ -1108,9 +1130,12 @@ impl WtSession {
     /// draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 の順序配送により
     /// ACK が不要なため、終端状態への遷移は即座に行われる。
     /// 閉じたストリームの状態オブジェクトを保持し続ける必要はない。
+    /// 削除した ID は `closed_streams` に記録し、後続 WT_STREAM を拒否できるようにする
+    /// (draft-ietf-webtrans-http2-15 Section 6.4)。
     fn remove_if_closed(&mut self, stream_id: WtStreamId) {
         if self.streams.get(&stream_id).is_some_and(|s| s.is_closed()) {
             self.streams.remove(&stream_id);
+            self.closed_streams.insert(stream_id);
         }
     }
 }
