@@ -11,6 +11,7 @@ pub use state::{StateMachine, StreamState};
 use crate::flow_control::FlowControl;
 use crate::frame::StreamId;
 use crate::hpack::HeaderField;
+use crate::settings::DEFAULT_INITIAL_WINDOW_SIZE;
 
 /// ストリーム
 #[derive(Debug)]
@@ -76,6 +77,9 @@ impl Stream {
     ///
     /// RFC 9113 Section 6.5.2 / Section 6.9.2: 送信ウィンドウはリモートの initial_window_size、
     /// 受信ウィンドウはローカルの initial_window_size で初期化する。
+    ///
+    /// 送信バッファ容量は `DEFAULT_INITIAL_WINDOW_SIZE` 固定であり、
+    /// `send_initial_window_size` には依存しない (RFC 9113 Section 6.9 の保留モデル)。
     #[must_use]
     pub fn new(id: StreamId, send_initial_window_size: u32, recv_initial_window_size: u32) -> Self {
         Self {
@@ -87,7 +91,9 @@ impl Stream {
             ),
             headers: Vec::new(),
             recv_buffer: RecvBuffer::new(recv_initial_window_size as usize),
-            send_buffer: SendBuffer::new(send_initial_window_size as usize),
+            // 送信バッファ容量はピアの初期ウィンドウとは独立の固定値とする。
+            // ピアが SETTINGS_INITIAL_WINDOW_SIZE=0 を広告しても容量が 0 にならない。
+            send_buffer: SendBuffer::new(DEFAULT_INITIAL_WINDOW_SIZE as usize),
             pending_end_stream: false,
             initial_headers_received: false,
             expected_content_length: None,

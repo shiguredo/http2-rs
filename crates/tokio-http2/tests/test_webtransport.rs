@@ -591,8 +591,8 @@ async fn test_wt_close_errors_when_driver_dead() {
 /// コマンド処理中の出力フラッシュ失敗が `Error::ConnectionClosed` に丸められず、
 /// 呼び出し側へ実際の失敗原因が伝わることを確認する。
 ///
-/// クライアントが広告する初期ウィンドウ (デフォルト 65535) を超える DATAGRAM を
-/// 送信すると、driver の出力フラッシュが sans-io 層のフロー制御エラー
+/// 送信バッファの固定容量 (65535) を超える DATAGRAM を
+/// 送信すると、driver の出力フラッシュが sans-io 層のエラー
 /// (send buffer full) で失敗する。
 #[tokio::test]
 async fn test_wt_command_flush_error_not_masked_as_connection_closed() {
@@ -615,7 +615,7 @@ async fn test_wt_command_flush_error_not_masked_as_connection_closed() {
             .await
             .expect("wt accept");
 
-        // 初期ウィンドウを超える DATAGRAM を送ると、出力フラッシュが失敗する
+        // 送信バッファの固定容量 (65535) を超える DATAGRAM を送ると、出力フラッシュが失敗する
         let err = session
             .send_datagram(vec![0u8; 200_000])
             .await

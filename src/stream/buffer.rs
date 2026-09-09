@@ -33,6 +33,15 @@ impl SendBuffer {
         data.len() - to_push
     }
 
+    /// 指定したサイズのデータを追加できるかどうかを返す
+    ///
+    /// 入りきらない場合は `false` を返す。呼び出し側は `false` の場合に `push` を
+    /// 呼ばないことで部分挿入を避けられる。
+    #[must_use]
+    pub(crate) fn can_push(&self, size: usize) -> bool {
+        self.data.len().saturating_add(size) <= self.max_size
+    }
+
     /// バッファからデータを取り出す
     ///
     /// 指定したサイズまでのデータを取り出す。

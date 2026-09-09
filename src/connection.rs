@@ -632,6 +632,15 @@ impl Connection {
     /// 送信できないデータは内部バッファにキューイングされ、
     /// WINDOW_UPDATE 受信時または SETTINGS_INITIAL_WINDOW_SIZE の増加時に
     /// 自動的に送信される。
+    ///
+    /// 送信バッファの容量はピアの初期ウィンドウとは独立の固定値 (65535) であり、
+    /// 1 回の呼び出しで渡せる `data` はこの容量までに限られる。
+    ///
+    /// # Errors
+    ///
+    /// 送信バッファの固定容量を超える `data` は全量拒否され、
+    /// `ErrorKind::StreamError` (`FlowControlError`) を返す。部分挿入は行わないため
+    /// 呼び出し側で分割して再送できる。
     pub fn send_data(
         &mut self,
         stream_id: StreamId,
@@ -682,15 +691,16 @@ impl Connection {
             .get_mut(&stream_id)
             .ok_or_else(|| Error::stream_error(ErrorCode::StreamClosed, "stream not found"))?;
 
-        // 送信バッファにデータを追加
-        let remaining = stream.send_buffer_mut().push(&data);
-        if remaining > 0 {
-            // バッファが満杯の場合はエラー
-            return Err(Error::connection_error(
+        // 送信バッファに全量を追加できるか先に検査し、部分挿入を避ける (原子性)。
+        // ローカルな資源上限であり、接続全体を GOAWAY で落とす必要はないため
+        // ストリームエラーとする。
+        if !stream.send_buffer().can_push(data.len()) {
+            return Err(Error::stream_error(
                 ErrorCode::FlowControlError,
                 "send buffer full",
             ));
         }
+        stream.send_buffer_mut().push(&data);
 
         // end_stream フラグを記録
         if end_stream {
