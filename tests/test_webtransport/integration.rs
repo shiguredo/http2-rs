@@ -1228,3 +1228,53 @@ fn wt_stream_for_new_peer_stream_still_opens() {
     }
     assert!(got_opened, "新規ストリームは StreamOpened を生成するはず");
 }
+
+/// Closed 状態では後続の capsule を無視し、新規ストリーム生成・イベント送出・
+/// エラー化を行わないこと (後続 capsule の扱いは H2 draft に規定がなく実装判断。
+/// WT_CLOSE_SESSION の受信で Closed へ遷移することは Section 6.12)。
+#[test]
+fn closed_session_ignores_subsequent_capsules() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // 同一 DATA フレーム内で WT_CLOSE_SESSION → WT_STREAM → Datagram →
+    // 未知ストリームへの WT_RESET_STREAM の順に届く
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtCloseSession {
+        error_code: 0,
+        reason: String::new(),
+    });
+    encoder.encode(&Capsule::WtStream {
+        stream_id: 2,
+        data: b"ignored".to_vec(),
+        fin: false,
+    });
+    encoder.encode(&Capsule::Datagram {
+        data: b"ignored".to_vec(),
+    });
+    encoder.encode(&Capsule::WtResetStream {
+        stream_id: 999,
+        error_code: 0,
+        reliable_size: 0,
+    });
+    session.feed(&encoder.take()).expect("feed できるはず");
+    session
+        .process()
+        .expect("Closed 後の capsule は無視され process は成功するはず");
+
+    assert!(session.is_closed(), "WT_CLOSE_SESSION で Closed になるはず");
+    assert!(
+        session.stream(2).is_none(),
+        "Closed 後の WT_STREAM で新規ストリームが生成されてはならない"
+    );
+
+    // SessionClosed が 1 回だけ送出され、他のイベントが送出されないこと
+    let mut closed_count = 0;
+    while let Some(event) = session.poll_event() {
+        match event {
+            WtEvent::SessionClosed { .. } => closed_count += 1,
+            other => panic!("Closed 後に想定外のイベントが送出された: {other:?}"),
+        }
+    }
+    assert_eq!(closed_count, 1, "SessionClosed は 1 回だけ送出されるはず");
+}

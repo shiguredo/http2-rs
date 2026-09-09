@@ -19,5 +19,7 @@
   - @voluntas
 - [FIX] WebTransport ドライバの自動ウィンドウ拡張がローカル開始 bidi ストリームで `initial_max_stream_data_bidi_local` を基準に動作するようにする (draft-ietf-webtrans-http2-15 Section 11.2)
   - @voluntas
+- [FIX] WebTransport セッションが Closed 状態に遷移した後は受信 capsule を無視し、新規ストリームを生成しないようにする (draft-ietf-webtrans-http2-15 Section 6.12)
+  - @voluntas
 
 ### misc
