@@ -222,7 +222,8 @@ impl WtServerRequest {
 
         // draft-ietf-webtrans-http2-15 Section 4.3 (L509-L530) / Section 4.3.2 (L583-L590):
         // WebTransport-Init はクライアントが送信するヘッダーであり、クライアントの広告値を含む。
-        // ピア用 config には bl/br のマッピングが逆転するため apply_init_as_peer を使う。
+        // ピア用 config では bl → initial_max_stream_data_bidi_local、
+        // br → initial_max_stream_data_bidi_remote と対応するため apply_init_as_peer を使う。
         // パース失敗・型不一致・値範囲外は MUST 4xx 拒否。
         if let Some(bytes) = init_bytes {
             match WtInit::parse(&bytes) {

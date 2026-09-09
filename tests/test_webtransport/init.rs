@@ -1,9 +1,9 @@
-//! `WtInit` パーサーと `WtConfig::apply_init` マージ規則の単体テスト
+//! `WtInit` パーサーと `WtConfig::apply_init_as_peer` マージ規則の単体テスト
 //!
 //! draft-ietf-webtrans-http2-15 Section 4.3.2 (L583-L604) と RFC 8941
 //! Section 4.2 (Parsing Structured Fields) の動作を境界値・型不一致を含めて検証する。
-//! 加えて、`apply_init` 後の `WtConfig` が `WtSession` の初期最大データ量に
-//! 反映されることを Sans I/O 層で確認する。
+//! 加えて、`apply_init_as_peer` のマージ結果が `WtSession` の送信上限へ反映されることを
+//! Sans I/O 層で確認する。
 
 use shiguredo_http2::webtransport::{WtConfig, WtInit, WtSession};
 
@@ -160,56 +160,69 @@ fn test_parse_skips_unknown_boolean_shorthand() {
     assert_eq!(init.u, Some(100));
 }
 
-/// `WtConfig::apply_init` が `u`/`bl`/`br` の Some 値で max マージすること
+/// `WtConfig::apply_init_as_peer` が `u`/`bl`/`br` の Some 値で max マージすること
 #[test]
-fn test_apply_init_max_merge() {
+fn test_apply_init_as_peer_max_merge() {
     let mut config = WtConfig::default();
     let initial_uni = config.initial_max_stream_data_uni;
-    let initial_bidi_remote = config.initial_max_stream_data_bidi_remote;
     let initial_bidi_local = config.initial_max_stream_data_bidi_local;
+    let initial_bidi_remote = config.initial_max_stream_data_bidi_remote;
 
-    // SETTINGS 由来の値より大きい値で上書きされる
+    // bl と br に異なる値を与え、マッピングの取り違えを検出できるようにする
     let init = WtInit {
         u: Some(initial_uni + 100),
-        bl: Some(initial_bidi_remote + 200),
-        br: Some(initial_bidi_local + 300),
+        bl: Some(initial_bidi_local + 200),
+        br: Some(initial_bidi_remote + 300),
     };
-    config.apply_init(&init);
+    config.apply_init_as_peer(&init);
     assert_eq!(config.initial_max_stream_data_uni, initial_uni + 100);
     assert_eq!(
-        config.initial_max_stream_data_bidi_remote,
-        initial_bidi_remote + 200
+        config.initial_max_stream_data_bidi_local,
+        initial_bidi_local + 200,
+        "bl は initial_max_stream_data_bidi_local に反映されること"
     );
     assert_eq!(
-        config.initial_max_stream_data_bidi_local,
-        initial_bidi_local + 300
+        config.initial_max_stream_data_bidi_remote,
+        initial_bidi_remote + 300,
+        "br は initial_max_stream_data_bidi_remote に反映されること"
     );
 }
 
-/// `WtConfig::apply_init` で SETTINGS 由来の値より小さい値は無視されること
+/// `WtConfig::apply_init_as_peer` で SETTINGS 由来の値より小さい値は無視されること
 #[test]
-fn test_apply_init_keeps_larger_settings_value() {
+fn test_apply_init_as_peer_keeps_larger_settings_value() {
     let mut config = WtConfig::default();
     let initial_uni = config.initial_max_stream_data_uni;
+    let initial_bidi_local = config.initial_max_stream_data_bidi_local;
+    let initial_bidi_remote = config.initial_max_stream_data_bidi_remote;
 
     // SETTINGS 由来 (default) より小さい値で上書きしようとしても変わらない
     let init = WtInit {
         u: Some(0),
-        ..Default::default()
+        bl: Some(0),
+        br: Some(0),
     };
-    config.apply_init(&init);
+    config.apply_init_as_peer(&init);
     assert_eq!(
         config.initial_max_stream_data_uni, initial_uni,
-        "max マージで小さい値は採用されないこと"
+        "u の小さい値は max マージで採用されないこと"
+    );
+    assert_eq!(
+        config.initial_max_stream_data_bidi_local, initial_bidi_local,
+        "bl の小さい値は max マージで採用されないこと"
+    );
+    assert_eq!(
+        config.initial_max_stream_data_bidi_remote, initial_bidi_remote,
+        "br の小さい値は max マージで採用されないこと"
     );
 }
 
-/// `WtConfig::apply_init` で `None` キーは設定値に触れないこと
+/// `WtConfig::apply_init_as_peer` で `None` キーは設定値に触れないこと
 #[test]
-fn test_apply_init_none_does_not_touch_config() {
+fn test_apply_init_as_peer_none_does_not_touch_config() {
     let mut config = WtConfig::default();
     let snapshot = config.clone();
-    config.apply_init(&WtInit::default());
+    config.apply_init_as_peer(&WtInit::default());
     assert_eq!(
         config.initial_max_data, snapshot.initial_max_data,
         "WtInit に含まれないフィールドは触られないこと"
@@ -219,12 +232,12 @@ fn test_apply_init_none_does_not_touch_config() {
         "u=None で initial_max_stream_data_uni は変わらないこと"
     );
     assert_eq!(
-        config.initial_max_stream_data_bidi_remote, snapshot.initial_max_stream_data_bidi_remote,
-        "bl=None で initial_max_stream_data_bidi_remote は変わらないこと"
+        config.initial_max_stream_data_bidi_local, snapshot.initial_max_stream_data_bidi_local,
+        "bl=None で initial_max_stream_data_bidi_local は変わらないこと"
     );
     assert_eq!(
-        config.initial_max_stream_data_bidi_local, snapshot.initial_max_stream_data_bidi_local,
-        "br=None で initial_max_stream_data_bidi_local は変わらないこと"
+        config.initial_max_stream_data_bidi_remote, snapshot.initial_max_stream_data_bidi_remote,
+        "br=None で initial_max_stream_data_bidi_remote は変わらないこと"
     );
 }
 
@@ -236,69 +249,25 @@ fn test_parse_handles_leading_and_trailing_ows() {
     assert_eq!(init.bl, Some(200));
 }
 
-/// `apply_init` で更新された `u` 値が `WtSession::server(config.clone(), config)` 経由で
-/// 単方向ストリームの初期最大データ量に反映されること
+/// `WtConfig::apply_init_as_peer` で更新された `u` 値が
+/// `WtSession::server(config, peer_config)` 経由でローカル開始 uni ストリームの
+/// 送信上限に反映されること
 #[test]
-fn test_apply_init_propagates_to_uni_stream_initial_max() {
-    let mut config = WtConfig::default();
-    let original = config.initial_max_stream_data_uni;
+fn test_apply_init_as_peer_propagates_to_uni_stream_send_max() {
+    let mut peer_config = WtConfig::default();
+    let original = peer_config.initial_max_stream_data_uni;
     let updated = original + 4096;
-    config.apply_init(&WtInit {
+    peer_config.apply_init_as_peer(&WtInit {
         u: Some(updated),
         ..Default::default()
     });
-    // サーバーセッションを構築し initiate してから自身で uni ストリームを開く
-    let mut session = WtSession::server(config.clone(), config);
-    session.initiate().expect("initiate");
-    let stream_id = session.open_uni_stream().expect("open uni");
-    let stream = session.stream(stream_id).expect("stream");
+    let mut session = WtSession::server(WtConfig::default(), peer_config);
+    session.initiate().expect("initiate に失敗");
+    let stream_id = session.open_uni_stream().expect("uni ストリームを開けない");
+    let stream = session.stream(stream_id).expect("ストリームが存在しない");
     assert_eq!(
         stream.send_available(),
         updated,
-        "u が反映されたら uni ストリームの初期最大データ量も更新されるべき"
-    );
-}
-
-/// `apply_init` で更新された `br` 値が自身が開く双方向ストリームの
-/// 受信上限 (recv_max) に反映されること。
-/// 新モデルでは `br` → `config.bidi_local` → locally-opened ストリームの recv_max に対応する。
-#[test]
-fn test_apply_init_propagates_to_bidi_local_stream_initial_max() {
-    let mut config = WtConfig::default();
-    let original = config.initial_max_stream_data_bidi_local;
-    let updated = original + 8192;
-    config.apply_init(&WtInit {
-        br: Some(updated),
-        ..Default::default()
-    });
-    let mut session = WtSession::server(config.clone(), config);
-    session.initiate().expect("initiate");
-    let stream_id = session.open_bidi_stream().expect("open bidi");
-    let stream = session.stream(stream_id).expect("stream");
-    assert_eq!(
-        stream.recv_available(),
-        updated,
-        "br が反映されたら自身が開く双方向ストリームの受信上限も更新されるべき"
-    );
-}
-
-/// `apply_init` で `u` を SETTINGS デフォルト未満に指定した場合、
-/// `WtSession` 経由のストリーム初期値は SETTINGS デフォルトのまま維持されること
-#[test]
-fn test_apply_init_smaller_value_keeps_default_in_session() {
-    let mut config = WtConfig::default();
-    let default_uni = config.initial_max_stream_data_uni;
-    config.apply_init(&WtInit {
-        u: Some(0),
-        ..Default::default()
-    });
-    let mut session = WtSession::server(config.clone(), config);
-    session.initiate().expect("initiate");
-    let stream_id = session.open_uni_stream().expect("open uni");
-    let stream = session.stream(stream_id).expect("stream");
-    assert_eq!(
-        stream.send_available(),
-        default_uni,
-        "u=0 で SETTINGS デフォルトを下回らないこと"
+        "u がピア用 config に反映されたらローカル uni の送信上限も更新されるべき"
     );
 }

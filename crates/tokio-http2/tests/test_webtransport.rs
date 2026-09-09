@@ -1778,7 +1778,7 @@ async fn test_wt_init_accept_with_large_value() {
 }
 
 /// WebTransport-Init で SETTINGS より小さい値を送っても `accept()` が成功し、
-/// (apply_init の max マージで実値は SETTINGS 由来のまま維持される)。
+/// (apply_init_as_peer の max マージで実値は SETTINGS 由来のまま維持される)。
 #[tokio::test]
 async fn test_wt_init_accept_with_small_value() {
     let tls = test_tls();
