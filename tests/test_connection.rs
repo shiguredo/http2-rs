@@ -4911,4 +4911,99 @@ mod reset_stream {
             "SETTINGS ACK が滞留 DATA より先に送信されるはず"
         );
     }
+
+    /// send_goaway を複数回呼び出しても last-stream-id が増加しない
+    ///
+    /// RFC 9113 Section 6.8: last stream identifier の値を増加させてはならない (MUST NOT)。
+    #[test]
+    fn test_send_goaway_last_stream_id_does_not_increase() {
+        // 直近の出力から GOAWAY の last-stream-id を取り出す
+        fn goaway_last_stream_id(conn: &mut Connection) -> Option<u32> {
+            let output = conn.poll_output()?;
+            let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+            decoder.feed(&output);
+            let mut result = None;
+            while let Some(frame) = decoder.decode().expect("decode should succeed") {
+                if let Frame::Goaway(g) = frame {
+                    result = Some(g.last_stream_id.get());
+                }
+            }
+            result
+        }
+
+        let mut server = setup_server();
+
+        // ストリーム 1 のヘッダー処理を完了させ、last_successful_stream_id を 1 にする
+        let headers = HeadersFrame::new(
+            NonZeroStreamId::from_static(1),
+            encode_valid_request_headers(),
+        )
+        .with_end_headers(true);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // ストリーム 3 のヘッダーブロックを END_HEADERS なしで受信する
+        // (この時点では last_successful_stream_id は 1 のまま)
+        let encoded = encode_valid_request_headers();
+        let split = encoded.len() / 2;
+        let headers = HeadersFrame::new(NonZeroStreamId::from_static(3), encoded[..split].to_vec())
+            .with_end_headers(false);
+        server
+            .feed(&encode_frame(&Frame::Headers(headers)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        while server.poll_event().is_some() {}
+        let _ = server.poll_output();
+
+        // 1 回目の GOAWAY
+        server
+            .send_goaway(ErrorCode::NoError, Vec::new())
+            .expect("send_goaway should succeed");
+        let first = goaway_last_stream_id(&mut server).expect("1 回目の GOAWAY が出力されるはず");
+        assert_eq!(
+            first, 1,
+            "1 回目の last-stream-id は処理済みストリーム 1 のはず"
+        );
+
+        // CONTINUATION でストリーム 3 のヘッダー処理を完了させ、
+        // last_successful_stream_id を 3 に伸ばす
+        let continuation = create_continuation(
+            NonZeroStreamId::from_static(3),
+            encoded[split..].to_vec(),
+            true,
+        );
+        server
+            .feed(&encode_frame(&Frame::Continuation(continuation)))
+            .expect("feed should succeed");
+        server.process().expect("process should succeed");
+        // ストリーム 3 のヘッダー処理が完了し、last_successful_stream_id が 3 に
+        // 伸びたことをイベントで確認する (これがないと 2 回目の検証が空虚になる)
+        let mut completed_stream_3 = false;
+        while let Some(event) = server.poll_event() {
+            if let Event::HeadersReceived { stream_id, .. } = event
+                && stream_id == client_stream_id(3)
+            {
+                completed_stream_3 = true;
+            }
+        }
+        assert!(
+            completed_stream_3,
+            "CONTINUATION でストリーム 3 のヘッダー処理が完了するはず"
+        );
+        let _ = server.poll_output();
+
+        // 2 回目の GOAWAY は 1 回目より大きい last-stream-id を送ってはならない
+        server
+            .send_goaway(ErrorCode::NoError, Vec::new())
+            .expect("send_goaway should succeed");
+        let second = goaway_last_stream_id(&mut server).expect("2 回目の GOAWAY が出力されるはず");
+        assert_eq!(
+            second, first,
+            "2 回目の last-stream-id は既送信値に固定されるはず"
+        );
+    }
 }

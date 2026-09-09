@@ -96,6 +96,12 @@ pub struct Connection {
     /// リクエスト処理で記録済みのため更新せず、未知フレームのリセット
     /// (handle_frame の Frame::Unknown 処理) は DATA 経路と同じ理由で更新しない。
     last_successful_stream_id: u32,
+    /// 直近に GOAWAY で送信した last-stream-id
+    ///
+    /// RFC 9113 Section 6.8: last-stream-id は増加させてはならない (MUST NOT)。
+    /// 2 回目以降の `send_goaway` はこの値以下に制限する。
+    /// `None` は GOAWAY 未送信 (初回) を表す。
+    last_sent_goaway_stream_id: Option<u32>,
     /// HPACK エンコーダー
     hpack_encoder: HpackEncoder,
     /// HPACK デコーダー
@@ -217,6 +223,7 @@ impl Connection {
             next_stream_id,
             last_recv_stream_id: 0,
             last_successful_stream_id: 0,
+            last_sent_goaway_stream_id: None,
             hpack_encoder: HpackEncoder::new(limits.header_table_size() as usize),
             hpack_decoder,
             frame_decoder: FrameDecoder::new(limits.max_frame_size().get()),
@@ -921,13 +928,22 @@ impl Connection {
     }
 
     /// GOAWAY を送信する
+    ///
+    /// 複数回呼び出しても last-stream-id は既送信値以下に制限される
+    /// (RFC 9113 Section 6.8: 増加させてはならない MUST NOT)。
     pub fn send_goaway(&mut self, error_code: ErrorCode, debug_data: Vec<u8>) -> Result<()> {
-        // last_successful_stream_id は 31-bit 範囲に必ず収まる
-        let last_stream_id = LastStreamId::new(self.last_successful_stream_id)
-            .expect("last_successful_stream_id is always valid for LastStreamId");
+        // 2 回目以降は既送信値以下に制限する (RFC 9113 Section 6.8)
+        let last_stream_id_value = match self.last_sent_goaway_stream_id {
+            Some(previous) => self.last_successful_stream_id.min(previous),
+            None => self.last_successful_stream_id,
+        };
+        // 両値とも 31-bit 範囲のため min の結果も 31-bit 範囲に収まる
+        let last_stream_id = LastStreamId::new(last_stream_id_value)
+            .expect("GOAWAY last-stream-id is always valid for LastStreamId");
         let goaway_frame =
             GoawayFrame::new(last_stream_id, error_code.as_u32()).with_debug_data(debug_data);
         self.send_frame(&Frame::Goaway(goaway_frame))?;
+        self.last_sent_goaway_stream_id = Some(last_stream_id_value);
         self.state = ConnectionState::GoawaySent;
         Ok(())
     }

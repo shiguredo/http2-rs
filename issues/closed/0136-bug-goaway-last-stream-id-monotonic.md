@@ -1,7 +1,7 @@
 # send_goaway の複数回呼び出しで last-stream-id が増加する (RFC 9113 Section 6.8 違反)
 
 - Created: 2026-08-24
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-10
 - Branch: feature/fix-goaway-last-stream-id-monotonic
 - Polished: 2026-09-09
 
@@ -27,3 +27,10 @@ RFC 9113 Section 6.8 (refs/rfc9113.txt) の原文: "Endpoints MUST NOT increase 
 
 - 複数回の `send_goaway` 呼び出しで last-stream-id が増加しないこと (2 回目の呼び出し前後で `last_successful_stream_id` が増えていても、2 回目の last-stream-id は 1 回目以下であること)
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/connection.rs` の `Connection` に、直近に GOAWAY で送信した last-stream-id を保持する `last_sent_goaway_stream_id: Option<u32>` を追加した。`send_goaway` は初回に `last_successful_stream_id` を使い、2 回目以降は `last_successful_stream_id` と記録値の小さい方を使って送信し、送信成功後に記録を更新する (RFC 9113 Section 6.8 の MUST NOT increase)
+- `send_goaway` の doc に、複数回呼び出しても last-stream-id が既送信値以下に制限されることを追記した
+- `tests/test_connection.rs` に、`END_HEADERS` なし HEADERS → `send_goaway` → CONTINUATION で `last_successful_stream_id` を伸ばす → `send_goaway` の順で、2 回目の last-stream-id が 1 回目に固定されることを検証するテストを追加した
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
