@@ -1,7 +1,7 @@
 # CONNECT リクエストの :authority 検証が host 部 (uri-host) を検査しない
 
 - Created: 2026-08-24
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-09
 - Branch: feature/fix-connect-authority-host-validation
 - Polished: 2026-09-09
 
@@ -39,3 +39,10 @@ RFC 9112 Section 3.2.3 の `authority-form = uri-host ":" port` の uri-host は
 - ポート範囲外 (65535 超) と userinfo (`@`) を含む host が拒否されること (既存挙動の回帰テスト)
 - 正常な host (`example.com:443`、`[::1]:443` 等) が引き続き受理されること
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/validation.rs` の `is_valid_connect_authority` に host 部 (uri-host) の検査を追加した。`reg-name` 文字集合 (unreserved / sub-delims) と pct-encoded (`%` + HEXDIG 2 文字) 以外のバイトを拒否し、SP・制御文字・非 ASCII・不正文字・不正な pct-encoded を一括で弾く (`is_valid_reg_name` / `is_reg_name_byte`)
+- IPv6 リテラルは `[` と `]` の間が空でなく、hex digit / `:` / `.` のみで構成されることを検査する `is_valid_ipv6_literal_chars` を追加した (IPvFuture・zone ID は受理しない)
+- `tests/test_validation.rs` に、SP・制御文字・非 ASCII・不正文字・不正な pct-encoded・不正な IPv6 リテラル・空 host・ポート範囲外・userinfo の拒否テストと、正常 host・pct-encoded・unreserved/sub-delims・埋め込み IPv4 を含む IPv6 リテラルの受理テストを追加した
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
