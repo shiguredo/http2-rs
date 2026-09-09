@@ -11,7 +11,7 @@
 //! mpsc/oneshot で driver と通信する。driver は HTTP/2 コネクションと
 //! `shiguredo_http2::webtransport::WtSession` の橋渡しを担う。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -303,6 +303,7 @@ impl WtServerRequest {
                 peer_closed_bidi_count: 0,
                 peer_closed_uni_count: 0,
                 responded_end_stream_on_close: false,
+                stop_sending_sent_streams: HashSet::new(),
             };
             state.run().await
         });
@@ -849,6 +850,14 @@ struct DriverState {
     peer_closed_uni_count: u64,
     /// WT_CLOSE_SESSION 受信時に END_STREAM で応答済みか
     responded_end_stream_on_close: bool,
+    /// WT_STOP_SENDING を送信したストリーム ID の集合
+    ///
+    /// STOP_SENDING 後の在路データを破棄し、ストリームウィンドウ拡張を行わない
+    /// ために使用する。ピアからの FIN / リセット受信で受信方向が終端したら削除する。
+    /// ピア開始 uni ストリームの FIN 付き `StreamData` は `WtSession::poll_event` が
+    /// 先にストリームを削除するため `WtSession::stream` では判定できず、ドライバ側で
+    /// 記録する必要がある。
+    stop_sending_sent_streams: HashSet<WtStreamId>,
 }
 
 impl DriverState {
@@ -946,6 +955,17 @@ impl DriverState {
                     .wt_session
                     .stop_sending(stream_id, error_code)
                     .map_err(Error::from);
+                if res.is_ok()
+                    && self
+                        .wt_session
+                        .stream(stream_id)
+                        .is_some_and(|s| s.can_recv())
+                {
+                    // STOP_SENDING 後の在路データを破棄するため ID を記録する。
+                    // 受信側が既に終端の場合は以降データが届かないため記録しない
+                    // (記録すると削除されず長命セッションで残り続ける)。
+                    self.stop_sending_sent_streams.insert(stream_id);
+                }
                 self.send_cmd_result(res, ack).await
             }
             DriverCmd::Close {
@@ -1247,6 +1267,20 @@ impl DriverState {
                 data,
                 fin,
             } => {
+                // RFC 9000 Section 3.5: STOP_SENDING 送信後の受信データは
+                // アプリへ配送せず破棄し、ストリームウィンドウも拡張しない。
+                // ウィンドウ拡張の抑止は draft-ietf-webtrans-http2-15 Section 6.6 の
+                // WT_MAX_STREAM_DATA 送信禁止 (MUST NOT) に従う。
+                // 破棄しても connection / stream のフロー制御への計上は
+                // sans-io 層 (`WtStream::recv_data` と `WtFlowControl::consume_recv`) で継続する。
+                if self.stop_sending_sent_streams.contains(&stream_id) {
+                    if fin {
+                        self.stream_channels.remove(&stream_id);
+                        self.account_peer_stream_closed(stream_id);
+                        self.stop_sending_sent_streams.remove(&stream_id);
+                    }
+                    return Ok(());
+                }
                 if let Some(ch) = self.stream_channels.get(&stream_id) {
                     let _ = ch.send(StreamPacket::Data { data, fin });
                 }
@@ -1267,6 +1301,7 @@ impl DriverState {
                     let _ = ch.send(StreamPacket::Reset { error_code });
                 }
                 self.account_peer_stream_closed(stream_id);
+                self.stop_sending_sent_streams.remove(&stream_id);
             }
             WtEvent::StopSending { .. } => {
                 // 現在の API では送信側にシグナルを伝達しない (将来の拡張)

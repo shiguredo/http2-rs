@@ -618,6 +618,354 @@ async fn test_wt_command_flush_error_not_masked_as_connection_closed() {
     server_task.await.expect("server join");
 }
 
+/// STOP_SENDING 送信後にピアから在路データが届いてもセッションが継続し、
+/// 停止要求後のデータがアプリへ配送されないことを確認する
+/// (RFC 9000 Section 3.5 / draft-ietf-webtrans-http2-15 Section 6.3)。
+#[tokio::test]
+async fn test_wt_stop_sending_inflight_data_does_not_abort_session() {
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("アドレスのパースに失敗した"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("サーバーのバインドに失敗した");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続の受け入れに失敗した");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let mut session = req
+            .accept(WtConfig::default(), None, None)
+            .await
+            .expect("WebTransport セッションの受け入れに失敗した");
+
+        // ピア開始 bidi ストリームの最初のデータ受信後に STOP_SENDING を送る
+        let mut bidi = session
+            .accept_bidi()
+            .await
+            .expect("bidi ストリームの受け入れに失敗した");
+        let first = bidi
+            .recv()
+            .await
+            .expect("受信に失敗した")
+            .expect("データが無い");
+        assert_eq!(first, b"hi");
+        bidi.stop_sending(0).await.expect("stop_sending に失敗した");
+
+        // 在路データが処理されるのを待つ
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // セッションが継続していること (abort していれば driver が終了してエラーになる)
+        session
+            .send_datagram(b"alive".to_vec())
+            .await
+            .expect("セッションは在路データ後も継続するはず");
+
+        // 停止要求後のデータがアプリへ配送されていないこと
+        // (チャネルには最初の "hi" 以外は届かない。追加の recv はタイムアウトするか
+        // リセットで終了する)
+        let extra = tokio::time::timeout(Duration::from_millis(200), bidi.recv()).await;
+        assert!(
+            !matches!(extra, Ok(Ok(Some(_)))),
+            "STOP_SENDING 後のデータは配送されないはず: {extra:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗した");
+    let connect_stream = perform_connect(&mut client).await;
+
+    let mut wt_client = WtSession::client(WtConfig::default(), WtConfig::default());
+    wt_client.initiate().expect("セッション開始に失敗した");
+    let bidi_id = wt_client
+        .open_bidi_stream()
+        .expect("bidi ストリームを開けない");
+
+    // 最初のチャンクを送り、サーバーにストリームを認識させ STOP_SENDING を送らせる
+    wt_client
+        .send_stream_data(bidi_id, b"hi", false)
+        .expect("最初のデータ送信に失敗した");
+    let out = wt_client.poll_output().expect("出力が無い");
+    client
+        .send_data(connect_stream, out, false)
+        .await
+        .expect("最初のデータの送信に失敗した");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // サーバーの STOP_SENDING を処理する前に在路データを送る
+    let inflight = vec![0u8; 40 * 1024];
+    wt_client
+        .send_stream_data(bidi_id, &inflight, false)
+        .expect("在路データの送信に失敗した");
+    let out = wt_client.poll_output().expect("出力が無い");
+    client
+        .send_data(connect_stream, out, false)
+        .await
+        .expect("在路データの送信に失敗した");
+
+    // サーバーが送る "alive" datagram を受信できること (セッション継続の確認)
+    let mut alive = false;
+    for _ in 0..50 {
+        let ev = tokio::time::timeout(Duration::from_secs(5), client.next_event())
+            .await
+            .expect("クライアントイベントの受信がタイムアウトした")
+            .expect("クライアントイベントの受信に失敗した");
+        if let Event::DataReceived {
+            stream_id, data, ..
+        } = ev
+            && stream_id == connect_stream
+        {
+            wt_client.feed(&data).expect("feed に失敗した");
+            wt_client.process().expect("process に失敗した");
+            while let Some(wt_ev) = wt_client.poll_event() {
+                if let WtEvent::DatagramReceived { data } = wt_ev
+                    && data == b"alive"
+                {
+                    alive = true;
+                }
+            }
+        }
+        if alive {
+            break;
+        }
+    }
+    assert!(
+        alive,
+        "セッションが継続していれば alive datagram を受信できるはず"
+    );
+    server_task.await.expect("サーバータスクの終了に失敗した");
+}
+
+/// STOP_SENDING 送信後、同じ bidi ストリームを reset した後でも在路データで
+/// セッションが abort されないことを確認する (RFC 9000 Section 3.5 は
+/// 双方向の終了に RESET_STREAM と STOP_SENDING の併用を想定する)。
+#[tokio::test]
+async fn test_wt_stop_sending_then_reset_inflight_data_does_not_abort_session() {
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("アドレスのパースに失敗した"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("サーバーのバインドに失敗した");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続の受け入れに失敗した");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let mut session = req
+            .accept(WtConfig::default(), None, None)
+            .await
+            .expect("WebTransport セッションの受け入れに失敗した");
+
+        let mut bidi = session
+            .accept_bidi()
+            .await
+            .expect("bidi ストリームの受け入れに失敗した");
+        let first = bidi
+            .recv()
+            .await
+            .expect("受信に失敗した")
+            .expect("データが無い");
+        assert_eq!(first, b"hi");
+        bidi.stop_sending(0).await.expect("stop_sending に失敗した");
+        // stop_sending 後に同じストリームを reset しても在路データの破棄を維持する
+        bidi.reset(0).await.expect("reset に失敗した");
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        session
+            .send_datagram(b"alive".to_vec())
+            .await
+            .expect("セッションは在路データ後も継続するはず");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗した");
+    let connect_stream = perform_connect(&mut client).await;
+
+    let mut wt_client = WtSession::client(WtConfig::default(), WtConfig::default());
+    wt_client.initiate().expect("セッション開始に失敗した");
+    let bidi_id = wt_client
+        .open_bidi_stream()
+        .expect("bidi ストリームを開けない");
+
+    wt_client
+        .send_stream_data(bidi_id, b"hi", false)
+        .expect("最初のデータ送信に失敗した");
+    let out = wt_client.poll_output().expect("出力が無い");
+    client
+        .send_data(connect_stream, out, false)
+        .await
+        .expect("最初のデータの送信に失敗した");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // サーバーの STOP_SENDING / RESET_STREAM を処理する前に在路データを送る
+    let inflight = vec![0u8; 40 * 1024];
+    wt_client
+        .send_stream_data(bidi_id, &inflight, false)
+        .expect("在路データの送信に失敗した");
+    let out = wt_client.poll_output().expect("出力が無い");
+    client
+        .send_data(connect_stream, out, false)
+        .await
+        .expect("在路データの送信に失敗した");
+
+    let mut alive = false;
+    for _ in 0..50 {
+        let ev = tokio::time::timeout(Duration::from_secs(5), client.next_event())
+            .await
+            .expect("クライアントイベントの受信がタイムアウトした")
+            .expect("クライアントイベントの受信に失敗した");
+        if let Event::DataReceived {
+            stream_id, data, ..
+        } = ev
+            && stream_id == connect_stream
+        {
+            wt_client.feed(&data).expect("feed に失敗した");
+            wt_client.process().expect("process に失敗した");
+            while let Some(wt_ev) = wt_client.poll_event() {
+                if let WtEvent::DatagramReceived { data } = wt_ev
+                    && data == b"alive"
+                {
+                    alive = true;
+                }
+            }
+        }
+        if alive {
+            break;
+        }
+    }
+    assert!(
+        alive,
+        "セッションが継続していれば alive datagram を受信できるはず"
+    );
+    server_task.await.expect("サーバータスクの終了に失敗した");
+}
+
+/// ピア開始 uni ストリームで STOP_SENDING 後に FIN 付きデータを受信しても
+/// アプリへ配送されず、セッションが継続することを確認する。
+/// (uni では poll_event が先にストリームを削除するため、driver 側の記録が必要)
+#[tokio::test]
+async fn test_wt_stop_sending_uni_fin_data_is_discarded() {
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("アドレスのパースに失敗した"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("サーバーのバインドに失敗した");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続の受け入れに失敗した");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let mut session = req
+            .accept(WtConfig::default(), None, None)
+            .await
+            .expect("WebTransport セッションの受け入れに失敗した");
+
+        let mut uni = session
+            .accept_uni()
+            .await
+            .expect("uni ストリームの受け入れに失敗した");
+        let first = uni
+            .recv()
+            .await
+            .expect("受信に失敗した")
+            .expect("データが無い");
+        assert_eq!(first, b"hi");
+        uni.stop_sending(0).await.expect("stop_sending に失敗した");
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // FIN 付きデータは配送されず、チャネルが閉じる
+        let extra = tokio::time::timeout(Duration::from_millis(200), uni.recv()).await;
+        assert!(
+            matches!(extra, Ok(Ok(None))),
+            "STOP_SENDING 後の FIN 付きデータは配送されずチャネルが閉じるはず: {extra:?}"
+        );
+
+        session
+            .send_datagram(b"alive".to_vec())
+            .await
+            .expect("セッションは FIN 付きデータ後も継続するはず");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗した");
+    let connect_stream = perform_connect(&mut client).await;
+
+    let mut wt_client = WtSession::client(WtConfig::default(), WtConfig::default());
+    wt_client.initiate().expect("セッション開始に失敗した");
+    let uni_id = wt_client
+        .open_uni_stream()
+        .expect("uni ストリームを開けない");
+
+    wt_client
+        .send_stream_data(uni_id, b"hi", false)
+        .expect("最初のデータ送信に失敗した");
+    let out = wt_client.poll_output().expect("出力が無い");
+    client
+        .send_data(connect_stream, out, false)
+        .await
+        .expect("最初のデータの送信に失敗した");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    wt_client
+        .send_stream_data(uni_id, b"fin", true)
+        .expect("FIN データの送信に失敗した");
+    let out = wt_client.poll_output().expect("出力が無い");
+    client
+        .send_data(connect_stream, out, false)
+        .await
+        .expect("FIN データの送信に失敗した");
+
+    let mut alive = false;
+    for _ in 0..50 {
+        let ev = tokio::time::timeout(Duration::from_secs(5), client.next_event())
+            .await
+            .expect("クライアントイベントの受信がタイムアウトした")
+            .expect("クライアントイベントの受信に失敗した");
+        if let Event::DataReceived {
+            stream_id, data, ..
+        } = ev
+            && stream_id == connect_stream
+        {
+            wt_client.feed(&data).expect("feed に失敗した");
+            wt_client.process().expect("process に失敗した");
+            while let Some(wt_ev) = wt_client.poll_event() {
+                if let WtEvent::DatagramReceived { data } = wt_ev
+                    && data == b"alive"
+                {
+                    alive = true;
+                }
+            }
+        }
+        if alive {
+            break;
+        }
+    }
+    assert!(
+        alive,
+        "セッションが継続していれば alive datagram を受信できるはず"
+    );
+    server_task.await.expect("サーバータスクの終了に失敗した");
+}
+
 /// drain: サーバーが WT_DRAIN_SESSION を送り、クライアントが SessionDraining を受信する
 #[tokio::test]
 async fn test_wt_drain() {

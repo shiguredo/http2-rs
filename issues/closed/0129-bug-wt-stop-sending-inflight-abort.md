@@ -1,7 +1,7 @@
 # STOP_SENDING 送信後の在路データで WebTransport セッション全体が abort される
 
 - Created: 2026-08-24
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-09
 - Branch: feature/fix-wt-stop-sending-inflight-abort
 - Polished: 2026-09-09
 
@@ -30,3 +30,12 @@
 - STOP_SENDING 後の受信データがアプリのチャネルに配送されないこと (FIN 付きデータを含む)
 - ピア開始 uni ストリームで FIN 付きデータを受信した場合もアプリのチャネルに配送されないこと
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `crates/tokio-http2/src/webtransport.rs` の `DriverState` に、WT_STOP_SENDING を送信したストリーム ID を保持する `stop_sending_sent_streams` を追加した。`DriverCmd::StopSending` 成功時に受信方向が開いている場合のみ記録し、`dispatch_wt_event` の `StreamData` 分岐で該当ストリームのデータをアプリへ配送せず、`maybe_grow_stream_window` も呼ばないようにした
+- 破棄しても connection / stream のフロー制御への計上 (`WtStream::recv_data` と `WtFlowControl::consume_recv`) と、ドライバの `maybe_grow_session_window` (セッションウィンドウ拡張) は維持する (RFC 9000 Section 3.5)
+- FIN 付きデータを破棄する場合も `stream_channels.remove` と `account_peer_stream_closed` を維持し、`WT_MAX_STREAMS` の自動発行カウントがずれないようにした
+- 記録した ID はピアからの FIN / リセット受信で削除する。`stop_sending` 後のローカル `reset` では削除しない (受信側が開いている限り在路データの破棄が必要なため)
+- `crates/tokio-http2/tests/test_webtransport.rs` に、在路データでセッションが継続するテスト、`stop_sending` 後にローカル reset しても継続するテスト、ピア開始 uni の FIN 付きデータが配送されないテストを追加した
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
