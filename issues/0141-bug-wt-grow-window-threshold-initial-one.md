@@ -1,7 +1,7 @@
 # 自動ウィンドウ拡張のしきい値 `initial / 2` が initial=1 で 0 になりウィンドウが拡張されない
 
 - Created: 2026-09-09
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-10
 - Branch: feature/fix-wt-grow-window-threshold-initial-one
 - Polished: 2026-09-10
 
@@ -26,3 +26,10 @@ tokio-http2 の WebTransport ドライバの自動ウィンドウ拡張が、`in
 - `initial_max_stream_data_bidi_local = 1` 等の設定で受信ウィンドウが拡張されること
 - `initial == 0` では従来どおり拡張されないこと
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `crates/tokio-http2/src/webtransport.rs` の `maybe_grow_stream_window` と `src/webtransport/flow_control.rs` の `WtFlowControl::should_send_max_data` のしきい値を `initial / 2` から `initial.div_ceil(2)` に変更し、`initial == 1` でも受信ウィンドウが拡張されるようにした (`initial == 0` は 0 のままで拡張しない)
+- `tests/test_webtransport/flow_control.rs` に、セッションレベルのしきい値が `initial == 1` で拡張され `initial == 0` では拡張されないこと、奇数 initial (3) の切り上げ境界を検証するテストを追加した
+- `crates/tokio-http2/tests/test_webtransport.rs` に、`initial_max_stream_data_uni = 1` を広告したサーバーでクライアントの送信ウィンドウが自動拡張されることを検証する E2E テストを追加した
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
