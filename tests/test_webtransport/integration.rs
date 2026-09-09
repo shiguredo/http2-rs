@@ -1033,6 +1033,141 @@ fn uni_send_stream_removed_after_fin() {
     );
 }
 
+/// クライアントロールのローカル開始 uni ストリーム (送信専用) への
+/// ピア WT_STREAM が `stream_state_error` になり、`StreamData` が生成されない
+/// ことを確認する (draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1 / Section 19.8)。
+#[test]
+fn wt_stream_on_client_local_uni_stream_errors() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // ローカル開始 uni ストリームを開く (FIN は送らず streams に残す)
+    let stream_id = session
+        .open_uni_stream()
+        .expect("uni ストリームを開けるはず");
+
+    // ピアがローカル開始 uni ストリーム ID へ WT_STREAM を送る
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id,
+        data: b"from-peer".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed できるはず");
+    let err = session
+        .process()
+        .expect_err("ローカル開始 uni への WT_STREAM は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError,
+        "予期しないエラー種別: {err}"
+    );
+
+    // 拒否されたので StreamData は生成されない
+    while let Some(event) = session.poll_event() {
+        assert!(
+            !matches!(event, WtEvent::StreamData { .. }),
+            "ローカル開始 uni への WT_STREAM で StreamData が生成されてはならない"
+        );
+    }
+
+    // 拒否時に受信状態が変化していないこと
+    let stream = session
+        .stream(stream_id)
+        .expect("拒否後もストリームは残るはず");
+    assert_eq!(stream.recv_offset(), 0, "recv_offset は変化しないはず");
+    assert!(!stream.has_received_data(), "受信記録は変化しないはず");
+}
+
+/// サーバーロールでもローカル開始 uni ストリーム (送信専用) への
+/// ピア WT_STREAM が `stream_state_error` になり、`StreamData` が生成されないことを
+/// 確認する (draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1 / Section 19.8)。
+#[test]
+fn wt_stream_on_server_local_uni_stream_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // サーバー開始 uni ストリームを開く (FIN は送らず streams に残す)
+    let stream_id = session
+        .open_uni_stream()
+        .expect("uni ストリームを開けるはず");
+
+    // ピア (クライアント) がサーバー開始 uni ストリーム ID へ WT_STREAM を送る
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id,
+        data: b"from-peer".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed できるはず");
+    let err = session
+        .process()
+        .expect_err("ローカル開始 uni への WT_STREAM は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError,
+        "予期しないエラー種別: {err}"
+    );
+
+    // 拒否されたので StreamData は生成されない
+    while let Some(event) = session.poll_event() {
+        assert!(
+            !matches!(event, WtEvent::StreamData { .. }),
+            "ローカル開始 uni への WT_STREAM で StreamData が生成されてはならない"
+        );
+    }
+
+    // 拒否時に受信状態が変化していないこと
+    let stream = session
+        .stream(stream_id)
+        .expect("拒否後もストリームは残るはず");
+    assert_eq!(stream.recv_offset(), 0, "recv_offset は変化しないはず");
+    assert!(!stream.has_received_data(), "受信記録は変化しないはず");
+}
+
+/// ローカル開始 bidi ストリームへのピア WT_STREAM は受信可能であり、
+/// 従来どおり `StreamData` を生成することを確認する
+/// (draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1)。
+#[test]
+fn wt_stream_on_local_bidi_stream_accepted() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    let stream_id = session
+        .open_bidi_stream()
+        .expect("bidi ストリームを開けるはず");
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id,
+        data: b"from-peer".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed できるはず");
+    session
+        .process()
+        .expect("ローカル開始 bidi への WT_STREAM は受理されるはず");
+
+    let mut got_data = false;
+    while let Some(event) = session.poll_event() {
+        if let WtEvent::StreamData {
+            stream_id: id,
+            data,
+            fin,
+        } = event
+        {
+            assert_eq!(id, stream_id, "受信したストリーム ID が一致するはず");
+            assert_eq!(data, b"from-peer", "受信データが一致するはず");
+            assert!(!fin, "FIN は設定されていないはず");
+            got_data = true;
+        }
+    }
+    assert!(
+        got_data,
+        "ローカル開始 bidi への WT_STREAM は StreamData を生成するはず"
+    );
+}
+
 /// 受信専用単方向ストリームが FIN 受信 + poll_event で削除されることを確認する
 #[test]
 fn uni_recv_stream_removed_after_fin_and_poll() {
