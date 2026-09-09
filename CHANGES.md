@@ -21,5 +21,7 @@
   - @voluntas
 - [FIX] WebTransport セッションが Closed 状態に遷移した後は受信 capsule を無視し、新規ストリームを生成しないようにする (draft-ietf-webtrans-http2-15 Section 6.12)
   - @voluntas
+- [FIX] 通常の CONNECT リクエストの :authority 検証で host 部 (uri-host) を RFC 3986 の reg-name 文字集合と pct-encoded で検査し、SP・制御文字・非 ASCII・不正な pct-encoded・IPv6 リテラル内部の不正文字を拒否する (RFC 9113 Section 8.5 / RFC 9112 Section 3.2.3 / RFC 3986 Section 3.2.2)
+  - @voluntas
 
 ### misc
