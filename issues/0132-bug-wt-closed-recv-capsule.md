@@ -1,7 +1,7 @@
 # WtSession が Closed 状態でも受信 capsule を処理して新規ストリームを生成する
 
 - Created: 2026-08-24
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-09
 - Branch: feature/fix-wt-closed-recv-capsule
 - Polished: 2026-09-09
 
@@ -32,3 +32,11 @@
 - Closed 状態での WT_STREAM 受信で新規ストリームが生成されないこと (ピア開始ストリーム ID を使う。ローカル開始 ID は `handle_stream_data` の `is_peer_initiated` 検証で修正前でも拒否されるため回帰テストにならない。修正前は `StreamOpened` が生成されることを確認する)
 - Closed 状態での capsule 受信でイベントが送出されないこと
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/webtransport.rs` の `WtSession::handle_capsule` 冒頭に `WtSessionState::Closed` ガードを追加し、Closed 後の受信 capsule を無視するようにした (吸収状態)。`handle_stream_data` は `handle_capsule` からのみ呼ばれるため、ガードは `handle_capsule` に一本化した
+- ガードにより到達不能になった `Capsule::WtCloseSession` 分岐の `Closed` 判定を削除した。`Capsule::WtDrainSession` 分岐の `Active` 判定は Draining の冪等性のために維持した
+- `WtSession::process` の doc に、Closed 時は受信 capsule を無視して `Ok(())` を返すことを追記した
+- `tests/test_webtransport/integration.rs` に、同一 DATA フレーム内で WT_CLOSE_SESSION → WT_STREAM (ピア開始 ID) → Datagram → 未知ストリームへの WT_RESET_STREAM を流し、新規ストリームが生成されず `SessionClosed` 以外のイベントが送出されず `process` がエラーにならないことを検証するテストを追加した
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
