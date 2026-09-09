@@ -35,5 +35,7 @@
   - @voluntas
 - [FIX] 送信ウィンドウ枯渇時に `WtServerSession::close()` / `WtSessionHandle::close()` が Ok を返しても WT_CLOSE_SESSION / END_STREAM が送信されない場合はエラーを返し、呼び出し側が未送信を認識できるようにする (draft-ietf-webtrans-http2-15 Section 6.12)
   - @voluntas
+- [FIX] ローカル開始 uni ストリーム (送信専用) への WT_STREAM を WT_STREAM_STATE_ERROR として拒否し、送信専用ストリームにピアデータが配送されないようにする (draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1 / Section 19.8)
+  - @voluntas
 
 ### misc

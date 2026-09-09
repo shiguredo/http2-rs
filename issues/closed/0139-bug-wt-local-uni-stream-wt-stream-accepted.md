@@ -1,7 +1,7 @@
 # ローカル開始 uni ストリームへのピア WT_STREAM が受理される
 
 - Created: 2026-09-09
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-10
 - Branch: feature/fix-wt-local-uni-stream-wt-stream
 - Polished: 2026-09-10
 
@@ -28,3 +28,10 @@ WebTransport セッションで、ローカルが開始した単方向ストリ�
 - ローカル開始 bidi ストリーム ID への WT_STREAM 受信は従来どおり `StreamData` を生成すること
 - ピア開始ストリームへの WT_STREAM 受信は従来どおり動作すること
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/webtransport.rs` の `WtSession::handle_stream_data` で、既存ストリームに対しても受信可能な方向かを検証するようにした。開始主体 (`is_peer_initiated`) と方向 (`bidirectional`) を算出し、ローカル開始 uni ストリーム (送信専用) への WT_STREAM を `WtError::stream_state_error` で拒否する (draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1 / Section 19.8)
+- ローカル開始 bidi ストリームとピア開始ストリームは受信可能なため従来どおり受理する
+- `tests/test_webtransport/integration.rs` に、クライアント / サーバーロールのローカル開始 uni への WT_STREAM が `stream_state_error` になり `StreamData` が生成されず受信状態も変化しないこと、ローカル開始 bidi への WT_STREAM が従来どおり `StreamData` を生成することを検証するテストを追加した
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した

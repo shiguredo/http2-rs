@@ -1012,6 +1012,14 @@ impl WtSession {
 
         let is_new_stream = !self.streams.contains_key(&stream_id);
 
+        // draft-ietf-webtrans-http2-15 Section 5.2, RFC 9000 Section 2.1:
+        // ストリーム ID の開始主体と方向を判定する。
+        let is_peer_initiated = match self.role {
+            Role::Client => stream::stream_id::is_server_initiated(stream_id),
+            Role::Server => stream::stream_id::is_client_initiated(stream_id),
+        };
+        let bidirectional = stream::stream_id::is_bidirectional(stream_id);
+
         // draft-ietf-webtrans-http2-15 Section 6.4: empty capsule チェック
         // 空の WT_STREAM capsule は以下の場合のみ許可:
         // - 新規ストリームの開始時
@@ -1034,10 +1042,6 @@ impl WtSession {
             // draft-ietf-webtrans-http2-15 Section 5.2, RFC 9000 Section 2.1:
             // ストリーム ID の開始主体がピア側であることを検証する。
             // ローカル開始用 ID をピアが注入すると状態管理の一貫性が崩れる。
-            let is_peer_initiated = match self.role {
-                Role::Client => stream::stream_id::is_server_initiated(stream_id),
-                Role::Server => stream::stream_id::is_client_initiated(stream_id),
-            };
             if !is_peer_initiated {
                 return Err(WtError::stream_state_error(
                     "received stream with locally-initiated stream ID",
@@ -1051,7 +1055,6 @@ impl WtSession {
                 return Err(WtError::flow_control_error("peer exceeded stream limit"));
             }
 
-            let bidirectional = stream::stream_id::is_bidirectional(stream_id);
             // draft-ietf-webtrans-http2-15 Section 11.2:
             // ピア開始ストリームの send_max はピアの BIDI_LOCAL / UNI (ピア視点で local = ピア開始)
             // recv_max はローカルの BIDI_REMOTE / UNI (ローカル視点で remote = ピア開始)
@@ -1074,6 +1077,14 @@ impl WtSession {
                 stream_id,
                 bidirectional,
             });
+        } else if !bidirectional && !is_peer_initiated {
+            // draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1 / Section 19.8:
+            // ローカル開始 uni ストリームは送信専用であり、ピアからの WT_STREAM は
+            // 受信が許可されない状態への受信として拒否する。ローカル開始 bidi と
+            // ピア開始ストリームは受信可能なため従来どおり受理する。
+            return Err(WtError::stream_state_error(
+                "WT_STREAM received for locally-initiated unidirectional stream",
+            ));
         }
 
         // 直前の insert または contains_key チェックで存在が保証されている
