@@ -385,11 +385,16 @@ fn test_webtransport_scheme_https_uppercase_accepted() {
 }
 
 // RFC 9113 Section 8.5: CONNECT の :authority にポートがない場合は拒否される
-// (authority-form は host:port を要求する)。
+// (authority-form は host:port を要求する)。空ポートも is_valid_port の実装ポリシーで拒否する。
 #[test]
-fn test_connect_authority_without_port_rejected() {
-    let headers = vec![h(":method", "CONNECT"), h(":authority", "example.com")];
-    assert!(validate_request_headers(&headers).is_err());
+fn test_connect_authority_without_or_empty_port_rejected() {
+    for value in ["example.com", "[::1]", "[::1]:"] {
+        let headers = vec![h(":method", "CONNECT"), h(":authority", value)];
+        assert!(
+            validate_request_headers(&headers).is_err(),
+            "ポートなし / 空ポートの authority は拒否されるはず: {value:?}"
+        );
+    }
 }
 
 // RFC 9113 Section 8.5: CONNECT の :authority が IPv6 の authority-form なら通過する。
@@ -486,14 +491,17 @@ fn test_connect_authority_with_unreserved_and_sub_delims_accepted() {
     assert!(validate_request_headers(&headers).is_ok());
 }
 
-// RFC 3986 Section 3.2.3: ポート範囲外 (65535 超) は拒否される (既存挙動の回帰)。
+// RFC 3986 Section 3.2.3 の port は数字列であり、本実装は TCP ポート範囲 (0-65535) に
+// 制限するため、範囲外と u32 を超える桁数は拒否される (既存挙動の回帰)。
 #[test]
 fn test_connect_authority_with_port_out_of_range_rejected() {
-    let headers = vec![
-        h(":method", "CONNECT"),
-        h(":authority", "example.com:65536"),
-    ];
-    assert!(validate_request_headers(&headers).is_err());
+    for value in ["example.com:65536", "example.com:4294967296"] {
+        let headers = vec![h(":method", "CONNECT"), h(":authority", value)];
+        assert!(
+            validate_request_headers(&headers).is_err(),
+            "範囲外ポートは拒否されるはず: {value:?}"
+        );
+    }
 }
 
 // RFC 9113 Section 8.3.1: CONNECT の :authority に userinfo (@) を含む値は拒否される
@@ -522,6 +530,155 @@ fn test_connect_authority_with_ipv4_embedded_ipv6_accepted() {
         h(":authority", "[::ffff:192.168.0.1]:443"),
     ];
     assert!(validate_request_headers(&headers).is_ok());
+}
+
+// ---- Extended CONNECT (:protocol 付き CONNECT) の :authority 検証 ----
+//
+// RFC 8441 Section 4: Extended CONNECT の :authority も host 部 (uri-host) を検査する。
+// 通常の CONNECT と異なりポートは必須ではない。
+
+/// Extended CONNECT のリクエストヘッダーを組み立てる (テスト用)
+fn extended_connect_headers(authority: &str) -> Vec<HeaderField> {
+    vec![
+        h(":method", "CONNECT"),
+        h(":scheme", "https"),
+        h(":path", "/"),
+        h(":authority", authority),
+        h(":protocol", "webtransport"),
+    ]
+}
+
+// RFC 8441 Section 4 / RFC 3986 Section 3.2.2: Extended CONNECT の :authority の
+// host 部に SP を含む値は拒否される。
+#[test]
+fn test_extended_connect_authority_with_space_in_host_rejected() {
+    assert!(validate_request_headers(&extended_connect_headers("foo bar:443")).is_err());
+}
+
+// RFC 3986 Section 3.2.2: host 部に制御文字を含む値は拒否される
+// (validate_field_value を通過する 0x01 / 0x7f / 値内部 HTAB で検証する)。
+#[test]
+fn test_extended_connect_authority_with_control_char_in_host_rejected() {
+    for value in ["foo\u{1}bar:443", "foo\u{7f}bar:443", "foo\tbar:443"] {
+        assert!(
+            validate_request_headers(&extended_connect_headers(value)).is_err(),
+            "制御文字入り host は拒否されるはず: {value:?}"
+        );
+    }
+}
+
+// RFC 3986 Section 3.2.2: host 部に非 ASCII バイトを含む値は拒否される。
+#[test]
+fn test_extended_connect_authority_with_non_ascii_host_rejected() {
+    assert!(validate_request_headers(&extended_connect_headers("foo\u{00e9}bar:443")).is_err());
+}
+
+// RFC 3986 Section 3.2.2: uri-host に許可されない文字を含む値は拒否される。
+// ポートあり・なしの両方で host 部が検査されることを確認する。
+#[test]
+fn test_extended_connect_authority_with_invalid_host_char_rejected() {
+    for value in [
+        "foo/bar",
+        "foo/bar:443",
+        "foo?bar:443",
+        "foo#bar:443",
+        "foo{bar}:443",
+        "foo|bar:443",
+        "foo\\bar:443",
+        "foo^bar:443",
+        "foo\"bar:443",
+        "foo<bar>:443",
+        "foo:bar:443",
+        "foo%zz:443",
+        "foo%:443",
+        "foo%4:443",
+        "foo%4g:443",
+    ] {
+        assert!(
+            validate_request_headers(&extended_connect_headers(value)).is_err(),
+            "不正文字入り host は拒否されるはず: {value:?}"
+        );
+    }
+}
+
+// RFC 3986 Section 3.2.2: IPv6 リテラル内部に不正文字を含む値は拒否される。
+#[test]
+fn test_extended_connect_authority_with_invalid_ipv6_literal_rejected() {
+    for value in [
+        "[:: 1]",
+        "[:: 1]:443",
+        "[]",
+        "[zz]",
+        "[::g]",
+        "[::1]x",
+        "[::1",
+    ] {
+        assert!(
+            validate_request_headers(&extended_connect_headers(value)).is_err(),
+            "不正な IPv6 リテラルは拒否されるはず: {value:?}"
+        );
+    }
+}
+
+// RFC 3986 Section 3.2.3 の port は数字列であり、本実装は TCP ポート範囲 (0-65535) に
+// 制限するため、範囲外と u32 を超える桁数は Extended CONNECT では本修正で新たに拒否される。
+#[test]
+fn test_extended_connect_authority_with_port_out_of_range_rejected() {
+    for value in ["example.com:65536", "example.com:4294967296"] {
+        assert!(
+            validate_request_headers(&extended_connect_headers(value)).is_err(),
+            "範囲外ポートは拒否されるはず: {value:?}"
+        );
+    }
+}
+
+// RFC 3986 Section 3.2.3 の port は構文上 0 桁を許容するが、本実装は is_valid_port の
+// ポリシーで空ポートを拒否する。
+#[test]
+fn test_extended_connect_authority_with_empty_port_rejected() {
+    for value in ["example.com:", "[::1]:"] {
+        assert!(
+            validate_request_headers(&extended_connect_headers(value)).is_err(),
+            "空ポートは拒否されるはず: {value:?}"
+        );
+    }
+}
+
+// HTTP/2 の :authority は host を要求するため、本実装では空 host と空 authority を拒否する。
+#[test]
+fn test_extended_connect_authority_with_empty_host_rejected() {
+    for value in [":443", ""] {
+        assert!(
+            validate_request_headers(&extended_connect_headers(value)).is_err(),
+            "空 host は拒否されるはず: {value:?}"
+        );
+    }
+}
+
+// RFC 9113 Section 8.3.1: Extended CONNECT でも :authority の userinfo (@) は拒否される。
+#[test]
+fn test_extended_connect_authority_with_userinfo_rejected() {
+    assert!(validate_request_headers(&extended_connect_headers("user@example.com")).is_err());
+}
+
+// RFC 8441 Section 4 / RFC 9113 Section 8.3.1 / RFC 3986 Section 3.2:
+// Extended CONNECT の :authority はポートを省略できる。
+// 正常な host (ポートあり・なし、IPv6 あり・なし) は受理される。
+#[test]
+fn test_extended_connect_authority_accepted() {
+    for value in [
+        "example.com",
+        "example.com:443",
+        "[::1]",
+        "[::1]:443",
+        "foo%20bar",
+        "[::ffff:192.168.0.1]",
+    ] {
+        assert!(
+            validate_request_headers(&extended_connect_headers(value)).is_ok(),
+            "正常な host は受理されるはず: {value:?}"
+        );
+    }
 }
 
 // RFC 9113 Section 8.3.1: OPTIONS 以外のメソッドで :path = "*" は拒否される。

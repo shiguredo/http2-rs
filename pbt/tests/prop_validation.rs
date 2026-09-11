@@ -330,6 +330,8 @@ fn prop_valid_trailers_passes() -> noprop::TestResult {
 
 /// 有効な Extended CONNECT リクエストは検証を通過する (RFC 8441)
 ///
+/// RFC 8441 Section 4 / RFC 9113 Section 8.3.1 / RFC 3986 Section 3.2:
+/// Extended CONNECT の :authority は host[:port] で、ポートは省略できる。
 /// draft-ietf-webtrans-http2-15 Section 3.2: :protocol=webtransport は :scheme=https が必須。
 /// protocol を先に決めて scheme を依存生成することで拒否なしで valid-by-construction にする。
 #[test]
@@ -340,8 +342,11 @@ fn prop_valid_extended_connect_passes() -> noprop::TestResult {
         let path = sample_http_path(ctx);
         let authority = {
             let host = sample_authority(ctx);
-            let port = noprop::sample_u64_in(ctx, 0..=65535) as u16;
-            format!("{host}:{port}")
+            if noprop::sample_bool(ctx) {
+                format!("{host}:{}", noprop::sample_u64_in(ctx, 0..=65535) as u16)
+            } else {
+                host
+            }
         };
         let protocol = noprop::sample_choice(ctx, &["webtransport", "websocket"]);
         // webtransport は https が必須 (draft-ietf-webtrans-http2-15 Section 3.2)
