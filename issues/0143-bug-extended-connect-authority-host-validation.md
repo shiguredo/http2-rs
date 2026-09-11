@@ -1,7 +1,7 @@
 # Extended CONNECT の :authority 検証が host 部 (uri-host) を検査しない
 
 - Created: 2026-09-09
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-12
 - Branch: feature/fix-extended-connect-authority-host-validation
 - Polished: 2026-09-10
 
@@ -24,3 +24,11 @@ HTTP/2 の Extended CONNECT (`:protocol` 付き CONNECT) の `:authority` 検証
 - Extended CONNECT の `:authority` に SP・制御文字・不正文字を含む host が拒否されること
 - 正常な host (`example.com`、`example.com:443`、`[::1]`、`[::1]:443`) が受理されること
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/validation.rs` の `validate_request_headers` で Extended CONNECT の `:authority` も検証するようにした。共通ヘルパー `is_valid_authority(authority, port_required)` を追加し、通常 CONNECT はポート必須、Extended CONNECT はポート省略可として host 部 (uri-host) と任意のポート (`host[:port]`) を検証する (RFC 8441 Section 4 / RFC 9113 Section 8.3.1 / RFC 3986 Section 3.2 / Section 3.2.2 / Section 3.2.3)
+- 新たに `ValidationError::ExtendedConnectInvalidAuthority` を追加し、不正な host・不正な IPv6 リテラル・空 host・空ポート・範囲外ポートを拒否する
+- `tests/test_validation.rs` に、SP・制御文字・非 ASCII・不正文字・不正な pct-encoded・不正な IPv6 リテラル・ポート範囲外・u32 超過ポート・空ポート・空 host・空 authority・userinfo の拒否テストと、`example.com` / `example.com:443` / `[::1]` / `[::1]:443` などの受理テストを追加した。通常 CONNECT の境界ケース (`[::1]` / `[::1]:`) も追加した
+- `pbt/tests/prop_validation.rs` の `prop_valid_extended_connect_passes` にポート省略ケースを追加した
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
