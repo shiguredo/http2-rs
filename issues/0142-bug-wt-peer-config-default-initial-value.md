@@ -1,7 +1,7 @@
 # ピアが SETTINGS_WT_INITIAL_MAX_* を広告しない場合に WtConfig::default の値が使われる
 
 - Created: 2026-09-09
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-12
 - Branch: feature/fix-wt-peer-config-default-initial-value
 - Polished: 2026-09-10
 
@@ -29,3 +29,11 @@ WebTransport セッション確立時に、ピアが `SETTINGS_WT_INITIAL_MAX_*`
 - ピアが `SETTINGS_WT_INITIAL_MAX_*` を広告しない場合、ピア用 config の初期値が 0 になること
 - その状態で `apply_init_as_peer` のヘッダー値が max マージで採用されること
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/webtransport.rs` の `WtConfig` に `peer_default()` (SETTINGS_WT_INITIAL_MAX_* の Initial Value 全て 0) を追加し、`crates/tokio-http2/src/webtransport.rs` の `WtServerRequest::accept` がピア用 config を `peer_default()` から構築して `overlay_settings` / `apply_init_as_peer` でピア広告値を反映するようにした (draft-ietf-webtrans-http2-15 Section 4.3 / Section 4.3.1 / Section 11.2)
+- ピア用 config の初期値が 0 になったことで、セッション送信ウィンドウ枯渇時に `send_stream_data` がストリームの送信済みバイト数・送信状態を更新してから失敗する問題が到達可能になったため、両方の送信上限を状態変更前に検査するよう修正した (Section 6.2 / Section 6.5 / Section 6.6)
+- `tests/test_webtransport/init.rs` に `peer_default` の全フィールド 0・`apply_init_as_peer` のヘッダー値採用・0 初期値での送信上限・拒否時の部分状態更新なしを検証するテストを追加した
+- `crates/tokio-http2/tests/test_webtransport.rs` に、SETTINGS を広告しないクライアントが WebTransport-Init で通知した小さい `bl` が上限として採用されることを検証する統合テストを追加し、サーバーが送信する既存テスト 3 件のクライアントを WT SETTINGS を広告する Limits に修正した
+- `skills/shiguredo-http2/SKILL.md` の `WtConfig` API と accept の説明を更新し、`CHANGES.md` の `## develop` に `[ADD]` と `[FIX]` のエントリを追加した
