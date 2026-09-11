@@ -15,6 +15,8 @@
   - @voluntas
 - [ADD] `shiguredo_http2::Connection` / `tokio_http2::Connection` / `tokio_http2::ServerConnection` に、ストリームの送信待ちデータの有無を返す `has_pending_send_data` を追加する
   - @voluntas
+- [ADD] `WtConfig` に、ピア用の初期フロー制御値を仕様の Initial Value (全て 0) で生成する `peer_default()` を追加する (draft-ietf-webtrans-http2-15 Section 11.2)
+  - @voluntas
 - [FIX] クローズ済みの WebTransport ストリームへの WT_STREAM を WT_STREAM_STATE_ERROR として拒否し、新規ストリームとして再作成されないようにする (draft-ietf-webtrans-http2-15 Section 6.4)
   - @voluntas
 - [FIX] STOP_SENDING 送信後にピアから在路データが届いても WebTransport セッションが abort されず、停止要求後の受信データをアプリへ配送しないようにする (RFC 9000 Section 3.5)
@@ -42,6 +44,10 @@
 - [FIX] WebTransport ドライバが WT 出力を送信バッファの固定容量 (65535 bytes) 以下に分割して送信し、ピアが十分な送信ウィンドウを広告する構成で 65535 bytes を超えるストリーム送信が失敗しないようにする (draft-ietf-webtrans-http2-15 Section 2 / RFC 9113 Section 6.9)
   - @voluntas
 - [FIX] Extended CONNECT の `:authority` 検証で host 部 (uri-host) を RFC 3986 の reg-name 文字集合と pct-encoded で検査し、SP・制御文字・非 ASCII・不正文字・不正な pct-encoded・IPv6 リテラル内部の不正文字を拒否する。ポートは省略可能とし、指定時は数字のみで 0-65535 の範囲に制限する (RFC 8441 Section 4 / RFC 9113 Section 8.3.1 / RFC 3986 Section 3.2 / Section 3.2.2 / Section 3.2.3)
+  - @voluntas
+- [FIX] WebTransport セッション確立時のピア用 `WtConfig` を仕様の Initial Value 0 から構築し、`SETTINGS_WT_INITIAL_MAX_*` を広告しないピアの未広告項目が `WtConfig::default` の既定値にならないようにする (draft-ietf-webtrans-http2-15 Section 4.3.1 / Section 11.2)
+  - @voluntas
+- [FIX] WebTransport の `send_stream_data` がセッション送信ウィンドウ超過時にストリームの送信済みバイト数と送信状態を更新してしまう問題を修正し、拒否時に部分的な状態変更を残さないようにする (draft-ietf-webtrans-http2-15 Section 6.5 / Section 6.6)
   - @voluntas
 
 ### misc

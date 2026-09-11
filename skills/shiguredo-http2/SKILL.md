@@ -211,6 +211,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 
 | メソッド | 説明 |
 |---------|------|
+| `peer_default()` | ピア用 `WtConfig` を仕様の Initial Value (全て 0) で生成。ピア広告値の適用前に使う (Section 11.2) |
 | `apply_init_as_peer(&WtInit)` | ピア側設定として `WebTransport-Init` を反映 |
 | `overlay_settings(&Settings)` | HTTP/2 SETTINGS の `SETTINGS_WT_INITIAL_MAX_*` を上書き適用 (`accept()` で自動呼出) |
 
@@ -444,7 +445,7 @@ WebTransport 関連型: `WtServerRequest`, `WtServerSession`, `WtSessionHandle`,
 - `allowed_origin: Some(_)` のとき、Origin ヘッダーが存在する場合のみ検証する。欠落時は検証スキップ。不一致は 403
 - `selected_protocol: Some(_)` のとき、リクエストの `WT-Available-Protocols` に含まれることを検証し、レスポンスに `wt-protocol` を付与 (Section 3.3)
 - `WebTransport-Init` のパース失敗時は `:status=400` で拒否
-- 自広告 / ピア SETTINGS を `WtConfig::overlay_settings` で自動適用 (Section 4.3.1)
+- 自広告 SETTINGS は `WtConfig::overlay_settings` でローカル config に反映し、ピア SETTINGS は `WtConfig::peer_default` (Initial Value 0) から開始した config に `overlay_settings` で反映する (Section 4.3.1 / Section 11.2)
 
 `WtServerSession::export_keying_material` / `WtSessionHandle::export_keying_material` で TLS Keying Material Exporter を利用できる (Section 5.3)。
 

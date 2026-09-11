@@ -226,8 +226,9 @@ impl WtServerRequest {
 
         // draft-ietf-webtrans-http2-15 Section 4.3.1:
         // ピア (クライアント) の SETTINGS からピア用 WtConfig を構築する。
-        // send_max はピアの広告値を使う (Section 4.3.1)
-        let mut peer_config = WtConfig::default();
+        // send_max はピアの広告値を使う。未広告項目の Initial Value は 0 のため
+        // WtConfig::default() ではなく peer_default() から開始する (Section 11.2)
+        let mut peer_config = WtConfig::peer_default();
         peer_config.overlay_settings(conn.remote_settings());
 
         // draft-ietf-webtrans-http2-15 Section 4.3 (L509-L530) / Section 4.3.2 (L583-L590):
