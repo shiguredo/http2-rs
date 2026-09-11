@@ -612,9 +612,10 @@ async fn test_wt_close_errors_when_driver_dead() {
 /// コマンド処理中の出力フラッシュ失敗が `Error::ConnectionClosed` に丸められず、
 /// 呼び出し側へ実際の失敗原因が伝わることを確認する。
 ///
-/// 送信バッファの固定容量 (65535) を超える DATAGRAM を
-/// 送信すると、driver の出力フラッシュが sans-io 層のエラー
-/// (send buffer full) で失敗する。
+/// 出力は送信バッファの固定容量 (65535) 以下のチャンクに分割して送信されるため、
+/// 単一チャンクのサイズ超過では失敗しない。クライアントが WINDOW_UPDATE を返さず
+/// 送信ウィンドウが枯渇すると、先行チャンクが送信バッファに滞留したまま後続チャンクを
+/// 積み、累積で容量を超えて sans-io 層のエラー (send buffer full) で失敗する。
 #[tokio::test]
 async fn test_wt_command_flush_error_not_masked_as_connection_closed() {
     let tls = test_tls();
@@ -636,7 +637,8 @@ async fn test_wt_command_flush_error_not_masked_as_connection_closed() {
             .await
             .expect("wt accept");
 
-        // 送信バッファの固定容量 (65535) を超える DATAGRAM を送ると、出力フラッシュが失敗する
+        // 分割後の後続チャンクが送信ウィンドウ枯渇で累積し、
+        // 送信バッファの固定容量 (65535) を超えるため出力フラッシュが失敗する
         let err = session
             .send_datagram(vec![0u8; 200_000])
             .await
@@ -658,6 +660,152 @@ async fn test_wt_command_flush_error_not_masked_as_connection_closed() {
     let _connect_stream = perform_connect(&mut client).await;
 
     server_task.await.expect("server join");
+}
+
+/// ピアが 65535 bytes 超の初期ウィンドウを広告する構成で、
+/// 65535 bytes を超える WT ストリーム送信が分割送信されて成功することを確認する。
+///
+/// HTTP/2 の接続レベル送信ウィンドウは SETTINGS では拡張されないため、
+/// クライアントは `connection_window_size` も送信量以上に広告する
+/// (RFC 9113 Section 6.9.2)。クライアントが開始した bidi ストリームは
+/// サーバー視点ではピア開始となるため、サーバーの送信ウィンドウはクライアントの
+/// `initial_max_stream_data_bidi_local` で、セッションの送信ウィンドウは
+/// `initial_max_data` で初期化される
+/// (draft-ietf-webtrans-http2-15 Section 11.2)。
+#[tokio::test]
+async fn test_wt_send_large_stream_data_with_expanded_windows() {
+    // 送信バッファの固定容量 (65535) を超え、複数チャンクに分割されるペイロード長
+    const PAYLOAD_SIZE: usize = 200_000;
+    // 送信バッファとフロー制御ウィンドウをペイロードより大きくする広告値
+    const WINDOW_SIZE: u32 = 1 << 20;
+
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("アドレスのパースに失敗した"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("サーバーのバインドに失敗した");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続の受け入れに失敗した");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let mut session = req
+            .accept(WtConfig::default(), None, None)
+            .await
+            .expect("WebTransport セッションの受け入れに失敗した");
+
+        // クライアント開始 bidi ストリームを受け取り、送信バッファの固定容量を
+        // 超えるデータを送る (分割送信されないとここでエラーになる)
+        let mut bidi = session
+            .accept_bidi()
+            .await
+            .expect("bidi ストリームの受信に失敗した");
+        bidi.recv()
+            .await
+            .expect("クライアントデータの受信に失敗した")
+            .expect("クライアントデータが無い");
+        let payload = vec![0xAB; PAYLOAD_SIZE];
+        bidi.send(payload, true)
+            .await
+            .expect("大きな WT 送信が失敗した");
+        // close が成功すれば、大きな送信の途中で driver が終了していないことを確認できる
+        session
+            .close(0, "done")
+            .await
+            .expect("大きな送信後の close が失敗した");
+    });
+
+    // クライアントはストリーム / 接続レベルのウィンドウと WT の送信上限を
+    // ペイロードより大きく広告する
+    let client_limits = Limits::builder()
+        .enable_connect_protocol(true)
+        .wt_enabled(true)
+        .initial_window_size(WindowSize::from_static(WINDOW_SIZE))
+        .connection_window_size(WindowSize::from_static(WINDOW_SIZE))
+        .webtransport(
+            Some(WINDOW_SIZE), // initial_max_data
+            Some(64 * 1024),   // initial_max_stream_data_uni
+            Some(WINDOW_SIZE), // initial_max_stream_data_bidi_local
+            Some(10),          // initial_max_streams_uni
+            Some(10),          // initial_max_streams_bidi
+            Some(64 * 1024),   // initial_max_stream_data_bidi_remote
+        )
+        .build()
+        .expect("クライアント Limits の構築に失敗した");
+    let mut client = Client::connect_insecure(addr, "localhost", client_limits)
+        .await
+        .expect("接続に失敗した");
+    let connect_stream = perform_connect(&mut client).await;
+
+    // クライアント側 WtSession の受信ウィンドウは、広告した Limits のうち
+    // bidi ストリームとセッションの値に一致させる
+    let local_config = WtConfig {
+        initial_max_data: u64::from(WINDOW_SIZE),
+        initial_max_stream_data_bidi_local: u64::from(WINDOW_SIZE),
+        ..WtConfig::default()
+    };
+    let mut wt_client = WtSession::client(local_config, WtConfig::default());
+    wt_client.initiate().expect("セッション開始に失敗した");
+
+    // bidi ストリームを開いてデータを送り、サーバーにストリームの存在を知らせる
+    let bidi_id = wt_client
+        .open_bidi_stream()
+        .expect("bidi ストリームを開けない");
+    wt_client
+        .send_stream_data(bidi_id, b"hello", false)
+        .expect("hello の送信に失敗した");
+    while let Some(out) = wt_client.poll_output() {
+        client
+            .send_data(connect_stream, out, false)
+            .await
+            .expect("データの送信に失敗した");
+    }
+
+    // 分割送信された大きなデータを受信し切る
+    let mut received = Vec::new();
+    let mut finished = false;
+    for _ in 0..100 {
+        let ev = tokio::time::timeout(Duration::from_secs(5), client.next_event())
+            .await
+            .expect("クライアントイベントの受信がタイムアウトした")
+            .expect("クライアントイベントの受信に失敗した");
+        if let Event::DataReceived {
+            stream_id, data, ..
+        } = ev
+            && stream_id == connect_stream
+        {
+            wt_client.feed(&data).expect("feed に失敗した");
+            wt_client.process().expect("process に失敗した");
+            while let Some(wt_ev) = wt_client.poll_event() {
+                if let WtEvent::StreamData {
+                    stream_id,
+                    data,
+                    fin,
+                } = wt_ev
+                    && stream_id == bidi_id
+                {
+                    received.extend_from_slice(&data);
+                    if fin {
+                        finished = true;
+                    }
+                }
+            }
+        }
+        if finished {
+            break;
+        }
+    }
+    assert!(finished, "FIN 付きの大きなデータを受信し切れなかった");
+    assert_eq!(received.len(), PAYLOAD_SIZE, "受信データ長が一致しない");
+    assert!(
+        received.iter().all(|&b| b == 0xAB),
+        "受信データの内容が一致しない"
+    );
+    server_task.await.expect("サーバータスクの終了に失敗した");
 }
 
 /// ローカル開始 bidi ストリームの自動ウィンドウ拡張が
