@@ -29,6 +29,16 @@ use crate::server::ServerConnection;
 /// WebTransport CONNECT 擬似ヘッダーの値
 pub const WEBTRANSPORT_PROTOCOL: &[u8] = b"webtransport";
 
+/// WT 出力を `Connection::send_data` に 1 回で渡せる上限
+///
+/// sans-io 層の `Stream::new` が送信バッファ容量に使用する
+/// `shiguredo_http2::settings::DEFAULT_INITIAL_WINDOW_SIZE` と同じ定数を参照する
+/// (固定容量 65535)。1 回の `send_data` にそれ以上を渡すと全量拒否される。
+/// WebTransport capsule は HTTP/2 のバイトストリーム上に載るため、capsule 境界と
+/// 無関係に分割して送信できる (draft-ietf-webtrans-http2-15 Section 2 /
+/// RFC 9297 Section 3.1)。
+const WT_SEND_CHUNK_SIZE: usize = shiguredo_http2::settings::DEFAULT_INITIAL_WINDOW_SIZE as usize;
+
 /// WebTransport セッション要求 (サーバー側)
 ///
 /// `ServerConnection::next_event()` で Extended CONNECT (`:method=CONNECT` かつ
@@ -1061,13 +1071,15 @@ impl DriverState {
     /// 伴う Close と、WT 出力を生まない `ExportKeyingMaterial` は handle_cmd 内で
     /// 直接処理する。
     ///
-    /// セッション操作が成功した場合は WT 出力をフラッシュする。フラッシュの失敗は
-    /// ack にエラーとして載せて呼び出し側へ実際の失敗原因を伝えたうえで `false` を
-    /// 返して driver を終了する。フラッシュ失敗はコネクションが使えない状態か、
-    /// 送信バッファ (固定容量 65535) に収まらない出力を一度に送ろうとした状態
-    /// (send buffer full) である。全量拒否のため capsule は積まれないが、
-    /// `poll_output` で drain 済みの出力は破棄されるため、このまま継続すると
-    /// データ欠落となる。終了が安全側の選択である。
+    /// セッション操作が成功した場合は WT 出力を送信バッファ容量以下のチャンクに
+    /// 分割してフラッシュする。フラッシュの失敗は ack にエラーとして載せて
+    /// 呼び出し側へ実際の失敗原因を伝えたうえで `false` を返して driver を終了する。
+    /// フラッシュ失敗の原因は 2 つある。コネクションが使えない状態か、接続レベルまたは
+    /// ストリームレベルの送信ウィンドウ枯渇で先行チャンクが送信バッファ (固定容量 65535)
+    /// に滞留したまま後続チャンクを積み、累積で容量を超えた状態 (send buffer full) である。
+    /// 送信済みの先行チャンクはピアへ届くが、`poll_output` で drain 済みの残り出力と
+    /// バッファに残った未送信データは破棄されるため、このまま継続すると capsule の
+    /// 残りが欠落する。終了が安全側の選択である。
     /// セッション操作自体の失敗 (例: クローズ済みストリームへの送信・送信ウィンドウ
     /// 枯渇) は ack に載せるだけで driver は継続する。ストリーム個別の失敗で
     /// コネクション全体を終了させる必要はないため。
@@ -1364,11 +1376,17 @@ impl DriverState {
         }
     }
 
+    /// WT 出力を HTTP/2 DATA として送信する
+    ///
+    /// 出力は `WT_SEND_CHUNK_SIZE` 以下に分割して渡す。分割せずに容量を超える
+    /// 出力を 1 回で渡すと全量拒否され、driver が終了する。
     async fn flush_wt_output(&mut self) -> Result<()> {
         while let Some(out) = self.wt_session.poll_output() {
-            self.conn
-                .send_data(self.connect_stream_id, out, false)
-                .await?;
+            for chunk in out.chunks(WT_SEND_CHUNK_SIZE) {
+                self.conn
+                    .send_data(self.connect_stream_id, chunk.to_vec(), false)
+                    .await?;
+            }
         }
         Ok(())
     }

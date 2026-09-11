@@ -39,5 +39,7 @@
   - @voluntas
 - [FIX] WebTransport の自動ウィンドウ拡張のしきい値を切り上げ除算にし、`initial_max_data` / `initial_max_stream_data_*` が 1 でも受信ウィンドウが拡張されるようにする (draft-ietf-webtrans-http2-15 Section 6.5 / Section 6.6)
   - @voluntas
+- [FIX] WebTransport ドライバが WT 出力を送信バッファの固定容量 (65535 bytes) 以下に分割して送信し、ピアが十分な送信ウィンドウを広告する構成で 65535 bytes を超えるストリーム送信が失敗しないようにする (draft-ietf-webtrans-http2-15 Section 2 / RFC 9113 Section 6.9)
+  - @voluntas
 
 ### misc
