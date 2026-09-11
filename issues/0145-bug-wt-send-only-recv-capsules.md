@@ -1,7 +1,7 @@
 # 送信専用ストリームへの WT_RESET_STREAM / WT_STREAM_DATA_BLOCKED が受理される
 
 - Created: 2026-09-10
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-12
 - Branch: feature/fix-wt-send-only-recv-capsules
 - Polished: 2026-09-12
 
@@ -32,3 +32,12 @@ WT_STREAM 側はローカル開始 uni を `WtSession::handle_stream_data` で�
 - ローカル開始 bidi ストリームおよびピア開始ストリームへの同 capsule は従来どおり動作すること
 - ローカル開始 uni ストリームへの WT_STOP_SENDING と WT_MAX_STREAM_DATA は従来どおり受理され、送信停止要求・送信上限更新が機能すること
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/webtransport/stream.rs` の `WtStream` に `has_recv_part()` (双方向またはピア開始で true) を追加し、受信パートの有無を方向で判定できるようにした
+- `src/webtransport.rs` の `handle_capsule` で WT_RESET_STREAM / WT_STREAM_DATA_BLOCKED の検証を `can_recv()` だけでなく `has_recv_part()` でも行い、送信専用のローカル開始 uni ストリームへの受信を `WtError::stream_state_error` で拒否するようにした (draft-ietf-webtrans-http2-15 Section 6.2 / Section 6.9 / RFC 9000 Section 19.4 / Section 19.13)
+- WT_STOP_SENDING / WT_MAX_STREAM_DATA は送信専用ストリームでも受信が正当なため、従来どおり受理する
+- `tests/test_webtransport/integration.rs` に、ローカル開始 uni への拒否 (`StreamReset` 非送出を含む)、ローカル開始 bidi / ピア開始 bidi / ピア開始 uni への受理、WT_STOP_SENDING / WT_MAX_STREAM_DATA の非回帰を検証するテストを追加した
+- `tests/test_webtransport/stream.rs` に `has_recv_part` の方向 4 分類の直接テストを追加した
+- `CHANGES.md` の `## develop` に `[ADD]` と `[FIX]` のエントリを追加した
