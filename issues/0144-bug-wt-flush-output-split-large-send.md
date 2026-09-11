@@ -1,7 +1,7 @@
 # WebTransport ドライバが大きな WT 送信を 1 回の HTTP/2 send_data で送り送信バッファ上限で失敗する
 
 - Created: 2026-09-10
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-12
 - Branch: feature/fix-wt-flush-output-split-large-send
 - Polished: 2026-09-10
 
@@ -30,3 +30,12 @@
 - ピアが 65535 超の初期ウィンドウ (`initial_window_size` と `connection_window_size` の両方) を広告する構成で、65535 bytes を超える WT 送信が成功すること
 - `flush_wt_output` が出力を分割して送信すること
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `crates/tokio-http2/src/webtransport.rs` の `flush_wt_output` で WT 出力を `WT_SEND_CHUNK_SIZE` (65535) 以下に分割し、順次 `Connection::send_data` へ渡すようにした。分割定数は sans-io 層の送信バッファ容量と同じ `DEFAULT_INITIAL_WINDOW_SIZE` を参照する
+- `tokio_http2::Connection` / `Client` / `ServerConnection` の `send_data` doc に、1 回の呼び出し上限 (65535 bytes) と送信待ちデータ滞留時の累積拒否を明記した
+- `send_cmd_result` の doc を分割後の失敗原因 (送信ウィンドウ枯渇による累積バッファ超過) に合わせて修正した
+- 既存テスト `test_wt_command_flush_error_not_masked_as_connection_closed` のコメントを、分割後の累積バッファ超過の説明に修正した
+- `crates/tokio-http2/tests/test_webtransport.rs` に、ピアが 65535 超の送信ウィンドウを広告する構成で 65535 bytes 超の WT ストリーム送信が成功し、その後の close も成功するテスト `test_wt_send_large_stream_data_with_expanded_windows` を追加した
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
