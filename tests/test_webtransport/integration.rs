@@ -804,6 +804,278 @@ fn wt_reset_stream_reliable_size_too_small_errors() {
     assert!(err.reason().contains("does not match"));
 }
 
+/// 送信専用のローカル開始 uni ストリームへの WT_RESET_STREAM は
+/// WT_STREAM_STATE_ERROR になり、StreamReset イベントが送出されないこと。
+/// (draft-ietf-webtrans-http2-15 Section 6.2 / RFC 9000 Section 19.4)
+#[test]
+fn wt_reset_stream_local_uni_stream_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let local_id = session
+        .open_uni_stream()
+        .expect("uni ストリームを開けるはず");
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtResetStream {
+        stream_id: local_id,
+        error_code: 0,
+        reliable_size: 0,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("送信専用ストリームへの WT_RESET_STREAM は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason().contains("not in valid state"));
+
+    // StreamReset イベントが送出されないこと
+    while let Some(ev) = session.poll_event() {
+        assert!(
+            !matches!(ev, WtEvent::StreamReset { .. }),
+            "送信専用ストリームへの WT_RESET_STREAM で StreamReset を送出してはいけない"
+        );
+    }
+}
+
+/// 送信専用のローカル開始 uni ストリームへの WT_STREAM_DATA_BLOCKED は
+/// WT_STREAM_STATE_ERROR になること。
+/// (draft-ietf-webtrans-http2-15 Section 6.9 / RFC 9000 Section 19.13)
+#[test]
+fn wt_stream_data_blocked_local_uni_stream_errors() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let local_id = session
+        .open_uni_stream()
+        .expect("uni ストリームを開けるはず");
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStreamDataBlocked {
+        stream_id: local_id,
+        maximum: 1024,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("送信専用ストリームへの WT_STREAM_DATA_BLOCKED は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason().contains("not in valid state"));
+}
+
+/// ピア開始 uni ストリームは受信パートを持つため、WT_RESET_STREAM が
+/// 従来どおり受理され StreamReset イベントが送出されること。
+#[test]
+fn wt_reset_stream_peer_uni_stream_accepted() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, false);
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: peer_id,
+        data: b"hi".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtResetStream {
+        stream_id: peer_id,
+        error_code: 0,
+        reliable_size: 2,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("ピア開始 uni ストリームは WT_RESET_STREAM を受理するはず");
+
+    let mut got_reset = false;
+    while let Some(ev) = session.poll_event() {
+        if let WtEvent::StreamReset { stream_id, .. } = ev
+            && stream_id == peer_id
+        {
+            got_reset = true;
+        }
+    }
+    assert!(got_reset, "StreamReset イベントが送出されるはず");
+}
+
+/// ローカル開始 bidi ストリームは受信パートを持つため、WT_RESET_STREAM が
+/// 従来どおり受理されること。
+#[test]
+fn wt_reset_stream_local_bidi_stream_accepted() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let local_id = session
+        .open_bidi_stream()
+        .expect("bidi ストリームを開けるはず");
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtResetStream {
+        stream_id: local_id,
+        error_code: 0,
+        reliable_size: 0,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("ローカル開始 bidi ストリームは WT_RESET_STREAM を受理するはず");
+}
+
+/// 受信パートを持つストリーム (ローカル開始 bidi / ピア開始 bidi / ピア開始 uni) への
+/// WT_STREAM_DATA_BLOCKED は従来どおり受理されること。
+#[test]
+fn wt_stream_data_blocked_recv_streams_accepted() {
+    // ローカル開始 bidi
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let local_id = session
+        .open_bidi_stream()
+        .expect("bidi ストリームを開けるはず");
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStreamDataBlocked {
+        stream_id: local_id,
+        maximum: 1024,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("ローカル開始 bidi ストリームは WT_STREAM_DATA_BLOCKED を受理するはず");
+
+    // ピア開始 bidi
+    let mut session2 = WtSession::server(WtConfig::default(), WtConfig::default());
+    session2.initiate().expect("セッションを開始できるはず");
+    let peer_bidi_id = wt_stream_id::first(true, true);
+
+    let mut encoder2 = CapsuleEncoder::new();
+    encoder2.encode(&Capsule::WtStream {
+        stream_id: peer_bidi_id,
+        data: b"y".to_vec(),
+        fin: false,
+    });
+    session2
+        .feed(&encoder2.take())
+        .expect("feed に成功するはず");
+    session2.process().expect("process に成功するはず");
+
+    let mut encoder2 = CapsuleEncoder::new();
+    encoder2.encode(&Capsule::WtStreamDataBlocked {
+        stream_id: peer_bidi_id,
+        maximum: 1024,
+    });
+    session2
+        .feed(&encoder2.take())
+        .expect("feed に成功するはず");
+    session2
+        .process()
+        .expect("ピア開始 bidi ストリームは WT_STREAM_DATA_BLOCKED を受理するはず");
+
+    // ピア開始 uni
+    let mut session3 = WtSession::server(WtConfig::default(), WtConfig::default());
+    session3.initiate().expect("セッションを開始できるはず");
+    let peer_uni_id = wt_stream_id::first(true, false);
+
+    let mut encoder3 = CapsuleEncoder::new();
+    encoder3.encode(&Capsule::WtStream {
+        stream_id: peer_uni_id,
+        data: b"x".to_vec(),
+        fin: false,
+    });
+    session3
+        .feed(&encoder3.take())
+        .expect("feed に成功するはず");
+    session3.process().expect("process に成功するはず");
+
+    let mut encoder3 = CapsuleEncoder::new();
+    encoder3.encode(&Capsule::WtStreamDataBlocked {
+        stream_id: peer_uni_id,
+        maximum: 1024,
+    });
+    session3
+        .feed(&encoder3.take())
+        .expect("feed に成功するはず");
+    session3
+        .process()
+        .expect("ピア開始 uni ストリームは WT_STREAM_DATA_BLOCKED を受理するはず");
+}
+
+/// 送信専用のローカル開始 uni ストリームへの WT_STOP_SENDING は
+/// 従来どおり受理され、送信停止要求として WT_RESET_STREAM が応答されること。
+#[test]
+fn wt_stop_sending_local_uni_stream_accepted() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let local_id = session
+        .open_uni_stream()
+        .expect("uni ストリームを開けるはず");
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: local_id,
+        error_code: 7,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("ローカル開始 uni ストリームは WT_STOP_SENDING を受理するはず");
+
+    // 送信停止要求に対して WT_RESET_STREAM が応答される
+    let out = session.poll_output().expect("WT_RESET_STREAM の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtResetStream {
+            stream_id,
+            error_code,
+            reliable_size,
+        } => {
+            assert_eq!(stream_id, local_id);
+            assert_eq!(error_code, 7);
+            assert_eq!(reliable_size, 0, "未送信なので reliable_size は 0");
+        }
+        other => panic!("WtResetStream を期待したが {other:?} だった"),
+    }
+}
+
+/// 送信専用のローカル開始 uni ストリームへの WT_MAX_STREAM_DATA は
+/// 従来どおり受理され、送信上限が更新されること。
+#[test]
+fn wt_max_stream_data_local_uni_stream_accepted() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let local_id = session
+        .open_uni_stream()
+        .expect("uni ストリームを開けるはず");
+    let before = session
+        .stream(local_id)
+        .expect("ストリームが存在するはず")
+        .send_available();
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: local_id,
+        maximum: before + 4096,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("ローカル開始 uni ストリームは WT_MAX_STREAM_DATA を受理するはず");
+
+    assert_eq!(
+        session
+            .stream(local_id)
+            .expect("ストリームが存在するはず")
+            .send_available(),
+        before + 4096,
+        "WT_MAX_STREAM_DATA で送信上限が更新されること"
+    );
+}
+
 /// ストリームレベルのフロー制御違反時に output_buffer が汚染されないことを確認する
 /// (draft-ietf-webtrans-http2-15 Section 6.6: ストリームレベルのフロー制御)
 #[test]

@@ -17,6 +17,8 @@
   - @voluntas
 - [ADD] `WtConfig` に、ピア用の初期フロー制御値を仕様の Initial Value (全て 0) で生成する `peer_default()` を追加する (draft-ietf-webtrans-http2-15 Section 11.2)
   - @voluntas
+- [ADD] `WtStream` に、ストリームが受信パートを持つかどうかを方向 (双方向またはピア開始) で判定する `has_recv_part` を追加する
+  - @voluntas
 - [FIX] クローズ済みの WebTransport ストリームへの WT_STREAM を WT_STREAM_STATE_ERROR として拒否し、新規ストリームとして再作成されないようにする (draft-ietf-webtrans-http2-15 Section 6.4)
   - @voluntas
 - [FIX] STOP_SENDING 送信後にピアから在路データが届いても WebTransport セッションが abort されず、停止要求後の受信データをアプリへ配送しないようにする (RFC 9000 Section 3.5)
@@ -48,6 +50,8 @@
 - [FIX] WebTransport セッション確立時のピア用 `WtConfig` を仕様の Initial Value 0 から構築し、`SETTINGS_WT_INITIAL_MAX_*` を広告しないピアの未広告項目が `WtConfig::default` の既定値にならないようにする (draft-ietf-webtrans-http2-15 Section 4.3.1 / Section 11.2)
   - @voluntas
 - [FIX] WebTransport の `send_stream_data` がセッション送信ウィンドウ超過時にストリームの送信済みバイト数と送信状態を更新してしまう問題を修正し、拒否時に部分的な状態変更を残さないようにする (draft-ietf-webtrans-http2-15 Section 6.5 / Section 6.6)
+  - @voluntas
+- [FIX] 送信専用のローカル開始 uni ストリームへの WT_RESET_STREAM / WT_STREAM_DATA_BLOCKED を WT_STREAM_STATE_ERROR として拒否し、WT_RESET_STREAM 受信時に `StreamReset` イベントが誤って送出されないようにする (draft-ietf-webtrans-http2-15 Section 6.2 / Section 6.9 / RFC 9000 Section 19.4 / Section 19.13)
   - @voluntas
 
 ### misc

@@ -268,6 +268,17 @@ impl WtStream {
         self.bidirectional
     }
 
+    /// 受信パートがあるかどうかを返す
+    ///
+    /// 双方向ストリーム、またはピアが開始した単方向ストリームは受信パートを持つ。
+    /// ローカルが開始した単方向ストリーム (送信専用) は受信パートを持たない。
+    /// [`Self::can_recv`] が受信状態のみを見るのに対し、本メソッドはストリームの方向で
+    /// 判定する。
+    #[must_use]
+    pub const fn has_recv_part(&self) -> bool {
+        self.bidirectional || !self.locally_initiated
+    }
+
     /// 送信状態を取得する
     #[must_use]
     pub const fn send_state(&self) -> SendState {
