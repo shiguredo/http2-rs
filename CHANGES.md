@@ -41,5 +41,7 @@
   - @voluntas
 - [FIX] WebTransport ドライバが WT 出力を送信バッファの固定容量 (65535 bytes) 以下に分割して送信し、ピアが十分な送信ウィンドウを広告する構成で 65535 bytes を超えるストリーム送信が失敗しないようにする (draft-ietf-webtrans-http2-15 Section 2 / RFC 9113 Section 6.9)
   - @voluntas
+- [FIX] Extended CONNECT の `:authority` 検証で host 部 (uri-host) を RFC 3986 の reg-name 文字集合と pct-encoded で検査し、SP・制御文字・非 ASCII・不正文字・不正な pct-encoded・IPv6 リテラル内部の不正文字を拒否する。ポートは省略可能とし、指定時は数字のみで 0-65535 の範囲に制限する (RFC 8441 Section 4 / RFC 9113 Section 8.3.1 / RFC 3986 Section 3.2 / Section 3.2.2 / Section 3.2.3)
+  - @voluntas
 
 ### misc

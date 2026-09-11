@@ -70,6 +70,8 @@ pub enum ValidationError {
     NonConnectMissingPathOrScheme,
     /// Extended CONNECT (RFC 8441) に `:scheme` または `:path` がない
     ExtendedConnectMissingSchemeOrPath,
+    /// Extended CONNECT の `:authority` の host 部 (uri-host) またはポートが不正
+    ExtendedConnectInvalidAuthority,
     /// CONNECT 以外のリクエストに `:protocol` が含まれている
     ProtocolOnNonConnect,
     /// Host ヘッダーと `:authority` 疑似ヘッダーの値が不一致
@@ -128,6 +130,12 @@ impl std::fmt::Display for ValidationError {
             }
             Self::ExtendedConnectMissingSchemeOrPath => {
                 write!(f, "Extended CONNECT request must include :scheme and :path")
+            }
+            Self::ExtendedConnectInvalidAuthority => {
+                write!(
+                    f,
+                    "Extended CONNECT :authority must be a valid authority (host[:port])"
+                )
             }
             Self::ProtocolOnNonConnect => {
                 write!(f, ":protocol is only allowed with CONNECT method")
@@ -344,6 +352,16 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
                     ":authority",
                 )));
             }
+            // RFC 8441 Section 4: Extended CONNECT の :authority は RFC 9113 Section 8.3.1
+            // の通常の :authority として解釈され、host[:port] (RFC 3986 Section 3.2) の
+            // host 部 (uri-host) を検証する。CONNECT と異なりポートは必須ではない。
+            if let Some(authority) = authority_value
+                && !is_valid_extended_connect_authority(authority)
+            {
+                return Err(malformed_error(
+                    ValidationError::ExtendedConnectInvalidAuthority,
+                ));
+            }
             // draft-ietf-webtrans-http2-15 Section 3.2:
             // :protocol=webtransport の場合 :scheme は MUST https
             // RFC 3986 Section 3.1: scheme は case-insensitive
@@ -545,15 +563,32 @@ fn validate_forbidden_header_common(name: &[u8]) -> Result<(), Error> {
 /// RFC 9113 Section 8.5: CONNECT の :authority が authority-form (host:port) か検証する
 ///
 /// authority-form = uri-host ":" port (RFC 9112 Section 3.2.3)
+fn is_valid_connect_authority(authority: &[u8]) -> bool {
+    is_valid_authority(authority, true)
+}
+
+/// RFC 8441 Section 4: Extended CONNECT の :authority を検証する
+///
+/// :authority は RFC 8441 Section 4 が参照する RFC 7540 Section 8.1.2.3 (現行の
+/// RFC 9113 Section 8.3.1) に従い RFC 3986 Section 3.2 の authority として解釈され、
+/// ポートは省略できる。そのため host 部 (uri-host) と任意のポート (`host[:port]`) に
+/// 分解して検証する。
+fn is_valid_extended_connect_authority(authority: &[u8]) -> bool {
+    is_valid_authority(authority, false)
+}
+
+/// :authority の host 部 (uri-host) とポートを検証する
+///
 /// uri-host は RFC 3986 Section 3.2.2 の host 文法 (IP-literal / IPv4address / reg-name)
 /// に従う。IP-literal は IPv6address 相当の文字集合のみを受理し、IPvFuture と zone ID は
-/// 受理しない。IPv6 リテラル ([::1]:443) を考慮する。
-fn is_valid_connect_authority(authority: &[u8]) -> bool {
+/// 受理しない。IPv6 リテラルはブラケット付き (`[::1]` / `[::1]:443`) として別途処理する。
+/// `port_required` が true の場合はポートを必須とし、false の場合は省略を許容する。
+fn is_valid_authority(authority: &[u8], port_required: bool) -> bool {
     if authority.is_empty() {
         return false;
     }
 
-    // IPv6 リテラルの場合: [host]:port
+    // IPv6 リテラルの場合: [host] または [host]:port
     if authority.starts_with(b"[") {
         let Some(bracket_end) = authority.iter().position(|&b| b == b']') else {
             return false;
@@ -563,29 +598,34 @@ fn is_valid_connect_authority(authority: &[u8]) -> bool {
             return false;
         }
         let rest = &authority[bracket_end + 1..];
-        if !rest.starts_with(b":") || rest.len() < 2 {
+        if rest.is_empty() {
+            return !port_required;
+        }
+        if !rest.starts_with(b":") {
             return false;
         }
-        let port = &rest[1..];
-        return is_valid_port(port);
+        return is_valid_port(&rest[1..]);
     }
 
-    // IPv4 / ホスト名の場合: 最後の ':' 以降が port
-    let Some(colon_pos) = authority.iter().rposition(|&b| b == b':') else {
-        return false;
+    // IPv4 / ホスト名の場合: 最後の ':' 以降をポートとして扱う
+    let (host, port) = match authority.iter().rposition(|&b| b == b':') {
+        Some(colon_pos) => (&authority[..colon_pos], Some(&authority[colon_pos + 1..])),
+        None => (authority, None),
     };
     // host 部 (uri-host) を検査する (空 host は is_valid_reg_name が拒否する)
-    if !is_valid_reg_name(&authority[..colon_pos]) {
+    if !is_valid_reg_name(host) {
         return false;
     }
-    let port = &authority[colon_pos + 1..];
-    is_valid_port(port)
+    match port {
+        Some(port) => is_valid_port(port),
+        None => !port_required,
+    }
 }
 
 /// RFC 3986 Section 3.2.2: `reg-name = *( unreserved / pct-encoded / sub-delims )` を検証する
 ///
 /// `%` は pct-encoded の導入として扱い、後続 2 バイトが HEXDIG であることを要求する。
-/// authority-form は host を要求するため、空文字列は拒否する。
+/// HTTP/2 の `:authority` は host を要求するため、本実装では空 host を拒否する。
 fn is_valid_reg_name(host: &[u8]) -> bool {
     if host.is_empty() {
         return false;
