@@ -8,7 +8,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 use shiguredo_http2::WindowSize;
 use shiguredo_http2::webtransport::{
-    WtConfig, WtEvent, WtSession, stream::stream_id as wt_stream_id,
+    WtConfig, WtErrorKind, WtEvent, WtSession, stream::stream_id as wt_stream_id,
 };
 
 use tokio_http2::{
@@ -94,6 +94,26 @@ fn server_limits() -> Limits {
         )
         .build()
         .expect("valid server limits")
+}
+
+/// クライアントが WT の SETTINGS を広告する Limits
+///
+/// サーバーはピア用 `WtConfig` を仕様の Initial Value 0 から構築するため、サーバーが
+/// ストリームを開設する・データを送信するテストではクライアントが広告する必要がある。
+fn client_limits_with_wt() -> Limits {
+    Limits::builder()
+        .enable_connect_protocol(true)
+        .wt_enabled(true)
+        .webtransport(
+            Some(1 << 20),   // initial_max_data
+            Some(64 * 1024), // initial_max_stream_data_uni
+            Some(64 * 1024), // initial_max_stream_data_bidi_local
+            Some(10),        // initial_max_streams_uni
+            Some(10),        // initial_max_streams_bidi
+            Some(64 * 1024), // initial_max_stream_data_bidi_remote
+        )
+        .build()
+        .expect("WT 広告付きクライアント Limits の構築に失敗した")
 }
 
 /// ローカル開始 bidi の受信上限 (`bidi_local`) を非ゼロ、ピア開始 bidi の
@@ -195,7 +215,7 @@ async fn test_wt_bidi_echo() {
     });
 
     // クライアント側: 自前で WebTransport を組む
-    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+    let mut client = Client::connect_insecure(addr, "localhost", client_limits_with_wt())
         .await
         .expect("connect");
 
@@ -388,7 +408,7 @@ async fn test_wt_uni_echo() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     });
 
-    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+    let mut client = Client::connect_insecure(addr, "localhost", client_limits_with_wt())
         .await
         .expect("connect");
     let connect_stream = perform_connect(&mut client).await;
@@ -844,7 +864,7 @@ async fn test_wt_local_bidi_window_grows_with_asymmetric_limits() {
         tokio::time::sleep(Duration::from_millis(300)).await;
     });
 
-    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+    let mut client = Client::connect_insecure(addr, "localhost", client_limits_with_wt())
         .await
         .expect("接続に失敗した");
     let connect_stream = perform_connect(&mut client).await;
@@ -1992,8 +2012,9 @@ async fn test_wt_origin_missing_accepted() {
 }
 
 /// draft-ietf-webtrans-http2-15 Section 4.3 (L524-L528):
-/// WebTransport-Init で SETTINGS より大きい値を送ると `accept()` が成功し、
-/// セッションが確立できる (パースが成功する経路の確認)。
+/// SETTINGS_WT_INITIAL_MAX_* を広告しないクライアントが WebTransport-Init で
+/// 大きな値を送ると `accept()` が成功し、セッションが確立できる
+/// (ヘッダー値が Initial Value 0 を基準に採用される経路の確認)。
 #[tokio::test]
 async fn test_wt_init_accept_with_large_value() {
     let tls = test_tls();
@@ -2020,7 +2041,7 @@ async fn test_wt_init_accept_with_large_value() {
             "WebTransport-Init は 'u=...' で始まること、実際は {:?}",
             String::from_utf8_lossy(&init_value)
         );
-        // SETTINGS 由来のデフォルトより大きい値を送っているのでパース成功する
+        // ヘッダー値はピア用 config の Initial Value 0 を基準に採用される
         let _session = req
             .accept(WtConfig::default(), None, None)
             .await
@@ -2048,8 +2069,9 @@ async fn test_wt_init_accept_with_large_value() {
     server_task.await.expect("サーバータスクの join に失敗");
 }
 
-/// WebTransport-Init で SETTINGS より小さい値を送っても `accept()` が成功し、
-/// (apply_init_as_peer の max マージで実値は SETTINGS 由来のまま維持される)。
+/// SETTINGS_WT_INITIAL_MAX_* を広告しないクライアントが WebTransport-Init で
+/// 小さい値を送っても `accept()` が成功し、値はそのまま上限として採用される
+/// (ピア用 config の Initial Value 0 を基準に max マージされる)。
 #[tokio::test]
 async fn test_wt_init_accept_with_small_value() {
     let tls = test_tls();
@@ -2069,7 +2091,7 @@ async fn test_wt_init_accept_with_small_value() {
         let _session = req
             .accept(WtConfig::default(), None, None)
             .await
-            .expect("小さい値でも accept() は成功すべき (max マージで無視されるだけ)");
+            .expect("小さい値でも accept() は成功すべき (Initial Value 0 を基準に採用される)");
         tokio::time::sleep(Duration::from_millis(50)).await;
     });
 
@@ -2091,6 +2113,179 @@ async fn test_wt_init_accept_with_small_value() {
         .expect("CONNECT 送信に失敗");
 
     server_task.await.expect("サーバータスクの join に失敗");
+}
+
+/// ピアが SETTINGS_WT_INITIAL_MAX_* を広告しない場合、WebTransport-Init ヘッダーの
+/// 値がピア用 config の Initial Value 0 を基準にそのまま採用されることを確認する。
+///
+/// draft-ietf-webtrans-http2-15 Section 4.3 / Section 11.2: クライアントは SETTINGS を
+/// 広告せず、ヘッダーで `bl=128KiB` を通知する。`WtConfig::default` の `bidi_local`
+/// (256KiB) が混入していれば 200,000 bytes の送信が成功してしまうため、拒否されることで
+/// ヘッダー値が上限として採用されたことを確認できる。その後 64KiB の送信が成功し、
+/// セッションが継続して使えることも確認する。
+#[tokio::test]
+async fn test_wt_init_header_value_below_default_applied() {
+    // ヘッダー値 (128KiB) を超え WtConfig::default の bidi_local (256KiB) 未満の送信量
+    const REJECTED_SIZE: usize = 200_000;
+    // ヘッダー値 (128KiB) 未満の送信量
+    const ACCEPTED_SIZE: usize = 64 * 1024;
+
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("アドレスのパースに失敗した"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("サーバーのバインドに失敗した");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続の受け入れに失敗した");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let mut session = req
+            .accept(WtConfig::default(), None, None)
+            .await
+            .expect("WebTransport セッションの受け入れに失敗した");
+
+        let mut bidi = session
+            .accept_bidi()
+            .await
+            .expect("bidi ストリームの受信に失敗した");
+        bidi.recv()
+            .await
+            .expect("クライアントデータの受信に失敗した")
+            .expect("クライアントデータが無い");
+        // ヘッダー値 (128KiB) を超える送信は拒否される
+        // (default の 256KiB がピア用 config に混入していれば成功してしまう)
+        let err = bidi
+            .send(vec![0xCD; REJECTED_SIZE], true)
+            .await
+            .expect_err("ヘッダー値を超える送信は拒否されるはず");
+        let tokio_http2::Error::WebTransport(wt_err) = &err else {
+            panic!("WebTransport エラーが返るはず: {err}");
+        };
+        assert_eq!(
+            wt_err.kind(),
+            WtErrorKind::FlowControlError,
+            "フロー制御エラーが返るはず: {err}"
+        );
+        // ヘッダー値未満の送信は成功し、セッションが継続して使える
+        bidi.send(vec![0xAB; ACCEPTED_SIZE], true)
+            .await
+            .expect("ヘッダー値未満の送信が失敗した");
+        // driver が生存していれば close が成功する
+        session
+            .close(0, "done")
+            .await
+            .expect("大きな送信後の close が失敗した");
+    });
+
+    // SETTINGS_WT_INITIAL_MAX_* を広告しない (HTTP/2 のウィンドウのみ拡張する)
+    let client_limits = Limits::builder()
+        .initial_window_size(WindowSize::from_static(1 << 20))
+        .connection_window_size(WindowSize::from_static(1 << 20))
+        .build()
+        .expect("クライアント Limits の構築に失敗した");
+    let mut client = Client::connect_insecure(addr, "localhost", client_limits)
+        .await
+        .expect("接続に失敗した");
+
+    // サーバーの SETTINGS を待ってから WebTransport-Init ヘッダー付き CONNECT を送る
+    loop {
+        let ev = client
+            .next_event()
+            .await
+            .expect("クライアント next_event に失敗した");
+        if matches!(ev, Event::SettingsReceived { ack: false }) {
+            break;
+        }
+    }
+    let connect_stream = client
+        .send_request(connect_request_with_webtransport_init("bl=131072"), false)
+        .await
+        .expect("CONNECT の送信に失敗した");
+    loop {
+        let ev = client
+            .next_event()
+            .await
+            .expect("クライアントイベントの受信に失敗した");
+        if let Event::HeadersReceived { stream_id, .. } = ev
+            && stream_id == connect_stream
+        {
+            break;
+        }
+    }
+
+    // クライアントのローカル設定はヘッダー / WT_MAX_DATA で通知する値と一致させる
+    let client_config = WtConfig {
+        initial_max_data: 1 << 20,
+        initial_max_stream_data_bidi_local: 131_072,
+        ..WtConfig::default()
+    };
+    let mut wt_client = WtSession::client(client_config, WtConfig::default());
+    wt_client.initiate().expect("セッション開始に失敗した");
+    // セッションレベルの送信上限を WT_MAX_DATA で通知する
+    wt_client
+        .send_max_data(1 << 20)
+        .expect("WT_MAX_DATA の送信に失敗した");
+
+    // bidi ストリームを開いて "ping" を送り、サーバーにストリームの存在を知らせる
+    let bidi_id = wt_client
+        .open_bidi_stream()
+        .expect("bidi ストリームを開けない");
+    wt_client
+        .send_stream_data(bidi_id, b"ping", false)
+        .expect("ping の送信に失敗した");
+    while let Some(out) = wt_client.poll_output() {
+        client
+            .send_data(connect_stream, out, false)
+            .await
+            .expect("データの送信に失敗した");
+    }
+
+    // サーバーがヘッダー値未満で送信したデータを受信し切る
+    let mut received = Vec::new();
+    let mut finished = false;
+    for _ in 0..100 {
+        let ev = tokio::time::timeout(Duration::from_secs(5), client.next_event())
+            .await
+            .expect("クライアントイベントの受信がタイムアウトした")
+            .expect("クライアントイベントの受信に失敗した");
+        if let Event::DataReceived {
+            stream_id, data, ..
+        } = ev
+            && stream_id == connect_stream
+        {
+            wt_client.feed(&data).expect("feed に失敗した");
+            wt_client.process().expect("process に失敗した");
+            while let Some(wt_ev) = wt_client.poll_event() {
+                if let WtEvent::StreamData {
+                    stream_id,
+                    data,
+                    fin,
+                } = wt_ev
+                    && stream_id == bidi_id
+                {
+                    received.extend_from_slice(&data);
+                    if fin {
+                        finished = true;
+                    }
+                }
+            }
+        }
+        if finished {
+            break;
+        }
+    }
+    assert!(finished, "FIN 付きのデータを受信し切れなかった");
+    assert_eq!(received.len(), ACCEPTED_SIZE, "受信データ長が一致しない");
+    assert!(
+        received.iter().all(|&b| b == 0xAB),
+        "受信データの内容が一致しない"
+    );
+    server_task.await.expect("サーバータスクの終了に失敗した");
 }
 
 /// draft-ietf-webtrans-http2-15 Section 4.3.2 (L583-L590):

@@ -113,6 +113,10 @@ pub enum WtEvent {
 }
 
 /// WebTransport 設定
+///
+/// [`Default`] はローカル広告値の既定値である。ピア用 config をピアの広告値から
+/// 構築する場合は [`WtConfig::peer_default`] から開始し、未広告項目がローカル既定値に
+/// ならないようにする。
 #[derive(Debug, Clone)]
 pub struct WtConfig {
     /// セッションレベルの初期最大データ量
@@ -135,6 +139,7 @@ pub struct WtConfig {
     pub initial_max_streams_uni: u64,
 }
 
+/// ローカル広告値の既定値を返す
 impl Default for WtConfig {
     fn default() -> Self {
         Self {
@@ -149,6 +154,24 @@ impl Default for WtConfig {
 }
 
 impl WtConfig {
+    /// **ピア用 `WtConfig`** を仕様の Initial Value (全て 0) で生成する
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 11.2: `SETTINGS_WT_INITIAL_MAX_*` を
+    /// 広告しないピアの初期値は 0 であり、[`Self::default`] のローカル広告用の
+    /// 既定値をピアへ適用してはならない。ピアの広告値は [`Self::overlay_settings`] と
+    /// [`Self::apply_init_as_peer`] で反映する。
+    #[must_use]
+    pub const fn peer_default() -> Self {
+        Self {
+            initial_max_data: 0,
+            initial_max_stream_data_bidi_local: 0,
+            initial_max_stream_data_bidi_remote: 0,
+            initial_max_stream_data_uni: 0,
+            initial_max_streams_bidi: 0,
+            initial_max_streams_uni: 0,
+        }
+    }
+
     /// **ピア用 `WtConfig`** に Init ヘッダー由来の値を max マージする
     ///
     /// WebTransport-Init は送信者 (クライアント) が自分の受信上限を伝えるヘッダーであり、
@@ -477,11 +500,17 @@ impl WtSession {
             return Err(WtError::stream_state_error("cannot send on this stream"));
         }
 
-        // エンコードより前にフロー制御チェックを完了し、違反時にバッファを汚染しない。
-        // draft-ietf-webtrans-http2-15 Section 6.5 / 6.6: フロー制御違反はセッションエラー
-        // (MUST close) のため、部分状態変更はセッション終了で破棄される
-        stream.send_data(data.len() as u64, fin)?;
-        self.flow_control.consume_send(data.len() as u64)?;
+        // エンコードより前にストリーム / セッション両方の送信上限を検査し、拒否時に
+        // 部分的な状態変更を残さない。driver はストリームエラー後もセッションを継続する
+        // ため、片方だけ検査して状態を進めると送信済みバイト数が実際の送信量とずれ、
+        // WT_RESET_STREAM の Reliable Size 不一致や送信終端状態の誤遷移を招く
+        // (draft-ietf-webtrans-http2-15 Section 6.2 / Section 6.5 / Section 6.6)
+        let size = data.len() as u64;
+        if size > self.flow_control.send_available() {
+            return Err(WtError::flow_control_error("send window exhausted"));
+        }
+        stream.send_data(size, fin)?;
+        self.flow_control.consume_send(size)?;
 
         // WT_STREAM Capsule をエンコード
         let capsule = Capsule::WtStream {
