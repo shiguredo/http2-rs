@@ -885,9 +885,10 @@ impl WtSession {
                 })?;
 
                 // draft-ietf-webtrans-http2-15 Section 6.2:
-                // クローズ済みまたはリセット済みのストリームへの WT_RESET_STREAM は
-                // WT_STREAM_STATE_ERROR
-                if !stream.can_recv() {
+                // クローズ済みまたはリセット済みのストリーム、および受信パートを持たない
+                // ローカル開始 uni ストリームへの WT_RESET_STREAM は WT_STREAM_STATE_ERROR
+                // (RFC 9000 Section 19.4: 送信専用ストリームへの RESET_STREAM は不正)
+                if !(stream.can_recv() && stream.has_recv_part()) {
                     return Err(WtError::stream_state_error(
                         "WT_RESET_STREAM received for stream not in valid state",
                     ));
@@ -975,14 +976,16 @@ impl WtSession {
                 maximum: _,
             } => {
                 // draft-ietf-webtrans-http2-15 Section 6.9:
-                // 存在しないストリーム、または受信側がデータ受信不能な状態の
-                // ストリームへの WT_STREAM_DATA_BLOCKED は WT_STREAM_STATE_ERROR
+                // 存在しないストリーム、受信側がデータ受信不能な状態のストリーム、および
+                // 受信パートを持たないローカル開始 uni ストリームへの
+                // WT_STREAM_DATA_BLOCKED は WT_STREAM_STATE_ERROR
+                // (RFC 9000 Section 19.13)
                 let stream = self.streams.get(&stream_id).ok_or_else(|| {
                     WtError::stream_state_error(
                         "WT_STREAM_DATA_BLOCKED received for unknown stream",
                     )
                 })?;
-                if !stream.can_recv() {
+                if !(stream.can_recv() && stream.has_recv_part()) {
                     return Err(WtError::stream_state_error(
                         "WT_STREAM_DATA_BLOCKED received for stream not in valid state",
                     ));

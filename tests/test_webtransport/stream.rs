@@ -200,3 +200,34 @@ fn test_send_data_after_reset_is_error() {
     // ResetRecvd 後の send_data はエラー
     assert!(stream.send_data(100, false).is_err());
 }
+
+/// 受信パートの有無がストリームの方向 (双方向 / 開始主体) で決まることを確認する。
+///
+/// draft-ietf-webtrans-http2-15 Section 6.2 / Section 6.9: 送信専用ストリームへの
+/// WT_RESET_STREAM / WT_STREAM_DATA_BLOCKED の拒否に使う判定。
+#[test]
+fn test_has_recv_part_by_direction() {
+    // ローカルをクライアントとした場合のストリーム ID 割り当て
+    // (0 = ローカル開始 bidi、1 = ピア開始 bidi、2 = ローカル開始 uni、3 = ピア開始 uni)
+
+    // ローカル開始 bidi: 受信パートあり
+    assert!(
+        WtStream::new(0, 0, 0, true, true).has_recv_part(),
+        "ローカル開始 bidi は受信パートを持つはず"
+    );
+    // ピア開始 bidi: 受信パートあり
+    assert!(
+        WtStream::new(1, 0, 0, true, false).has_recv_part(),
+        "ピア開始 bidi は受信パートを持つはず"
+    );
+    // ローカル開始 uni (送信専用): 受信パートなし
+    assert!(
+        !WtStream::new(2, 0, 0, false, true).has_recv_part(),
+        "ローカル開始 uni は受信パートを持たないはず"
+    );
+    // ピア開始 uni (受信専用): 受信パートあり
+    assert!(
+        WtStream::new(3, 0, 0, false, false).has_recv_part(),
+        "ピア開始 uni は受信パートを持つはず"
+    );
+}
