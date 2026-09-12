@@ -216,11 +216,16 @@ pub struct WtStream {
     recv_max: u64,
     /// STOP_SENDING を送信したかどうか
     ///
-    /// draft-ietf-webtrans-http2-15 Section 6.3: 冪等性チェック用
+    /// draft-ietf-webtrans-http2-15 Section 6.3: 冪等性チェック用。Section 6.6:
+    /// WT_STOP_SENDING を送った側は同じストリームへ WT_MAX_STREAM_DATA を送れないため、
+    /// 送信側 API (`WtSession::send_max_stream_data` /
+    /// `WtSession::grow_stream_recv_window`) の検証にも使用する
     stop_sending_sent: bool,
     /// STOP_SENDING を受信したかどうか
     ///
-    /// draft-ietf-webtrans-http2-15 Section 6.3: 冪等性チェック用
+    /// draft-ietf-webtrans-http2-15 Section 6.3 / Section 6.6: 2 回目の
+    /// WT_STOP_SENDING の拒否と、WT_STOP_SENDING を受信した後の
+    /// WT_MAX_STREAM_DATA の拒否に使用する
     stop_sending_received: bool,
     /// データを受信したかどうか
     ///
