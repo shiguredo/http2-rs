@@ -1,7 +1,7 @@
 # FIN 受信後のストリームへ WT_MAX_STREAM_DATA が送信される
 
 - Created: 2026-09-12
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-12
 - Branch: feature/fix-driver-stream-window-growth-after-fin
 - Polished: 2026-09-12
 
@@ -42,3 +42,12 @@ FIN のイベントで閾値を下回る例は、ローカル広告値が既定 
 - 送信パートが終端していない双方向ストリームで、ピアが FIN 付きデータを送ってもアプリが FIN を受け取れること
 - `Recv` 状態のストリームへの従来のウィンドウ拡張が非回帰であること (`test_wt_local_bidi_window_grows_with_asymmetric_limits` / `test_wt_stream_window_grows_with_initial_one`)
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `crates/tokio-http2/src/webtransport.rs` の `DriverState::maybe_grow_stream_window` に、`WtStream::can_recv()` が偽なら何もせず `Ok(())` を返す判定を追加した。FIN 付きの `WtEvent::StreamData` を処理する時点の受信状態は `DataRead` であり、`can_recv()` が偽になるため、ピアがそれ以上データを送れないストリームへ WT_MAX_STREAM_DATA を送らなくなった。判定は `grow_stream_recv_window` の呼び出し前に行うため、`recv_max` の更新と capsule のエンコードも行われない
+- 併せて `WtSession::stream` の結果をタプルで分解していた箇所を let-else に整理し、`is_bidirectional()` と `can_recv()` の取り違えがコンパイルで通る形を解消した
+- `draft-ietf-webtrans-http2-15` Section 5.2 (WebTransport ストリームの状態は QUIC ストリームの状態を mirror する) と RFC 9000 Section 3.3 / Section 19.10 (MAX_STREAM_DATA を送れるのは `Recv` 状態に限られる) を根拠としてコメントに明記した。`can_recv()` は `SizeKnown` でも真になるが、`SizeKnown` は現行実装では到達しないため、受信パートが終端したストリームがここで除外される
+- `crates/tokio-http2/tests/test_webtransport.rs` に `test_wt_stream_window_not_grown_after_fin` を追加した。64 KiB を広告するサーバーへクライアントが閾値 (32768) を下回る 40 KiB を FIN 付きの 1 個の capsule で送り、サーバーが応答を返した後にピアの `send_available()` が `before - PAYLOAD_SIZE` のままであること (WT_MAX_STREAM_DATA が送信されていないこと)、アプリがデータと FIN を受け取れること、セッションが終了しないことを固定する。サーバーは応答を `fin = false` で送り、クライアント側のストリームが削除されて `send_available()` を読めなくなることを避けている
+- 判定に判別力があることは、ガードを外した状態でこのテストが `send_available()` 90112 (拡張後) と 24576 (期待値) の不一致で失敗することで確認した
+- `CHANGES.md` の `## develop` に `[FIX]` のエントリを追加した
