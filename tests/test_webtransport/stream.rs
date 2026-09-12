@@ -231,3 +231,34 @@ fn test_has_recv_part_by_direction() {
         "ピア開始 uni は受信パートを持つはず"
     );
 }
+
+/// 送信パートの有無がストリームの方向 (双方向 / 開始主体) で決まることを確認する。
+///
+/// RFC 9000 Section 2.1 / Section 19.5 / Section 19.10: 受信専用ストリームへの
+/// 送信系操作と WT_STOP_SENDING / WT_MAX_STREAM_DATA の拒否に使う判定。
+#[test]
+fn test_has_send_part_by_direction() {
+    // ローカルをクライアントとした場合のストリーム ID 割り当て
+    // (0 = ローカル開始 bidi、1 = ピア開始 bidi、2 = ローカル開始 uni、3 = ピア開始 uni)
+
+    // ローカル開始 bidi: 送信パートあり
+    assert!(
+        WtStream::new(0, 0, 0, true, true).has_send_part(),
+        "ローカル開始 bidi は送信パートを持つはず"
+    );
+    // ピア開始 bidi: 送信パートあり
+    assert!(
+        WtStream::new(1, 0, 0, true, false).has_send_part(),
+        "ピア開始 bidi は送信パートを持つはず"
+    );
+    // ローカル開始 uni (送信専用): 送信パートあり
+    assert!(
+        WtStream::new(2, 0, 0, false, true).has_send_part(),
+        "ローカル開始 uni は送信パートを持つはず"
+    );
+    // ピア開始 uni (受信専用): 送信パートなし
+    assert!(
+        !WtStream::new(3, 0, 0, false, false).has_send_part(),
+        "ピア開始 uni は送信パートを持たないはず"
+    );
+}

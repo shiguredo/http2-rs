@@ -474,6 +474,9 @@ impl WtSession {
     }
 
     /// ストリームにデータを送信する
+    ///
+    /// 受信専用ストリーム (ピア開始 uni) への送信は `stream_state_error` を返す
+    /// (draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1)。
     pub fn send_stream_data(
         &mut self,
         stream_id: WtStreamId,
@@ -498,6 +501,15 @@ impl WtSession {
         // 送信状態をチェック
         if !stream.can_send() {
             return Err(WtError::stream_state_error("cannot send on this stream"));
+        }
+
+        // draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1:
+        // 単方向ストリームは開始側のみが送信できる。送信パートを持たない
+        // 受信専用ストリーム (ピア開始 uni) への WT_STREAM 送信は WT_STREAM_STATE_ERROR
+        if !stream.has_send_part() {
+            return Err(WtError::stream_state_error(
+                "cannot send on a receive-only stream",
+            ));
         }
 
         // エンコードより前にストリーム / セッション両方の送信上限を検査し、拒否時に
@@ -533,6 +545,9 @@ impl WtSession {
     ///
     /// `error_code` が 0xffffffff を超える場合は `flow_control_error` を返す
     /// (draft-ietf-webtrans-http2-15 Section 6.2 の MUST NOT)。
+    /// 受信専用ストリーム (ピア開始 uni) への WT_RESET_STREAM 送信は
+    /// `stream_state_error` を返す (draft-ietf-webtrans-http2-15 Section 6.2 /
+    /// RFC 9000 Section 19.4)。
     pub fn reset_stream(&mut self, stream_id: WtStreamId, error_code: u64) -> WtResult<()> {
         // draft-ietf-webtrans-http2-15 Section 6.2:
         // Application Protocol Error Code は 0xffffffff 以下でなければならない (MUST NOT)。
@@ -558,6 +573,15 @@ impl WtSession {
         if !stream.can_send() {
             return Err(WtError::stream_state_error(
                 "cannot send WT_RESET_STREAM: stream not in valid send state",
+            ));
+        }
+
+        // draft-ietf-webtrans-http2-15 Section 6.2 / RFC 9000 Section 19.4:
+        // 送信パートを持たない受信専用ストリーム (ピア開始 uni) は
+        // WT_RESET_STREAM を送信できる側ではない
+        if !stream.has_send_part() {
+            return Err(WtError::stream_state_error(
+                "cannot send WT_RESET_STREAM on a receive-only stream",
             ));
         }
 
@@ -918,6 +942,18 @@ impl WtSession {
                 stream_id,
                 error_code,
             } => {
+                // draft-ietf-webtrans-http2-15 Section 6.3 / RFC 9000 Section 19.5:
+                // 送信パートを持たない受信専用ストリーム (ピア開始 uni) への
+                // WT_STOP_SENDING は WT_STREAM_STATE_ERROR。送信側がいないため
+                // WT_RESET_STREAM の自動応答も行わない
+                if let Some(stream) = self.streams.get(&stream_id)
+                    && !stream.has_send_part()
+                {
+                    return Err(WtError::stream_state_error(
+                        "WT_STOP_SENDING received for receive-only stream",
+                    ));
+                }
+
                 // 借用回避: 可変借用ブロックを抜けてから reset_stream を呼ぶ
                 let should_reset = self.streams.get(&stream_id).is_some_and(|s| s.can_send());
 
@@ -949,6 +985,14 @@ impl WtSession {
             }
             Capsule::WtMaxStreamData { stream_id, maximum } => {
                 if let Some(stream) = self.streams.get_mut(&stream_id) {
+                    // draft-ietf-webtrans-http2-15 Section 6.6 / RFC 9000 Section 19.10:
+                    // 送信パートを持たない受信専用ストリーム (ピア開始 uni) への
+                    // WT_MAX_STREAM_DATA は WT_STREAM_STATE_ERROR
+                    if !stream.has_send_part() {
+                        return Err(WtError::stream_state_error(
+                            "WT_MAX_STREAM_DATA received for receive-only stream",
+                        ));
+                    }
                     // draft-ietf-webtrans-http2-15 Section 6.6:
                     // WT_STOP_SENDING を送信した後の WT_MAX_STREAM_DATA は
                     // WT_STREAM_STATE_ERROR
