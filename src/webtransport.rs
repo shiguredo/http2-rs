@@ -674,7 +674,8 @@ impl WtSession {
     /// (draft-ietf-webtrans-http2-15 Section 6.3 の MUST NOT)。
     /// 受信パートを持たない送信専用ストリーム (ローカル開始 uni) への
     /// WT_STOP_SENDING の送信、および同一ストリームへの 2 回目の送信は
-    /// `stream_state_error` を返す
+    /// `stream_state_error` を返す。受信状態が `ResetRead` のストリームへの
+    /// 送信も `stream_state_error` を返す
     /// (draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.3 /
     /// RFC 9000 Section 3.3 / Section 19.5)。
     pub fn stop_sending(&mut self, stream_id: WtStreamId, error_code: u64) -> WtResult<()> {
@@ -712,6 +713,19 @@ impl WtSession {
         if stream.stop_sending_sent() {
             return Err(WtError::stream_state_error(
                 "cannot send WT_STOP_SENDING: already sent",
+            ));
+        }
+
+        // RFC 9000 Section 3.3 / Section 19.5:
+        // STOP_SENDING を送れるのは RESET_STREAM を受け取っていない状態に限られ、
+        // `ResetRead` のストリームへは送ることができない。Section 19.5 は `Recv` /
+        // `SizeKnown` に限定し、Section 3.5 はその 2 状態での送信を SHOULD とするが
+        // (RESET_STREAM 受信済みへの送信は SHOULD NOT)、本 API は Section 3.3 の MAY に
+        // 従い `DataRecvd` / `DataRead` では受理する。`ResetRecvd` は現行実装では
+        // 到達しない (`WtStream::recv_reset` は `ResetRead` へ直接遷移する)
+        if stream.recv_state() == RecvState::ResetRead {
+            return Err(WtError::stream_state_error(
+                "cannot send WT_STOP_SENDING on a reset stream",
             ));
         }
 
@@ -816,7 +830,8 @@ impl WtSession {
     /// `stream_state_error` を返す (Section 6.6 の MUST)。`maximum` が varint 上限
     /// (2^62-1) を超える場合は `flow_control_error` を返す (RFC 9000 Section 16)。
     /// 受信パートを持たない送信専用ストリーム (ローカル開始 uni) への
-    /// WT_MAX_STREAM_DATA の送信は `stream_state_error` を返す
+    /// WT_MAX_STREAM_DATA の送信、および受信状態が `Recv` でないストリームへの
+    /// 送信は `stream_state_error` を返す
     /// (draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.6 /
     /// RFC 9000 Section 3.3 / Section 19.10)。
     pub fn send_max_stream_data(&mut self, stream_id: WtStreamId, maximum: u64) -> WtResult<()> {
@@ -850,6 +865,9 @@ impl WtSession {
                 "cannot send WT_MAX_STREAM_DATA: WT_STOP_SENDING already sent",
             ));
         }
+
+        // RFC 9000 Section 3.3 / Section 19.10: 受信状態が `Recv` でなければ送れない
+        Self::check_max_stream_data_recv_state(stream)?;
 
         let capsule = Capsule::WtMaxStreamData { stream_id, maximum };
         self.capsule_encoder.encode(&capsule);
@@ -906,8 +924,9 @@ impl WtSession {
     ///
     /// draft-ietf-webtrans-http2-15 Section 6.6:
     /// `WT_STOP_SENDING` 送信済みのストリームでは `stream_state_error` を返す。
-    /// 受信パートを持たない送信専用ストリーム (ローカル開始 uni) では
-    /// `stream_state_error` を返す (draft-ietf-webtrans-http2-15 Section 5.2 /
+    /// 受信パートを持たない送信専用ストリーム (ローカル開始 uni) と、
+    /// 受信状態が `Recv` でないストリームでは `stream_state_error` を返す
+    /// (draft-ietf-webtrans-http2-15 Section 5.2 /
     /// Section 6.6 / RFC 9000 Section 3.3 / Section 19.10)。
     pub fn grow_stream_recv_window(
         &mut self,
@@ -920,9 +939,7 @@ impl WtSession {
             .ok_or_else(|| WtError::invalid_stream_id("stream not found"))?;
         // draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.6 /
         // RFC 9000 Section 3.3 / Section 19.10:
-        // 受信パートを持たないストリームの受信ウィンドウは拡張できない。
-        // この検証と WT_STOP_SENDING 送信済みの検証はいずれも recv_max を
-        // 更新する前に拒否し、ローカル状態の不整合を避ける
+        // 受信パートを持たないストリームの受信ウィンドウは拡張できない
         if !stream.has_recv_part() {
             return Err(WtError::stream_state_error(
                 "cannot grow stream recv window on a send-only stream",
@@ -935,6 +952,10 @@ impl WtSession {
                 "cannot grow stream recv window: WT_STOP_SENDING already sent",
             ));
         }
+        // ここまでの検証はいずれも `recv_max` を更新する前に拒否し、
+        // ローカル状態の不整合を避ける
+        Self::check_max_stream_data_recv_state(stream)?;
+
         let new_max = stream.recv_max().saturating_add(increment);
         stream.update_recv_max(new_max)?;
         self.send_max_stream_data(stream_id, new_max)
@@ -1438,6 +1459,21 @@ impl WtSession {
                 .streams
                 .get(&stream_id)
                 .is_some_and(WtStream::stop_sending_received)
+    }
+
+    /// `Recv` 状態でないストリームへ WT_MAX_STREAM_DATA を送らないことを検証する
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 5.2: WebTransport ストリームの状態は
+    /// QUIC ストリームの状態を mirror する。RFC 9000 Section 3.3 / Section 19.10:
+    /// MAX_STREAM_DATA を送れるのは受信状態が `Recv` のストリームに限られる。
+    /// `WtStream::can_recv()` は `SizeKnown` も許容するため、判定には使わない。
+    fn check_max_stream_data_recv_state(stream: &WtStream) -> WtResult<()> {
+        if stream.recv_state() != RecvState::Recv {
+            return Err(WtError::stream_state_error(
+                "cannot send WT_MAX_STREAM_DATA: stream is not in the Recv state",
+            ));
+        }
+        Ok(())
     }
 
     /// ストリームが完全に閉じていれば HashMap から削除する
