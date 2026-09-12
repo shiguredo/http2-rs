@@ -408,11 +408,19 @@ impl WtServerSession {
     }
 
     /// 次の双方向ストリームの到着を待つ
+    ///
+    /// ピアが上位 ID を先に開いた場合、同一型・同方向の下位 ID のストリームも
+    /// 返り得るため、受信した capsule に現れていない ID のストリームが返ることがある
+    /// (RFC 9000 Section 3.2 / draft-ietf-webtrans-http2-15 Section 6.7)。
     pub async fn accept_bidi(&mut self) -> Option<WtBidiStream> {
         self.bidi_rx.recv().await
     }
 
     /// 次の単方向受信ストリームの到着を待つ
+    ///
+    /// ピアが上位 ID を先に開いた場合、同一型・同方向の下位 ID のストリームも
+    /// 返り得るため、受信した capsule に現れていない ID のストリームが返ることがある
+    /// (RFC 9000 Section 3.2 / draft-ietf-webtrans-http2-15 Section 6.7)。
     pub async fn accept_uni(&mut self) -> Option<WtUniRecvStream> {
         self.uni_rx.recv().await
     }
