@@ -3,7 +3,7 @@
 - Created: 2026-09-12
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-recv-state-operations-validation
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-09-12
 
 ## 目的
 
@@ -33,13 +33,15 @@ RFC 9000 Section 3.3 は「The receiver of a stream sends MAX_STREAM_DATA frames
 
 `ResetRecvd` と `SizeKnown` は現行実装では到達しない。`WtStream::recv_reset` は `ResetRead` へ直接遷移し、`WtStream::recv_data` は FIN 付き受信で `DataRecvd` へ直接遷移する (`SizeKnown` を経由しない)。テストの対象は `Recv` / `DataRecvd` / `DataRead` / `ResetRead` の 4 状態とする。
 
-### ドライバ側の制約 (本 issue のスコープ外)
+### 前提となるドライバ側の制御 (対応済み)
 
-**この検証だけを実装すると tokio ドライバが正常な通信でセッションを異常終了させる回帰が入る。** `crates/tokio-http2/src/webtransport.rs` の `DriverState::maybe_grow_stream_window` は `dispatch_wt_event` の `WtEvent::StreamData` 分岐から呼ばれ、`recv_available < initial.div_ceil(2)` のとき `WtSession::grow_stream_recv_window` を呼ぶ。失敗すると `abort_session_with_wt_error` が CONNECT ストリームへ `RST_STREAM` を送りセッション全体を abort する。
+本 issue の検証だけを実装すると、tokio ドライバが正常な通信でセッションを異常終了させる回帰が入る。`crates/tokio-http2/src/webtransport.rs` の `DriverState::maybe_grow_stream_window` は `dispatch_wt_event` の `WtEvent::StreamData` 分岐から呼ばれ、`recv_available < initial.div_ceil(2)` のとき `WtSession::grow_stream_recv_window` を呼ぶ。失敗すると `abort_session_with_wt_error` が CONNECT ストリームへ `RST_STREAM` を送ってセッションを終了させる。
 
-`WtSession::poll_event` は `StreamData { fin: true }` を pop した時点で `WtStream::mark_data_read` を呼ぶため、ドライバが FIN イベントを処理する時点の受信状態は `DataRecvd` ではなく `DataRead` である。双方向ストリームは送信パートが終端でない限り `WtStream::is_closed()` が偽で `streams` に残るため、この経路は実際に踏む。既定の `WtConfig::default()` でも、ピアが双方向ストリームへ 172144 bytes を FIN 付きで送ると 65535 + 65535 + 41074 に分割され、最終 chunk 受信後の `recv_available` は 90000 < 131072 となって拡張が走る。
+`WtSession::poll_event` は FIN 付きの `StreamData` を pop した時点で `WtStream::mark_data_read` を呼ぶため、ドライバが FIN のイベントを処理する時点の受信状態は `DataRecvd` ではなく `DataRead` である。双方向ストリームは送信パートが終端するまで `WtStream::is_closed()` が偽で `streams` に残るため、閾値を下回る FIN 付きデータを受信するとこの経路を踏む。
 
-したがって、本 issue の検証を入れる前に、または同時に、ドライバが受信状態 `Recv` でないストリームへ `grow_stream_recv_window` を呼ばないようにする制御が必要である。この制御は本 issue のスコープ外とし、別途 issue 化して対応する。本 issue の完了条件はライブラリ単体のテストで検証できる範囲に限る。
+この制御は `issues/closed/0153-bug-driver-stream-window-growth-after-fin.md` で対応済みである。`DriverState::maybe_grow_stream_window` は `WtStream::can_recv()` が偽のストリームを拡張の対象から除外するため、受信状態が `Recv` でないストリームへ `grow_stream_recv_window` を呼ばない。したがって本 issue の検証を実装しても、この経路でセッションは終了しない。
+
+ドライバが受信状態の影響を受ける API を呼ぶのは `maybe_grow_stream_window` の `grow_stream_recv_window` だけである。`maybe_grow_session_window` の `grow_recv_window` と `maybe_grow_max_streams` の `grow_max_streams` はストリームの受信状態を見ないため本 issue の検証対象外であり、アプリからの `stop_sending` は `DriverCmd::StopSending` が ack でエラーを返すだけでセッションを終了させない。
 
 ## 完了条件
 
@@ -49,4 +51,4 @@ RFC 9000 Section 3.3 は「The receiver of a stream sends MAX_STREAM_DATA frames
 - `DataRecvd` / `DataRead` の双方向ストリームへの `stop_sending` は、RFC 9000 Section 3.3 が許容するため従来どおり受理されること
 - `Recv` 状態の双方向ストリームと受信専用ストリーム (ピア開始 uni) への同操作は従来どおり動作すること
 - 送信専用ストリーム (ローカル開始 uni) への同操作が 0147 の非回帰として `stream_state_error` を返し続けること
-- テストが追加され、`cargo test --all` が通過すること
+- テストが追加され、`cargo test --all` が通過すること (受信状態の検証でドライバのテストが失敗しないことを含む)
