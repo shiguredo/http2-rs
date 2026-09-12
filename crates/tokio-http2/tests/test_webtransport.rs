@@ -1053,6 +1053,144 @@ async fn test_wt_stream_window_grows_with_initial_one() {
     server_task.await.expect("サーバータスクの終了に失敗した");
 }
 
+/// FIN を受信したストリームの受信ウィンドウを拡張しないことを確認する
+///
+/// RFC 9000 Section 3.3 は MAX_STREAM_DATA を `Recv` 状態のストリームにしか
+/// 送れないとし、draft-ietf-webtrans-http2-15 Section 5.2 は WebTransport
+/// ストリームの状態が QUIC ストリームの状態を mirror するとする。
+/// `WtSession::poll_event` は FIN 付きの `WtEvent::StreamData` を返す前に
+/// `WtStream::mark_data_read` を呼ぶため、ドライバが処理する時点の受信状態は
+/// `DataRead` であり、WT_MAX_STREAM_DATA を送る意味がない。
+#[tokio::test]
+async fn test_wt_stream_window_not_grown_after_fin() {
+    // bidi_remote の広告値 64 KiB の半分 (閾値 32768) を超えるペイロード長。
+    // FIN 付きの 1 個の capsule として送るため、この 1 capsule の受信で
+    // サーバーの `recv_available` が閾値を下回り、拡張判定は FIN のイベントで起こる
+    const PAYLOAD_SIZE: usize = 40 * 1024;
+
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("アドレスのパースに失敗した"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("サーバーのバインドに失敗した");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続の受け入れに失敗した");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let mut session = req
+            .accept(WtConfig::default(), None, None)
+            .await
+            .expect("WebTransport セッションの受け入れに失敗した");
+
+        // クライアント開始 bidi ストリームで FIN 付きデータを受け取る
+        let mut bidi = session
+            .accept_bidi()
+            .await
+            .expect("bidi ストリームの受信に失敗した");
+        let data = bidi
+            .recv()
+            .await
+            .expect("recv に失敗した")
+            .expect("データが無い");
+        assert_eq!(data.len(), PAYLOAD_SIZE, "受信データ長が一致しない");
+        // チャネルが閉じた場合も `recv` は `None` を返すため、セッションが
+        // 継続していることは後続の send / close の成功で担保する
+        assert!(
+            bidi.recv().await.expect("recv に失敗した").is_none(),
+            "FIN を受信できるはず"
+        );
+
+        // クライアントへ応答を送る。クライアントはこれで FIN の処理完了を知る。
+        // FIN を送るとクライアント側のストリームが削除され送信ウィンドウを
+        // 確認できなくなるため、fin は立てない
+        bidi.send(b"done".to_vec(), false)
+            .await
+            .expect("応答の送信に失敗した");
+
+        // セッションが終了していないことを確認する
+        session.close(0, "done").await.expect("close に失敗した");
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", client_limits_with_wt())
+        .await
+        .expect("接続に失敗した");
+    let connect_stream = perform_connect(&mut client).await;
+
+    // サーバーが広告する bidi_remote を peer_config に反映する
+    let peer_config = WtConfig {
+        initial_max_stream_data_bidi_remote: 64 * 1024,
+        ..WtConfig::default()
+    };
+    let mut wt_client = WtSession::client(WtConfig::default(), peer_config);
+    wt_client.initiate().expect("セッション開始に失敗した");
+
+    let bidi_id = wt_client
+        .open_bidi_stream()
+        .expect("bidi ストリームを開けない");
+    let before = wt_client
+        .stream(bidi_id)
+        .expect("ストリームが存在しない")
+        .send_available();
+    assert_eq!(before, 64 * 1024, "初期送信ウィンドウは bidi_remote のはず");
+
+    // 閾値を下回る FIN 付きデータを送る
+    wt_client
+        .send_stream_data(bidi_id, &vec![0u8; PAYLOAD_SIZE], true)
+        .expect("FIN 付きデータの送信に失敗した");
+    let out = wt_client.poll_output().expect("出力が無い");
+    client
+        .send_data(connect_stream, out, false)
+        .await
+        .expect("データの送信に失敗した");
+
+    // サーバーが FIN を処理したことを応答で確認する
+    let mut response = Vec::new();
+    for _ in 0..50 {
+        let ev = tokio::time::timeout(Duration::from_secs(5), client.next_event())
+            .await
+            .expect("クライアントイベントの受信がタイムアウトした")
+            .expect("クライアントイベントの受信に失敗した");
+        if let Event::DataReceived {
+            stream_id, data, ..
+        } = ev
+            && stream_id == connect_stream
+        {
+            wt_client.feed(&data).expect("feed に失敗した");
+            wt_client.process().expect("process に失敗した");
+            while let Some(wt_ev) = wt_client.poll_event() {
+                if let WtEvent::StreamData {
+                    stream_id, data, ..
+                } = wt_ev
+                    && stream_id == bidi_id
+                {
+                    response.extend_from_slice(&data);
+                }
+            }
+            if !response.is_empty() {
+                break;
+            }
+        }
+    }
+    assert_eq!(response, b"done", "サーバーの応答を受信できるはず");
+
+    // FIN のイベントで WT_MAX_STREAM_DATA が送信されていないこと。
+    // 拡張されていればピアの送信上限が増えるため、送信可能量が変化する
+    assert_eq!(
+        wt_client
+            .stream(bidi_id)
+            .expect("ストリームが存在しない")
+            .send_available(),
+        before - PAYLOAD_SIZE as u64,
+        "FIN 受信後のストリームのウィンドウは拡張されてはいけない"
+    );
+    server_task.await.expect("サーバータスクの終了に失敗した");
+}
+
 /// STOP_SENDING 送信後にピアから在路データが届いてもセッションが継続し、
 /// 停止要求後のデータがアプリへ配送されないことを確認する
 /// (RFC 9000 Section 3.5 / draft-ietf-webtrans-http2-15 Section 6.3)。
