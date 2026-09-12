@@ -219,7 +219,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 
 | `WtEvent` バリアント | 説明 |
 |--------------------|------|
-| `StreamOpened { stream_id, bidirectional }` | ストリームが開かれた |
+| `StreamOpened { stream_id, bidirectional }` | ストリームが開かれた。ピアが上位 ID を先に開いた場合は同一型・同方向の下位 ID も通知される (RFC 9000 Section 3.2 / draft-ietf-webtrans-http2-15 Section 6.7) |
 | `StreamData { stream_id, data, fin }` | ストリームに WT_STREAM Capsule が到着 |
 | `StreamReset { stream_id, error_code }` | WT_RESET_STREAM を受信 |
 | `StopSending { stream_id, error_code }` | WT_STOP_SENDING を受信 |
@@ -227,7 +227,9 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 | `SessionDraining` | WT_DRAIN_SESSION を受信 |
 | `SessionClosed { error_code, reason }` | WT_CLOSE_SESSION を受信 |
 
-フロー制御 Capsule (`WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` / `*_BLOCKED`) の受信は内部状態を更新するが、`WtEvent` としては公開しない。
+フロー制御 Capsule (`WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` / `*_BLOCKED`) の受信は内部状態を更新するが、`WtEvent` としては公開しない。ただしピア開始 bidi の未知 ID への `WT_MAX_STREAM_DATA` はストリームを開くため `StreamOpened` を送出する (RFC 9000 Section 3.2)。
+
+ピアが上位 ID を先に開いた場合、同一型・同方向の下位 ID も開かれたものとして `StreamOpened` が送出されるため、`accept_bidi` / `accept_uni` は受信した capsule に現れていない ID のストリームも返し得る (draft-ietf-webtrans-http2-15 Section 6.7)。
 
 | `WtSessionState` | 説明 |
 |----------------|------|

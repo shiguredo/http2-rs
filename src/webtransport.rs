@@ -84,6 +84,11 @@ pub enum WtSessionState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WtEvent {
     /// ストリームが開かれた
+    ///
+    /// RFC 9000 Section 3.2 / draft-ietf-webtrans-http2-15 Section 6.7:
+    /// ピアが上位 ID を先に開いた場合、同一型・同方向の下位 ID も開かれたものとして
+    /// 通知される。したがって受信した capsule に現れていない ID についても
+    /// 本イベントが送出されることがある。
     StreamOpened {
         stream_id: WtStreamId,
         bidirectional: bool,
@@ -227,7 +232,8 @@ impl WtConfig {
 /// クローズ済み WebTransport ストリーム ID 集合の上限
 ///
 /// 上限を超えた場合は最も小さい ID を追い出す。追い出された ID への
-/// WT_STREAM は再作成を許す既知の制限がある。
+/// WT_STREAM と、WT_STOP_SENDING / WT_MAX_STREAM_DATA は再作成・再処理を
+/// 許す既知の制限がある。
 const CLOSED_STREAMS_MAX_SIZE: usize = 10000;
 
 /// WebTransport セッション (Sans I/O)
@@ -248,7 +254,8 @@ pub struct WtSession {
     /// クローズ済みストリーム ID の集合
     ///
     /// draft-ietf-webtrans-http2-15 Section 6.4: クローズ済みストリームへの
-    /// WT_STREAM 受信を拒否するために使用する。
+    /// WT_STREAM 受信、およびピア開始 bidi の未知 ID への
+    /// WT_STOP_SENDING / WT_MAX_STREAM_DATA 受信による再作成を拒否するために使用する。
     closed_streams: BoundedSet<WtStreamId>,
     /// フロー制御
     flow_control: WtFlowControl,
@@ -1013,6 +1020,11 @@ impl WtSession {
                     ));
                 }
 
+                // draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 3.2:
+                // ピア開始 bidi の未知 ID への WT_STOP_SENDING はそのストリームを開く。
+                // 生成後も以降の検証・自動応答は同じ経路を通る
+                self.create_implicit_peer_bidi_stream(stream_id)?;
+
                 // 借用回避: 可変借用ブロックを抜けてから reset_stream を呼ぶ
                 let should_reset = self.streams.get(&stream_id).is_some_and(|s| s.can_send());
 
@@ -1052,6 +1064,12 @@ impl WtSession {
                         "WT_MAX_STREAM_DATA received for receive-only stream",
                     ));
                 }
+
+                // draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 3.2:
+                // ピア開始 bidi の未知 ID への WT_MAX_STREAM_DATA はそのストリームを開く。
+                // 生成されなかった場合 (削除済み ID) は下の更新が行われず無視される
+                self.create_implicit_peer_bidi_stream(stream_id)?;
+
                 if let Some(stream) = self.streams.get_mut(&stream_id) {
                     // draft-ietf-webtrans-http2-15 Section 6.6:
                     // WT_STOP_SENDING を送信した後の WT_MAX_STREAM_DATA は
@@ -1181,35 +1199,7 @@ impl WtSession {
                 ));
             }
 
-            // RFC 9000 Section 4.6, draft-ietf-webtrans-http2-15 Section 6.7:
-            // stream ID に基づいてストリーム上限を検証する。
-            // 順序外の stream ID は下位 ID も全て開いた扱いになる (RFC 9000 Section 2.1)。
-            if !self.flow_control.can_accept_stream(stream_id) {
-                return Err(WtError::flow_control_error("peer exceeded stream limit"));
-            }
-
-            // draft-ietf-webtrans-http2-15 Section 11.2:
-            // ピア開始ストリームの send_max はピアの BIDI_LOCAL / UNI (ピア視点で local = ピア開始)
-            // recv_max はローカルの BIDI_REMOTE / UNI (ローカル視点で remote = ピア開始)
-            let (send_max, recv_max) = if bidirectional {
-                (
-                    self.peer_config.initial_max_stream_data_bidi_local,
-                    self.config.initial_max_stream_data_bidi_remote,
-                )
-            } else {
-                (
-                    self.peer_config.initial_max_stream_data_uni,
-                    self.config.initial_max_stream_data_uni,
-                )
-            };
-
-            let stream = WtStream::new(stream_id, send_max, recv_max, bidirectional, false);
-            self.streams.insert(stream_id, stream);
-
-            self.events.push_back(WtEvent::StreamOpened {
-                stream_id,
-                bidirectional,
-            });
+            self.create_peer_streams_up_to(stream_id, bidirectional)?;
         } else if !bidirectional && !is_peer_initiated {
             // draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1 / Section 19.8:
             // ローカル開始 uni ストリームは送信専用であり、ピアからの WT_STREAM は
@@ -1244,6 +1234,118 @@ impl WtSession {
         });
 
         Ok(())
+    }
+
+    /// ピア開始ストリームを生成して登録する
+    ///
+    /// 呼び出し元が受信ストリーム数の上限を検証済みであることを前提とする
+    /// (`WtSession::create_peer_streams_up_to`)。
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 11.2 / Section 4.3.1:
+    /// ピア開始ストリームの `send_max` はピアの BIDI_LOCAL / UNI (ピア視点で local = ピア開始)、
+    /// `recv_max` はローカルの BIDI_REMOTE / UNI (ローカル視点で remote = ピア開始) を使う。
+    /// ピア開始 uni は受信専用のため `send_max` は使われない。
+    fn create_peer_stream(&mut self, stream_id: WtStreamId, bidirectional: bool) {
+        let (send_max, recv_max) = if bidirectional {
+            (
+                self.peer_config.initial_max_stream_data_bidi_local,
+                self.config.initial_max_stream_data_bidi_remote,
+            )
+        } else {
+            (
+                self.peer_config.initial_max_stream_data_uni,
+                self.config.initial_max_stream_data_uni,
+            )
+        };
+
+        let stream = WtStream::new(stream_id, send_max, recv_max, bidirectional, false);
+        self.streams.insert(stream_id, stream);
+
+        self.events.push_back(WtEvent::StreamOpened {
+            stream_id,
+            bidirectional,
+        });
+    }
+
+    /// ピア開始ストリームを、指定 ID 以下の同一型 ID のうち未作成のものについて生成する
+    ///
+    /// RFC 9000 Section 3.2: 「Before a stream is created, all streams of the same type
+    /// with lower-numbered stream IDs MUST be created.」、RFC 9000 Section 2.1:
+    /// 「A stream ID that is used out of order results in all streams of that type with
+    /// lower-numbered stream IDs also being opened.」、および
+    /// draft-ietf-webtrans-http2-15 Section 6.7:
+    /// 「Opening a stream with a given ID implicitly opens all streams of the same type
+    /// and direction with lower stream IDs.」に従い、未作成のものを小さい順に生成して
+    /// `WtEvent::StreamOpened` を送出する。1 回の呼び出しで複数の
+    /// `WtEvent::StreamOpened` が送出され得る。
+    ///
+    /// RFC 9000 Section 4.6, draft-ietf-webtrans-http2-15 Section 6.7:
+    /// 指定 ID が受信ストリーム数の上限を超える場合は、下位 ID も含めて 1 件も作成せず
+    /// `flow_control_error` を返す。
+    ///
+    /// 既に `streams` にある ID と、削除済みで `closed_streams` に記録済みの ID は
+    /// 作成しない。後者は既に作成済みのストリームが閉じたものであり、
+    /// 再作成すると `WtEvent::StreamOpened` が再送出されて
+    /// クローズ済みストリームを再作成しない方針 (draft-ietf-webtrans-http2-15 Section 6.4)
+    /// に反する。`closed_streams` は上限付きのため、記録から追い出された ID は
+    /// 再作成され得る (既知の制限)。
+    fn create_peer_streams_up_to(
+        &mut self,
+        stream_id: WtStreamId,
+        bidirectional: bool,
+    ) -> WtResult<()> {
+        // 上限超過時は 1 件も作成せずに拒否する。途中まで作成すると `process` の
+        // エラー後もストリームと `WtEvent::StreamOpened` が残り、呼び出し側が
+        // エラーを無視した場合に存在しないストリームを受理したのと同じ状態になる
+        if !self.flow_control.can_accept_stream(stream_id) {
+            return Err(WtError::flow_control_error("peer exceeded stream limit"));
+        }
+
+        // 同一型の最初の ID (RFC 9000 Section 2.1 のストリーム型)
+        let first = stream_id & 0x03;
+        let mut id = first;
+        while id <= stream_id {
+            if !self.streams.contains_key(&id) && !self.closed_streams.contains(&id) {
+                self.create_peer_stream(id, bidirectional);
+            }
+            id = stream::stream_id::next(id);
+        }
+        Ok(())
+    }
+
+    /// 未知のピア開始 bidi ID であればストリームを生成する
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 5.2: WebTransport ストリームは QUIC の
+    /// ストリーム状態を mirror する。RFC 9000 Section 3.2 はピア開始 bidi への
+    /// MAX_STREAM_DATA / STOP_SENDING の受信でそのストリームが開かれると定める。
+    /// 生成されるのは双方向ストリームであり、送信パートは `Ready` のままとなる。
+    ///
+    /// 呼び出し元が受信専用 ID (ピア開始 uni) を拒否済みであることを前提とする。
+    /// 開始主体がローカル側の ID と、`closed_streams` に記録済みの削除済み ID は
+    /// 生成しない。後者を再作成すると閉じたストリームの `WtEvent::StreamOpened` が
+    /// 再送出されるため生成しない。生成しなかった場合、呼び出し元の後続処理は
+    /// ストリーム不在として扱う (RFC 9000 Section 19.10 がエラーとするのは未作成の
+    /// ローカル開始ストリームと受信専用ストリームのみであり、削除済みのピア開始 bidi は
+    /// 該当しない。RFC 9000 Section 3.3 は遅延配送により任意の状態で受信し得るとする)。
+    ///
+    /// RFC 9000 Section 3.2 は WT_RESET_STREAM / WT_STREAM_DATA_BLOCKED についても
+    /// 受信パートの生成を定めるが、draft-ietf-webtrans-http2-15 Section 6.2 / Section 6.9 は
+    /// 有効でない状態のストリームへの受信を WT_STREAM_STATE_ERROR とするため、
+    /// 本メソッドは WT_STOP_SENDING / WT_MAX_STREAM_DATA のみを対象とする。
+    fn create_implicit_peer_bidi_stream(&mut self, stream_id: WtStreamId) -> WtResult<()> {
+        if !self.is_peer_initiated(stream_id) {
+            return Ok(());
+        }
+        // 呼び出し元が受信専用 ID を拒否済みのため、ここに来る ID は双方向である。
+        // 契約が呼び出し元の検証順序に依存していることを明示する
+        debug_assert!(stream::stream_id::is_bidirectional(stream_id));
+        if self.streams.contains_key(&stream_id) {
+            return Ok(());
+        }
+        if self.closed_streams.contains(&stream_id) {
+            return Ok(());
+        }
+        self.create_peer_streams_up_to(stream_id, true)
     }
 
     /// ストリームが完全に閉じていれば HashMap から削除する
