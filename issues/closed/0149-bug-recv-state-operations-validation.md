@@ -1,7 +1,7 @@
 # 受信状態を問わず受信系操作が受理される
 
 - Created: 2026-09-12
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-12
 - Branch: feature/fix-recv-state-operations-validation
 - Polished: 2026-09-12
 
@@ -52,3 +52,12 @@ RFC 9000 Section 3.3 は「The receiver of a stream sends MAX_STREAM_DATA frames
 - `Recv` 状態の双方向ストリームと受信専用ストリーム (ピア開始 uni) への同操作は従来どおり動作すること
 - 送信専用ストリーム (ローカル開始 uni) への同操作が 0147 の非回帰として `stream_state_error` を返し続けること
 - テストが追加され、`cargo test --all` が通過すること (受信状態の検証でドライバのテストが失敗しないことを含む)
+
+## 解決方法
+
+- `src/webtransport.rs` の `WtSession` に private ヘルパー `check_max_stream_data_recv_state` を追加し、受信状態が `Recv` でなければ `WtError::stream_state_error` を返すようにした。`WtStream::can_recv()` は `SizeKnown` も許容するため使わず、`WtStream::recv_state()` と `RecvState::Recv` の比較で判定する (RFC 9000 Section 3.3 / Section 19.10)
+- `WtSession::send_max_stream_data` と `WtSession::grow_stream_recv_window` の両方でこのヘルパーを呼ぶようにした。`grow_stream_recv_window` では `recv_max` を更新する前に検証するため、拒否時にローカル状態が変化しない。既存の `has_recv_part()` (0147) と `stop_sending_sent()` (Section 6.6 の MUST NOT) の検証は置き換えず、そのまま維持している
+- `WtSession::stop_sending` に、受信状態が `ResetRead` の場合の拒否を追加した。RFC 9000 Section 3.3 は STOP_SENDING を `Reset Recvd` / `Reset Read` 以外の状態で送れる (MAY) とするため、`DataRecvd` / `DataRead` では従来どおり受理する。`ResetRecvd` は現行実装では到達しないことをコメントに明記した
+- 上記 3 API の doc コメントに拒否条件を追記した
+- `tests/test_webtransport/integration.rs` に 9 テストを追加した。`DataRecvd` / `DataRead` / `ResetRead` の双方向ストリームへの `send_max_stream_data` と `grow_stream_recv_window` の拒否 (出力が生成されず、`grow_stream_recv_window` では `recv_available` も変化しない)、`ResetRead` への `stop_sending` の拒否 (送信済みフラグが立たない)、`DataRecvd` / `DataRead` への `stop_sending` の受理 (WT_STOP_SENDING がエンコードされる) を固定した。受信状態を作るヘルパー 3 個も併せて追加した
+- `CHANGES.md` の `## develop` に `[FIX]` のエントリを追加した

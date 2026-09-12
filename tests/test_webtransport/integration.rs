@@ -1,6 +1,6 @@
 use shiguredo_http2::webtransport::{
     Capsule, CapsuleDecoder, CapsuleEncoder, MAX_VALUE, WtConfig, WtEvent, WtSession, WtStreamId,
-    stream::{SendState, stream_id as wt_stream_id},
+    stream::{RecvState, SendState, stream_id as wt_stream_id},
 };
 
 /// 1 つの Capsule をデコードするヘルパー
@@ -3871,5 +3871,374 @@ fn out_of_order_peer_stream_does_not_recreate_closed_lower_id() {
         opened,
         vec![7, 11],
         "削除済みの ID の StreamOpened は再送出されないはず"
+    );
+}
+
+/// ローカル開始 bidi ストリームを開き、ピアの FIN 付き WT_STREAM を受信して
+/// 受信状態を `DataRecvd` にするヘルパー (`poll_event` は呼ばない)
+fn open_local_bidi_stream_data_recvd(session: &mut WtSession) -> WtStreamId {
+    let stream_id = session.open_bidi_stream().expect("bidi を開けるはず");
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id,
+        data: b"x".to_vec(),
+        fin: true,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
+    assert!(
+        session.poll_output().is_none(),
+        "WT_STREAM の受信では出力が生成されないはず"
+    );
+    assert_eq!(
+        session
+            .stream(stream_id)
+            .expect("ストリームが存在するはず")
+            .recv_state(),
+        RecvState::DataRecvd,
+        "受信状態が DataRecvd になるはず"
+    );
+    stream_id
+}
+
+/// ローカル開始 bidi ストリームを開き、ピアの FIN をイベントとして消費して
+/// 受信状態を `DataRead` にするヘルパー
+fn open_local_bidi_stream_data_read(session: &mut WtSession) -> WtStreamId {
+    let stream_id = open_local_bidi_stream_data_recvd(session);
+    while session.poll_event().is_some() {}
+    assert_eq!(
+        session
+            .stream(stream_id)
+            .expect("ストリームが存在するはず")
+            .recv_state(),
+        RecvState::DataRead,
+        "受信状態が DataRead になるはず"
+    );
+    stream_id
+}
+
+/// ローカル開始 bidi ストリームを開き、ピアの WT_RESET_STREAM を受信して
+/// 受信状態を `ResetRead` にするヘルパー
+fn open_local_bidi_stream_reset_read(session: &mut WtSession) -> WtStreamId {
+    let stream_id = session.open_bidi_stream().expect("bidi を開けるはず");
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtResetStream {
+        stream_id,
+        error_code: 7,
+        reliable_size: 0,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
+    while session.poll_event().is_some() {}
+    assert!(
+        session.poll_output().is_none(),
+        "WT_RESET_STREAM の受信では出力が生成されないはず"
+    );
+    assert_eq!(
+        session
+            .stream(stream_id)
+            .expect("ストリームが存在するはず")
+            .recv_state(),
+        RecvState::ResetRead,
+        "受信状態が ResetRead になるはず"
+    );
+    stream_id
+}
+
+/// 受信状態 `DataRecvd` のストリームへの send_max_stream_data は
+/// stream_state_error になり、出力が生成されないこと
+/// (RFC 9000 Section 3.3 / Section 19.10: MAX_STREAM_DATA は `Recv` 状態でのみ送れる)
+#[test]
+fn send_max_stream_data_data_recvd_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = open_local_bidi_stream_data_recvd(&mut session);
+
+    let err = session
+        .send_max_stream_data(stream_id, 1_000_000)
+        .expect_err("DataRecvd のストリームへの WT_MAX_STREAM_DATA は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("Recv state"),
+        "受信状態が理由に含まれるはず (実際: {})",
+        err.reason()
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// 受信状態 `DataRead` のストリームへの send_max_stream_data は
+/// stream_state_error になり、出力が生成されないこと
+/// (RFC 9000 Section 3.3 / Section 19.10: MAX_STREAM_DATA は `Recv` 状態でのみ送れる)
+#[test]
+fn send_max_stream_data_data_read_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = open_local_bidi_stream_data_read(&mut session);
+
+    let err = session
+        .send_max_stream_data(stream_id, 1_000_000)
+        .expect_err("DataRead のストリームへの WT_MAX_STREAM_DATA は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("Recv state"),
+        "受信状態が理由に含まれるはず (実際: {})",
+        err.reason()
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// 受信状態 `ResetRead` のストリームへの send_max_stream_data は
+/// stream_state_error になり、出力が生成されないこと
+/// (RFC 9000 Section 3.3 / Section 19.10: MAX_STREAM_DATA は `Recv` 状態でのみ送れる)
+#[test]
+fn send_max_stream_data_reset_read_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = open_local_bidi_stream_reset_read(&mut session);
+
+    let err = session
+        .send_max_stream_data(stream_id, 1_000_000)
+        .expect_err("ResetRead のストリームへの WT_MAX_STREAM_DATA は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("Recv state"),
+        "受信状態が理由に含まれるはず (実際: {})",
+        err.reason()
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// 受信状態 `DataRecvd` のストリームへの grow_stream_recv_window は
+/// stream_state_error になり、受信可能量と出力が変化しないこと
+/// (RFC 9000 Section 3.3 / Section 19.10: MAX_STREAM_DATA は `Recv` 状態でのみ送れる)
+#[test]
+fn grow_stream_recv_window_data_recvd_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = open_local_bidi_stream_data_recvd(&mut session);
+    let before = session
+        .stream(stream_id)
+        .expect("ストリームが存在するはず")
+        .recv_available();
+
+    let err = session
+        .grow_stream_recv_window(stream_id, 65_536)
+        .expect_err("DataRecvd のストリームの受信ウィンドウは拡張できないはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("Recv state"),
+        "受信状態が理由に含まれるはず (実際: {})",
+        err.reason()
+    );
+    assert_eq!(
+        session
+            .stream(stream_id)
+            .expect("ストリームが存在するはず")
+            .recv_available(),
+        before,
+        "拒否時に受信可能量が変化してはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// 受信状態 `DataRead` のストリームへの grow_stream_recv_window は
+/// stream_state_error になり、受信可能量と出力が変化しないこと
+/// (RFC 9000 Section 3.3 / Section 19.10: MAX_STREAM_DATA は `Recv` 状態でのみ送れる)
+#[test]
+fn grow_stream_recv_window_data_read_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = open_local_bidi_stream_data_read(&mut session);
+    let before = session
+        .stream(stream_id)
+        .expect("ストリームが存在するはず")
+        .recv_available();
+
+    let err = session
+        .grow_stream_recv_window(stream_id, 65_536)
+        .expect_err("DataRead のストリームの受信ウィンドウは拡張できないはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("Recv state"),
+        "受信状態が理由に含まれるはず (実際: {})",
+        err.reason()
+    );
+    assert_eq!(
+        session
+            .stream(stream_id)
+            .expect("ストリームが存在するはず")
+            .recv_available(),
+        before,
+        "拒否時に受信可能量が変化してはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// 受信状態 `ResetRead` のストリームへの grow_stream_recv_window は
+/// stream_state_error になり、受信可能量と出力が変化しないこと
+/// (RFC 9000 Section 3.3 / Section 19.10: MAX_STREAM_DATA は `Recv` 状態でのみ送れる)
+#[test]
+fn grow_stream_recv_window_reset_read_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = open_local_bidi_stream_reset_read(&mut session);
+    let before = session
+        .stream(stream_id)
+        .expect("ストリームが存在するはず")
+        .recv_available();
+
+    let err = session
+        .grow_stream_recv_window(stream_id, 65_536)
+        .expect_err("ResetRead のストリームの受信ウィンドウは拡張できないはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("Recv state"),
+        "受信状態が理由に含まれるはず (実際: {})",
+        err.reason()
+    );
+    assert_eq!(
+        session
+            .stream(stream_id)
+            .expect("ストリームが存在するはず")
+            .recv_available(),
+        before,
+        "拒否時に受信可能量が変化してはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// 受信状態 `ResetRead` のストリームへの stop_sending は stream_state_error になり、
+/// 送信済みフラグと出力が変化しないこと
+/// (RFC 9000 Section 3.3: STOP_SENDING は RESET_STREAM を受け取っていない状態でのみ送れる)
+#[test]
+fn stop_sending_reset_read_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = open_local_bidi_stream_reset_read(&mut session);
+
+    let err = session
+        .stop_sending(stream_id, 7)
+        .expect_err("ResetRead のストリームへの WT_STOP_SENDING は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("reset stream"),
+        "リセット済みであることが理由に含まれるはず (実際: {})",
+        err.reason()
+    );
+    assert!(
+        !session
+            .stream(stream_id)
+            .expect("ストリームが存在するはず")
+            .stop_sending_sent(),
+        "WT_STOP_SENDING 送信済みフラグが立ってはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// 受信状態 `DataRecvd` のストリームへの stop_sending は受理されること
+/// (RFC 9000 Section 3.3: STOP_SENDING を送れないのは `ResetRecvd` / `ResetRead` のみ)
+#[test]
+fn stop_sending_data_recvd_accepted() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = open_local_bidi_stream_data_recvd(&mut session);
+
+    session
+        .stop_sending(stream_id, 7)
+        .expect("DataRecvd のストリームへの WT_STOP_SENDING は受理されるはず");
+    let out = session
+        .poll_output()
+        .expect("WT_STOP_SENDING の出力があるはず");
+    match decode_single_capsule(&out) {
+        Capsule::WtStopSending {
+            stream_id: id,
+            error_code,
+        } => {
+            assert_eq!(id, stream_id);
+            assert_eq!(error_code, 7);
+        }
+        other => panic!("WtStopSending を期待したが {other:?} だった"),
+    }
+    assert!(
+        session
+            .stream(stream_id)
+            .expect("ストリームが存在するはず")
+            .stop_sending_sent(),
+        "WT_STOP_SENDING 送信済みフラグが立つはず"
+    );
+}
+
+/// 受信状態 `DataRead` のストリームへの stop_sending は受理されること
+/// (RFC 9000 Section 3.3: STOP_SENDING を送れないのは `ResetRecvd` / `ResetRead` のみ)
+#[test]
+fn stop_sending_data_read_accepted() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = open_local_bidi_stream_data_read(&mut session);
+
+    session
+        .stop_sending(stream_id, 7)
+        .expect("DataRead のストリームへの WT_STOP_SENDING は受理されるはず");
+    let out = session
+        .poll_output()
+        .expect("WT_STOP_SENDING の出力があるはず");
+    match decode_single_capsule(&out) {
+        Capsule::WtStopSending {
+            stream_id: id,
+            error_code,
+        } => {
+            assert_eq!(id, stream_id);
+            assert_eq!(error_code, 7);
+        }
+        other => panic!("WtStopSending を期待したが {other:?} だった"),
+    }
+    assert!(
+        session
+            .stream(stream_id)
+            .expect("ストリームが存在するはず")
+            .stop_sending_sent(),
+        "WT_STOP_SENDING 送信済みフラグが立つはず"
     );
 }

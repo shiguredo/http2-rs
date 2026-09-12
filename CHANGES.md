@@ -69,5 +69,7 @@
   - @voluntas
 - [FIX] WebTransport ドライバが FIN を受信して受信パートが終端したストリームの受信ウィンドウを拡張せず、WT_MAX_STREAM_DATA を送らないようにする (`Recv` 状態のストリームにのみ送れる。draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 3.3 / Section 19.10)
   - @voluntas
+- [FIX] 受信状態が `Recv` でないストリームへの WT_MAX_STREAM_DATA の送信 (`send_max_stream_data` / `grow_stream_recv_window`) を WT_STREAM_STATE_ERROR として拒否し、受信状態が `ResetRead` のストリームへの WT_STOP_SENDING の送信 (`stop_sending`) も拒否する (draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 3.3 / Section 19.5 / Section 19.10)
+  - @voluntas
 
 ### misc
