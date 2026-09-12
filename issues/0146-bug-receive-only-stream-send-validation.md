@@ -1,7 +1,7 @@
 # 受信専用のピア開始 uni ストリームへの送信系操作が方向検証されない
 
 - Created: 2026-09-12
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-12
 - Branch: feature/fix-receive-only-stream-send-validation
 - Polished: 2026-09-12
 
@@ -35,3 +35,12 @@
 - ローカル開始 uni / ローカル開始 bidi / ピア開始 bidi への同操作は従来どおり動作すること
 - ピア開始 uni ストリームへの `stop_sending` / `send_max_stream_data` / `grow_stream_recv_window` は従来どおり動作すること
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/webtransport/stream.rs` の `WtStream` に `has_send_part()` (双方向またはローカル開始で true) を追加し、送信パートの有無を方向で判定できるようにした
+- `src/webtransport.rs` の `send_stream_data` / `reset_stream` で送信パートを検証し、受信専用のピア開始 uni ストリームへの送信系操作を `WtError::stream_state_error` で拒否するようにした (draft-ietf-webtrans-http2-15 Section 6.2 / Section 6.4 / RFC 9000 Section 2.1 / Section 19.4)
+- `src/webtransport.rs` の `handle_capsule` で WT_STOP_SENDING / WT_MAX_STREAM_DATA の検証に `has_send_part()` を追加し、受信専用ストリームへの受信を `WtError::stream_state_error` で拒否するようにした。WT_STOP_SENDING を拒否する場合は WT_RESET_STREAM の自動応答も行わない (draft-ietf-webtrans-http2-15 Section 6.3 / Section 6.6 / RFC 9000 Section 19.5 / Section 19.10)
+- `stop_sending` / `send_max_stream_data` / `grow_stream_recv_window` は受信側の正当な操作として従来どおり受理する
+- `tests/test_webtransport/integration.rs` に、拒否 4 経路の状態不変検証、受信側操作の非回帰、ピア開始 bidi の送信系操作とカプセル検証を追加し、`tests/test_webtransport/stream.rs` に `has_send_part` の方向 4 分類の直接テストを追加した
+- `CHANGES.md` の `## develop` に `[ADD]` と `[FIX]` のエントリを追加した
