@@ -320,6 +320,25 @@ impl WtSession {
         self.role
     }
 
+    /// ロールから見てピア開始のストリーム ID かどうかを返す
+    #[must_use]
+    const fn is_peer_initiated(&self, stream_id: WtStreamId) -> bool {
+        match self.role {
+            Role::Client => stream::stream_id::is_server_initiated(stream_id),
+            Role::Server => stream::stream_id::is_client_initiated(stream_id),
+        }
+    }
+
+    /// ロールと ID の下位ビットのみから、ローカルから見て受信専用
+    /// (ピア開始 uni) のストリーム ID かどうかを返す
+    ///
+    /// `streams` の有無は参照しないため、未作成・削除済みの ID でも判定できる
+    /// (RFC 9000 Section 2.1)。
+    #[must_use]
+    const fn is_receive_only_id(&self, stream_id: WtStreamId) -> bool {
+        self.is_peer_initiated(stream_id) && stream::stream_id::is_unidirectional(stream_id)
+    }
+
     /// セッション状態を取得する
     #[must_use]
     pub const fn state(&self) -> WtSessionState {
@@ -983,13 +1002,12 @@ impl WtSession {
                 stream_id,
                 error_code,
             } => {
-                // draft-ietf-webtrans-http2-15 Section 6.3 / RFC 9000 Section 19.5:
-                // 送信パートを持たない受信専用ストリーム (ピア開始 uni) への
-                // WT_STOP_SENDING は WT_STREAM_STATE_ERROR。送信側がいないため
+                // draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 19.5:
+                // 受信専用 ID (ピア開始 uni) への WT_STOP_SENDING は
+                // WT_STREAM_STATE_ERROR。ストリームが未作成・削除済みでも
+                // ID から受信専用と判定できる。送信側がいないため
                 // WT_RESET_STREAM の自動応答も行わない
-                if let Some(stream) = self.streams.get(&stream_id)
-                    && !stream.has_send_part()
-                {
+                if self.is_receive_only_id(stream_id) {
                     return Err(WtError::stream_state_error(
                         "WT_STOP_SENDING received for receive-only stream",
                     ));
@@ -1025,15 +1043,16 @@ impl WtSession {
                 self.flow_control.update_send_max(maximum)?;
             }
             Capsule::WtMaxStreamData { stream_id, maximum } => {
+                // draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 19.10:
+                // 受信専用 ID (ピア開始 uni) への WT_MAX_STREAM_DATA は
+                // WT_STREAM_STATE_ERROR。ストリームが未作成・削除済みでも
+                // ID から受信専用と判定できる
+                if self.is_receive_only_id(stream_id) {
+                    return Err(WtError::stream_state_error(
+                        "WT_MAX_STREAM_DATA received for receive-only stream",
+                    ));
+                }
                 if let Some(stream) = self.streams.get_mut(&stream_id) {
-                    // draft-ietf-webtrans-http2-15 Section 6.6 / RFC 9000 Section 19.10:
-                    // 送信パートを持たない受信専用ストリーム (ピア開始 uni) への
-                    // WT_MAX_STREAM_DATA は WT_STREAM_STATE_ERROR
-                    if !stream.has_send_part() {
-                        return Err(WtError::stream_state_error(
-                            "WT_MAX_STREAM_DATA received for receive-only stream",
-                        ));
-                    }
                     // draft-ietf-webtrans-http2-15 Section 6.6:
                     // WT_STOP_SENDING を送信した後の WT_MAX_STREAM_DATA は
                     // WT_STREAM_STATE_ERROR
@@ -1131,10 +1150,7 @@ impl WtSession {
 
         // draft-ietf-webtrans-http2-15 Section 5.2, RFC 9000 Section 2.1:
         // ストリーム ID の開始主体と方向を判定する。
-        let is_peer_initiated = match self.role {
-            Role::Client => stream::stream_id::is_server_initiated(stream_id),
-            Role::Server => stream::stream_id::is_client_initiated(stream_id),
-        };
+        let is_peer_initiated = self.is_peer_initiated(stream_id);
         let bidirectional = stream::stream_id::is_bidirectional(stream_id);
 
         // draft-ietf-webtrans-http2-15 Section 6.4: empty capsule チェック
