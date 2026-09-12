@@ -1,0 +1,32 @@
+# ドライバのウィンドウ拡張判定が SizeKnown で受信状態検証と食い違う
+
+- Created: 2026-09-12
+- Completed: {YYYY-MM-DD}
+- Branch: feature/fix-driver-recv-state-check
+- Polished: {YYYY-MM-DD}
+
+## 目的
+
+tokio ドライバが受信ウィンドウを拡張してよいかを判定する基準を、sans-io 層の検証と同じ基準にそろえる。現在の判定は `WtStream::can_recv()` を使っており、`WtSession::grow_stream_recv_window` が拒否する `SizeKnown` を通してしまう。
+
+## 現状
+
+`crates/tokio-http2/src/webtransport.rs` の `DriverState::maybe_grow_stream_window` は `WtStream::can_recv()` が偽なら拡張せずに戻る。`WtStream::can_recv()` は `Recv` と `SizeKnown` の両方で真になる (`src/webtransport/stream.rs` の `RecvState::can_recv`)。
+
+一方 `WtSession::grow_stream_recv_window` は受信状態が `Recv` でなければ `stream_state_error` を返す (`SizeKnown` は拒否される)。したがって受信状態が `SizeKnown` のストリームで `maybe_grow_stream_window` が拡張を試みると、エラーが `DriverState::abort_session_with_wt_error` に伝播し、CONNECT ストリームへ RST_STREAM を送ってセッションを終了させる。
+
+`SizeKnown` は現行実装では到達しない (`WtStream::recv_data` は FIN 付き受信で `SizeKnown` を経由せず `DataRecvd` へ直接遷移する) ため現時点で実害はないが、到達可能になった時点で正常な通信がセッション終了になる。ドライバのコメントも `SizeKnown` が到達しないことを前提としており、判定の根拠がコードの契約と一致していない。
+
+## 設計方針
+
+- `maybe_grow_stream_window` の判定を `WtStream::can_recv()` から `stream.recv_state() != RecvState::Recv` に変更し、受信状態が `Recv` のときだけ拡張する。`RecvState` は `shiguredo_http2::webtransport` から取得できる
+- しきい値の計算 (`initial.div_ceil(2)`)、開始主体ごとの `initial` の選択、`grow_stream_recv_window` の呼び出し位置は変更しない
+- `SizeKnown` が到達しないことを前提とするコメントを、判定の根拠 (sans-io 層の検証と同じ基準にそろえる) を述べる内容に書き換える
+- FIN を受信したストリームで拡張しない挙動 (0153 の非回帰) を維持する
+
+## 完了条件
+
+- 判定が受信状態 `Recv` に限定され、`SizeKnown` では拡張を呼ばないこと
+- FIN を受信したストリームのウィンドウが拡張されないことが非回帰であること (`test_wt_stream_window_not_grown_after_fin`)
+- `Recv` 状態のストリームのウィンドウが従来どおり拡張されること (`test_wt_local_bidi_window_grows_with_asymmetric_limits` / `test_wt_stream_window_grows_with_initial_one`)
+- `cargo test --all` が通過すること (判定基準の変更のみで現行の挙動は変わらないため、新しいテストの追加は求めない)
