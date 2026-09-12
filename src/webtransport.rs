@@ -229,12 +229,15 @@ impl WtConfig {
     }
 }
 
-/// クローズ済み WebTransport ストリーム ID 集合の上限
+/// WebTransport ストリーム ID を記録する上限付き集合の上限
 ///
-/// 上限を超えた場合は最も小さい ID を追い出す。追い出された ID への
-/// WT_STREAM と、WT_STOP_SENDING / WT_MAX_STREAM_DATA は再作成・再処理を
-/// 許す既知の制限がある。
-const CLOSED_STREAMS_MAX_SIZE: usize = 10000;
+/// `closed_streams` / `stop_sending_received_ids` で共用する。
+/// 各集合は独立に上限を管理し、超えた場合は最も小さい ID を追い出す。追い出された ID は
+/// 再作成・再処理を許す既知の制限がある。STOP_SENDING の重複・順序検証は
+/// `stop_sending_received_ids` と `WtStream::stop_sending_received` の OR で判定するため、
+/// `stop_sending_received_ids` から追い出された ID は、ストリームが生存していればフラグで
+/// 検証できるが、削除済みであれば検証できない (`closed_streams` は判定に使わない)。
+const STREAM_ID_RECORD_MAX_SIZE: usize = 10000;
 
 /// WebTransport セッション (Sans I/O)
 ///
@@ -257,6 +260,14 @@ pub struct WtSession {
     /// WT_STREAM 受信、およびピア開始 bidi の未知 ID への
     /// WT_STOP_SENDING / WT_MAX_STREAM_DATA 受信による再作成を拒否するために使用する。
     closed_streams: BoundedSet<WtStreamId>,
+    /// WT_STOP_SENDING を受信したストリーム ID の集合
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 6.3 / Section 6.6: 2 回目の
+    /// WT_STOP_SENDING の拒否と、WT_STOP_SENDING を受信した後の
+    /// WT_MAX_STREAM_DATA の拒否に使用する。`WtStream::stop_sending_received` は
+    /// ストリーム削除で失われるため、削除後も検証できるよう受理した時点で記録する。
+    /// ピアが WT_STOP_SENDING を送らないセッションでは伸びない。
+    stop_sending_received_ids: BoundedSet<WtStreamId>,
     /// フロー制御
     flow_control: WtFlowControl,
     /// Capsule デコーダー
@@ -316,7 +327,8 @@ impl WtSession {
             peer_config,
             state: WtSessionState::Initial,
             streams: HashMap::new(),
-            closed_streams: BoundedSet::new(CLOSED_STREAMS_MAX_SIZE),
+            closed_streams: BoundedSet::new(STREAM_ID_RECORD_MAX_SIZE),
+            stop_sending_received_ids: BoundedSet::new(STREAM_ID_RECORD_MAX_SIZE),
             flow_control,
             capsule_decoder: CapsuleDecoder::new(),
             capsule_encoder: CapsuleEncoder::new(),
@@ -661,7 +673,8 @@ impl WtSession {
     /// `error_code` が 0xffffffff を超える場合は `flow_control_error` を返す
     /// (draft-ietf-webtrans-http2-15 Section 6.3 の MUST NOT)。
     /// 受信パートを持たない送信専用ストリーム (ローカル開始 uni) への
-    /// WT_STOP_SENDING の送信は `stream_state_error` を返す
+    /// WT_STOP_SENDING の送信、および同一ストリームへの 2 回目の送信は
+    /// `stream_state_error` を返す
     /// (draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.3 /
     /// RFC 9000 Section 3.3 / Section 19.5)。
     pub fn stop_sending(&mut self, stream_id: WtStreamId, error_code: u64) -> WtResult<()> {
@@ -1057,6 +1070,15 @@ impl WtSession {
                     ));
                 }
 
+                // draft-ietf-webtrans-http2-15 Section 6.3:
+                // 2 回目の WT_STOP_SENDING は WT_STREAM_STATE_ERROR。ストリーム生成より
+                // 前に検証し、拒否時にストリームと WtEvent::StreamOpened を残さない
+                if self.stop_sending_received(stream_id) {
+                    return Err(WtError::stream_state_error(
+                        "duplicate WT_STOP_SENDING received",
+                    ));
+                }
+
                 // draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 3.2:
                 // ピア開始 bidi の未知 ID への WT_STOP_SENDING はそのストリームを開く。
                 // 生成後も以降の検証・自動応答は同じ経路を通る
@@ -1066,15 +1088,9 @@ impl WtSession {
                 let should_reset = self.streams.get(&stream_id).is_some_and(|s| s.can_send());
 
                 if let Some(stream) = self.streams.get_mut(&stream_id) {
-                    // draft-ietf-webtrans-http2-15 Section 6.3:
-                    // 2 回目の WT_STOP_SENDING は WT_STREAM_STATE_ERROR
-                    if stream.stop_sending_received() {
-                        return Err(WtError::stream_state_error(
-                            "duplicate WT_STOP_SENDING received",
-                        ));
-                    }
                     stream.set_stop_sending_received();
                 }
+                self.stop_sending_received_ids.insert(stream_id);
 
                 // draft-ietf-webtrans-http2-15 Section 6.3 + RFC 9000 Section 3.5:
                 // Ready または Send 状態のストリームには WT_RESET_STREAM を MUST 応答する。
@@ -1114,20 +1130,22 @@ impl WtSession {
                     ));
                 }
 
+                // draft-ietf-webtrans-http2-15 Section 6.6:
+                // ピアから WT_STOP_SENDING を受信した後の WT_MAX_STREAM_DATA は
+                // WT_STREAM_STATE_ERROR。ストリーム生成より前に検証し、
+                // 拒否時にストリームと WtEvent::StreamOpened を残さない
+                if self.stop_sending_received(stream_id) {
+                    return Err(WtError::stream_state_error(
+                        "WT_MAX_STREAM_DATA received after WT_STOP_SENDING",
+                    ));
+                }
+
                 // draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 3.2:
                 // ピア開始 bidi の未知 ID への WT_MAX_STREAM_DATA はそのストリームを開く。
-                // 生成されなかった場合 (削除済み ID) は下の更新が行われず無視される
+                // 生成されなかった場合 (削除済み ID) は下の更新が行われない
                 self.create_implicit_peer_bidi_stream(stream_id)?;
 
                 if let Some(stream) = self.streams.get_mut(&stream_id) {
-                    // draft-ietf-webtrans-http2-15 Section 6.6:
-                    // WT_STOP_SENDING を送信した後の WT_MAX_STREAM_DATA は
-                    // WT_STREAM_STATE_ERROR
-                    if stream.stop_sending_sent() {
-                        return Err(WtError::stream_state_error(
-                            "WT_MAX_STREAM_DATA received after WT_STOP_SENDING",
-                        ));
-                    }
                     stream.update_send_max(maximum)?;
                 }
             }
@@ -1399,6 +1417,27 @@ impl WtSession {
             return Ok(());
         }
         self.create_peer_streams_up_to(stream_id, true)
+    }
+
+    /// ピアから WT_STOP_SENDING を受信済みの ID かどうかを判定する
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 6.3: 2 回目の WT_STOP_SENDING は
+    /// WT_STREAM_STATE_ERROR を返す。Section 6.6: WT_MAX_STREAM_DATA と WT_STOP_SENDING は
+    /// いずれもデータ受信側が送る操作であり (RFC 9000 Section 3.3)、WT_STOP_SENDING を
+    /// 送った側が WT_MAX_STREAM_DATA を送ってはならないため、受信側は「ピアから
+    /// WT_STOP_SENDING を受けた ID」への WT_MAX_STREAM_DATA を拒否する。両者は同じ
+    /// 判定を共有する。
+    ///
+    /// ストリームが存在すれば `WtStream` のフラグを、削除済みなら受理時に記録した集合を
+    /// 参照する。記録は「受理した事実」を表し、ストリーム ID は仕様上再利用されない
+    /// (RFC 9000 Section 2.1) ため、両者を OR で評価しても誤判定しない。
+    #[must_use]
+    fn stop_sending_received(&self, stream_id: WtStreamId) -> bool {
+        self.stop_sending_received_ids.contains(&stream_id)
+            || self
+                .streams
+                .get(&stream_id)
+                .is_some_and(WtStream::stop_sending_received)
     }
 
     /// ストリームが完全に閉じていれば HashMap から削除する

@@ -65,5 +65,7 @@
   - @voluntas
 - [FIX] 未作成のローカル開始 ID への WT_STOP_SENDING / WT_MAX_STREAM_DATA を WT_STREAM_STATE_ERROR として拒否し、削除済み ID (採番済み範囲内) の受理は維持する (draft-ietf-webtrans-http2-15 Section 3.4 / Section 5.2 / RFC 9000 Section 2.1 / Section 19.5 / Section 19.10)
   - @voluntas
+- [FIX] 削除済みストリームへの 2 回目の WT_STOP_SENDING と、ピアから WT_STOP_SENDING を受信した後の WT_MAX_STREAM_DATA を WT_STREAM_STATE_ERROR として拒否し、ストリーム削除後も重複・順序検証が維持されるようにする。あわせてローカルが `stop_sending` を送った後にピアから届く WT_MAX_STREAM_DATA は受理するようにする (順序検証の基準は、ローカルが `stop_sending` を送ったかではなく、ピアから WT_STOP_SENDING を受信したか。draft-ietf-webtrans-http2-15 Section 6.6 が禁じるのは、WT_STOP_SENDING を送った側が WT_MAX_STREAM_DATA を送ることである) (draft-ietf-webtrans-http2-15 Section 3.4 / Section 6.3 / Section 6.6 / RFC 9000 Section 3.3)
+  - @voluntas
 
 ### misc

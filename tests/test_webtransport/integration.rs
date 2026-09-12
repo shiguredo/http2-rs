@@ -1474,11 +1474,11 @@ fn wt_max_stream_data_unknown_receive_only_id_errors() {
     assert!(!session.has_output(), "出力が生成されてはいけない");
 }
 
-/// クローズ済みで記録に残っているピア開始 bidi ID への WT_STOP_SENDING は
-/// ストリーム不在として受理され、ストリームが再作成されないこと
-/// (RFC 9000 Section 19.5 が禁じるのは未作成のローカル開始 ID と受信専用 ID のみ)
+/// クローズ済みで記録に残っているピア開始 bidi ID への 2 回目の WT_STOP_SENDING は
+/// 重複として拒否され、ストリームが再作成されないこと
+/// (draft-ietf-webtrans-http2-15 Section 6.3 / Section 6.4)
 #[test]
-fn wt_stop_sending_closed_peer_bidi_stream_not_recreated() {
+fn wt_stop_sending_closed_peer_bidi_stream_duplicate_errors() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("セッションを開始できるはず");
 
@@ -1512,46 +1512,43 @@ fn wt_stop_sending_closed_peer_bidi_stream_not_recreated() {
         "FIN 消費後のストリームは削除されるはず"
     );
 
-    // 削除済みの ID への WT_STOP_SENDING は再作成せず、ストリーム不在として受理する
+    // 削除済みの ID への 2 回目の WT_STOP_SENDING は再作成せず、
+    // 1 回目の受理記録により重複として拒否する
     let mut encoder = CapsuleEncoder::new();
     encoder.encode(&Capsule::WtStopSending {
         stream_id: 5,
         error_code: 7,
     });
     session.feed(&encoder.take()).expect("feed に成功するはず");
-    session
+    let err = session
         .process()
-        .expect("削除済みストリームへの WT_STOP_SENDING は受理されるはず");
+        .expect_err("削除済みストリームへの 2 回目の WT_STOP_SENDING は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("duplicate"),
+        "重複であることが理由に含まれるはず (実際: {})",
+        err.reason()
+    );
     assert!(
         session.stream(5).is_none(),
         "ストリームが再作成されてはいけない"
     );
-
-    // ストリーム不在のため自動 WT_RESET_STREAM は応答せず、イベントのみ送出される
-    let mut got_stop_sending = false;
-    while let Some(ev) = session.poll_event() {
-        if let WtEvent::StopSending {
-            stream_id,
-            error_code,
-        } = ev
-        {
-            assert_eq!(stream_id, 5);
-            assert_eq!(error_code, 7);
-            got_stop_sending = true;
-        }
-    }
-    assert!(got_stop_sending, "StopSending が送出されるはず");
+    assert!(!session.has_output(), "出力が生成されてはいけない");
     assert!(
-        !session.has_output(),
-        "ストリーム不在のため WT_RESET_STREAM は応答されないはず"
+        session.poll_event().is_none(),
+        "イベントが送出されてはいけない"
     );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
 }
 
-/// クローズ済みで記録に残っているピア開始 bidi ID への WT_MAX_STREAM_DATA は
-/// 無視され、ストリームが再作成されないこと
-/// (RFC 9000 Section 3.3 / Section 19.10)
+/// WT_STOP_SENDING を受信済みでクローズしたピア開始 bidi ID への
+/// WT_MAX_STREAM_DATA は stream_state_error になり、ストリームが再作成されないこと
+/// (draft-ietf-webtrans-http2-15 Section 6.6 / RFC 9000 Section 3.3)
 #[test]
-fn wt_max_stream_data_closed_peer_bidi_stream_ignored() {
+fn wt_max_stream_data_after_stop_sending_on_closed_peer_bidi_stream_errors() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("セッションを開始できるはず");
 
@@ -1585,18 +1582,26 @@ fn wt_max_stream_data_closed_peer_bidi_stream_ignored() {
         "FIN 消費後のストリームは削除されるはず"
     );
 
-    // 削除済みの ID への WT_MAX_STREAM_DATA は再作成せず無視する
-    // (RFC 9000 Section 19.10 がエラーとするのは未作成のローカル開始ストリームと
-    //  受信専用ストリームのみ。Section 3.3 は遅延配送による任意状態での受信を想定する)
+    // WT_STOP_SENDING を受信済みのため、WT_MAX_STREAM_DATA は順序違反として拒否される
+    // (WT_MAX_STREAM_DATA と WT_STOP_SENDING はいずれもデータ受信側が送る)
     let mut encoder = CapsuleEncoder::new();
     encoder.encode(&Capsule::WtMaxStreamData {
         stream_id: 5,
         maximum: 1_000_000,
     });
     session.feed(&encoder.take()).expect("feed に成功するはず");
-    session
+    let err = session
         .process()
-        .expect("削除済みストリームへの WT_MAX_STREAM_DATA は無視されるはず");
+        .expect_err("WT_STOP_SENDING 受信済みストリームへの WT_MAX_STREAM_DATA は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("after WT_STOP_SENDING"),
+        "順序違反であることが理由に含まれるはず (実際: {})",
+        err.reason()
+    );
     assert!(
         session.stream(5).is_none(),
         "ストリームが再作成されてはいけない"
@@ -1722,6 +1727,279 @@ fn wt_max_stream_data_unknown_peer_bidi_stream_at_limit_accepted() {
     );
 }
 
+/// 削除済みのローカル開始 bidi ID への 1 回目の WT_STOP_SENDING は受理され、
+/// 2 回目は重複として拒否されること
+/// (draft-ietf-webtrans-http2-15 Section 6.3)
+#[test]
+fn duplicate_stop_sending_on_removed_local_bidi_stream_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    let stream_id = open_and_remove_local_bidi_stream(&mut session);
+
+    // 1 回目は受理されイベントが送出される
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id,
+        error_code: 7,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("削除済みローカル開始 bidi ID への 1 回目は受理されるはず");
+    let mut got_stop_sending = false;
+    while let Some(ev) = session.poll_event() {
+        if let WtEvent::StopSending {
+            stream_id: id,
+            error_code,
+        } = ev
+        {
+            assert_eq!(id, stream_id);
+            assert_eq!(error_code, 7);
+            got_stop_sending = true;
+        }
+    }
+    assert!(got_stop_sending, "StopSending が送出されるはず");
+    assert!(
+        !session.has_output(),
+        "ストリーム不在のため WT_RESET_STREAM は応答されないはず"
+    );
+
+    // 2 回目は受理時の記録により拒否される
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id,
+        error_code: 7,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("削除済みストリームへの 2 回目の WT_STOP_SENDING は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        session.poll_event().is_none(),
+        "イベントが送出されてはいけない"
+    );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
+/// ローカルから WT_STOP_SENDING を送った生存ストリームへ、ピアから届く
+/// WT_MAX_STREAM_DATA は受理されること (誤拒否の非回帰)
+/// (draft-ietf-webtrans-http2-15 Section 6.6 が禁じるのは、WT_STOP_SENDING を
+///  送った側が WT_MAX_STREAM_DATA を送ること。ピアが送る credit は正当)
+#[test]
+fn max_stream_data_on_live_stream_with_local_stop_sending_accepted() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // ピア開始 bidi (ID=5) を WT_STREAM で開く
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: 5,
+        data: b"x".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
+    while session.poll_event().is_some() {}
+
+    // ローカルから WT_STOP_SENDING を送る (ストリームは生存したまま)
+    session
+        .stop_sending(5, 7)
+        .expect("WT_STOP_SENDING を送信できるはず");
+    let _ = session.poll_output();
+    assert!(
+        session.stream(5).is_some(),
+        "WT_STOP_SENDING 送信後もストリームは存在するはず"
+    );
+
+    // ピアが送る WT_MAX_STREAM_DATA は受理され、送信上限が更新される
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: 5,
+        maximum: 1_000_000,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect(
+        "ピアから WT_STOP_SENDING を受けていないストリームへの WT_MAX_STREAM_DATA は受理されるはず",
+    );
+    assert_eq!(
+        session
+            .stream(5)
+            .expect("ストリームが存在するはず")
+            .send_available(),
+        1_000_000,
+        "送信上限が更新されるはず"
+    );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
+/// ローカルから WT_STOP_SENDING を送っただけの削除済みストリームへの
+/// WT_MAX_STREAM_DATA は拒否されないこと
+/// (draft-ietf-webtrans-http2-15 Section 6.6 が禁じるのは、WT_STOP_SENDING を
+///  送った側が WT_MAX_STREAM_DATA を送ること。受信側の判定にローカルの送信は影響しない)
+#[test]
+fn max_stream_data_on_removed_stream_with_local_stop_sending_accepted() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    let stream_id = session.open_bidi_stream().expect("bidi を開けるはず");
+    // ローカルから WT_STOP_SENDING を送ってから、送受信の両側を終端させて削除する
+    session
+        .stop_sending(stream_id, 7)
+        .expect("WT_STOP_SENDING を送信できるはず");
+    let _ = session.poll_output();
+    session
+        .send_stream_data(stream_id, b"hi", true)
+        .expect("送信できるはず");
+    let _ = session.poll_output();
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id,
+        data: b"x".to_vec(),
+        fin: true,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
+    while session.poll_event().is_some() {}
+    assert!(
+        session.stream(stream_id).is_none(),
+        "FIN 消費後のストリームは削除されるはず"
+    );
+
+    // ピアから WT_STOP_SENDING を受けていないため拒否されない
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id,
+        maximum: 1_000_000,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect(
+        "ピアからの WT_STOP_SENDING を受けていないストリームへの WT_MAX_STREAM_DATA は受理されるはず",
+    );
+    assert!(
+        session.stream(stream_id).is_none(),
+        "ストリームが再作成されてはいけない"
+    );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
+/// 削除済みのピア開始 bidi ID への 1 回目の WT_STOP_SENDING は受理され、
+/// WtEvent::StopSending が送出されること
+/// (draft-ietf-webtrans-http2-15 Section 6.3 が禁じるのは 2 回目)
+#[test]
+fn first_stop_sending_on_removed_peer_bidi_stream_accepted() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // ピア開始 bidi (ID=5) を WT_STREAM で開き、FIN 消費で削除させる
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: 5,
+        data: b"x".to_vec(),
+        fin: true,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
+    // ピアの FIN を処理すると受信パートが DataRead になる。送信パートを終端させるため
+    // ローカルから WT_RESET_STREAM を送って削除する
+    session
+        .reset_stream(5, 0)
+        .expect("WT_RESET_STREAM を送信できるはず");
+    let _ = session.poll_output();
+    while session.poll_event().is_some() {}
+    assert!(
+        session.stream(5).is_none(),
+        "両パートの終端でストリームは削除されるはず"
+    );
+
+    // 1 回目の WT_STOP_SENDING は受理される
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: 5,
+        error_code: 7,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("削除済みピア開始 bidi ID への 1 回目の WT_STOP_SENDING は受理されるはず");
+
+    let mut got_stop_sending = false;
+    while let Some(ev) = session.poll_event() {
+        if let WtEvent::StopSending {
+            stream_id,
+            error_code,
+        } = ev
+        {
+            assert_eq!(stream_id, 5);
+            assert_eq!(error_code, 7);
+            got_stop_sending = true;
+        }
+    }
+    assert!(got_stop_sending, "StopSending が送出されるはず");
+    assert!(
+        session.stream(5).is_none(),
+        "削除済みストリームが再作成されてはいけない"
+    );
+    assert!(
+        !session.has_output(),
+        "ストリーム不在のため WT_RESET_STREAM は応答されないはず"
+    );
+}
+
+/// ピアから WT_STOP_SENDING を受信していない削除済みのピア開始 bidi ID への
+/// WT_MAX_STREAM_DATA は再作成せず無視されること
+/// (RFC 9000 Section 3.3 / Section 19.10 がエラーとするのは未作成のローカル開始
+///  ストリームと受信専用ストリームのみ)
+#[test]
+fn max_stream_data_on_removed_peer_bidi_stream_ignored() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // ピア開始 bidi (ID=5) を WT_STREAM で開く。ピアからの WT_STOP_SENDING は受信しない
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: 5,
+        data: b"x".to_vec(),
+        fin: true,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
+    // 送信パートを終端させるためローカルから WT_RESET_STREAM を送って削除する
+    session
+        .reset_stream(5, 0)
+        .expect("WT_RESET_STREAM を送信できるはず");
+    let _ = session.poll_output();
+    while session.poll_event().is_some() {}
+    assert!(
+        session.stream(5).is_none(),
+        "両パートの終端でストリームは削除されるはず"
+    );
+
+    // 削除済み ID は再作成せず無視する
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: 5,
+        maximum: 1_000_000,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect(
+        "ピアから WT_STOP_SENDING を受けていない削除済みストリームへの WT_MAX_STREAM_DATA は無視されるはず",
+    );
+    assert!(
+        session.stream(5).is_none(),
+        "ストリームが再作成されてはいけない"
+    );
+    assert!(
+        session.poll_event().is_none(),
+        "イベントが送出されてはいけない"
+    );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
 /// 削除済みのローカル開始 bidi ID への WT_STOP_SENDING はストリーム不在のまま
 /// WtEvent::StopSending を送出すること (削除済み ID の受理は非回帰として維持する)
 #[test]
@@ -1835,6 +2113,33 @@ fn wt_max_stream_data_removed_local_bidi_stream_ignored() {
         "イベントが送出されてはいけない"
     );
     assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
+/// サーバーセッションでローカル開始 bidi ストリームを開き、送信側を FIN で終端したうえで
+/// ピアの FIN を受信して削除するヘルパー。WT_STOP_SENDING は送受信しないため
+/// `stop_sending_received` / `stop_sending_sent` はともに偽のまま削除される。
+fn open_and_remove_local_bidi_stream(session: &mut WtSession) -> WtStreamId {
+    let stream_id = session.open_bidi_stream().expect("bidi を開けるはず");
+    session
+        .send_stream_data(stream_id, b"hi", true)
+        .expect("送信できるはず");
+    let _ = session.poll_output();
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id,
+        data: b"x".to_vec(),
+        fin: true,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
+    // FIN 受信イベントを消費するとストリームが削除される
+    while session.poll_event().is_some() {}
+    assert!(
+        session.stream(stream_id).is_none(),
+        "FIN 受信後のストリームは削除されているはず"
+    );
+    stream_id
 }
 
 /// サーバーセッションでピア開始 uni ストリームを FIN 付き WT_STREAM で開き、
