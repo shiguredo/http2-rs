@@ -1234,10 +1234,20 @@ impl DriverState {
         &mut self,
         stream_id: WtStreamId,
     ) -> std::result::Result<(), shiguredo_http2::webtransport::WtError> {
-        let (bidirectional, recv_available) = match self.wt_session.stream(stream_id) {
-            Some(s) => (s.is_bidirectional(), s.recv_available()),
-            None => return Ok(()),
+        let Some(stream) = self.wt_session.stream(stream_id) else {
+            return Ok(());
         };
+        // draft-ietf-webtrans-http2-15 Section 5.2: WebTransport ストリームの状態は
+        // QUIC ストリームの状態を mirror する。RFC 9000 Section 3.3 / Section 19.10:
+        // MAX_STREAM_DATA を送れるのは `Recv` 状態のストリームに限られる。
+        // `can_recv()` は `Recv` と `SizeKnown` で真になるが、`SizeKnown` は現行実装では
+        // 到達しないため、受信パートが終端したストリームはここで除外される。
+        // ピアはそのストリームへデータを送れないため、拡張しても意味がない
+        if !stream.can_recv() {
+            return Ok(());
+        }
+        let bidirectional = stream.is_bidirectional();
+        let recv_available = stream.recv_available();
         let initial = if bidirectional {
             // draft-ietf-webtrans-http2-15 Section 11.2:
             // ローカル開始 bidi の recv_max は bidi_local、ピア開始 bidi は bidi_remote で
