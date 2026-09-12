@@ -60,7 +60,10 @@ pub mod stream_id {
     }
 }
 
-/// 送信側ストリーム状態 (RFC 9000 Section 3.1, Figure 2: States for Sending Parts of Streams)
+/// 送信側ストリーム状態
+///
+/// RFC 9000 Section 3.1, Figure 2: States for Sending Parts of Streams のうち、
+/// 本実装が到達する状態を表す。
 ///
 /// ```text
 ///        o
@@ -83,19 +86,21 @@ pub mod stream_id {
 ///        | Send STREAM + FIN         |
 ///        v                           v
 ///    +-------+                   +-------+
-///    | Data  | Send RESET_STREAM | Reset |
-///    | Sent  |------------------>| Sent  |
-///    +-------+                   +-------+
-///        |                           |
-///        | Recv All ACKs             | Recv ACK
-///        v                           v
-///    +-------+                   +-------+
 ///    | Data  |                   | Reset |
 ///    | Recvd |                   | Recvd |
 ///    +-------+                   +-------+
 /// ```
 ///
+/// draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 は順序配送であり、ACK を待たずに
+/// 状態を遷移させるため、RFC 9000 Section 3.1 の "Data Sent" と "Reset Sent" は経由しない
+/// (FIN / RESET_STREAM の送信と同時に終端状態へ遷移する)。
+///
+/// 図は `WtSession` の操作で起こる遷移を示す。`WtStream::send_data` は `Ready` から
+/// FIN 付きで送信すると `DataRecvd` へ直接遷移し、`WtStream::send_reset` は状態を
+/// 検証しないため `DataRecvd` からも `ResetRecvd` へ遷移しうる。
+///
 /// RFC 9000 Section 3.1: STOP_SENDING を受信したエンドポイントは RESET_STREAM を送信する
+/// (図の `Ready` / `Send` から `ResetRecvd` への遷移)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SendState {
     /// 初期状態
@@ -103,13 +108,9 @@ pub enum SendState {
     Ready,
     /// STREAM/STREAM_DATA_BLOCKED 送信後
     Send,
-    /// FIN 送信後
-    DataSent,
-    /// RESET_STREAM 送信後
-    ResetSent,
-    /// 終端: 全 ACK 受信
+    /// 終端: FIN を送信済み
     DataRecvd,
-    /// 終端: RESET_STREAM ACK 受信
+    /// 終端: RESET_STREAM を送信済み
     ResetRecvd,
 }
 
@@ -127,7 +128,10 @@ impl SendState {
     }
 }
 
-/// 受信側ストリーム状態 (RFC 9000 Section 3.2, Figure 3: States for Receiving Parts of Streams)
+/// 受信側ストリーム状態
+///
+/// RFC 9000 Section 3.2, Figure 3: States for Receiving Parts of Streams のうち、
+/// 本実装が到達する状態を表す。
 ///
 /// ```text
 ///        o
@@ -142,40 +146,39 @@ impl SendState {
 ///    +-------+                       |
 ///        |                           |
 ///        | Recv STREAM + FIN         |
-///        v                           |
-///    +-------+                       |
-///    | Size  | Recv RESET_STREAM     |
-///    | Known |---------------------->|
-///    +-------+                       |
-///        |                           |
-///        | Recv All Data             |
-///        v                           v
-///    +-------+ Recv RESET_STREAM +-------+
-///    | Data  |--- (optional) --->| Reset |
-///    | Recvd |  Recv All Data    | Recvd |
-///    +-------+<-- (optional) ----+-------+
-///        |                           |
-///        | App Read All Data         | App Read Reset
 ///        v                           v
 ///    +-------+                   +-------+
 ///    | Data  |                   | Reset |
-///    | Read  |                   | Read  |
+///    | Recvd |                   | Read  |
 ///    +-------+                   +-------+
+///        |
+///        | App Read All Data
+///        v
+///    +-------+
+///    | Data  |
+///    | Read  |
+///    +-------+
 /// ```
+///
+/// draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 は順序配送であり、後続データの有無が
+/// FIN の受信時点で確定するため、RFC 9000 Section 3.2 の "Size Known" を経由せず、
+/// 最終サイズの確定と同時に "Data Recvd" へ遷移する。また RESET_STREAM の受信時には
+/// アプリへの通知 (`WtEvent::StreamReset`) まで同時に行うため、RFC 9000 Section 3.2 の
+/// "Reset Recvd" を経由せず "Reset Read" へ直接遷移する。
+///
+/// 図は `WtSession` の capsule 処理と `poll_event` による配送で起こる遷移を示す。
+/// `WtStream::recv_reset` は状態を検証しないため、`WtStream` の公開メソッドを
+/// 直接呼ぶ場合は図に無い遷移も起こりうる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RecvState {
     /// 初期状態
     #[default]
     Recv,
-    /// FIN 受信後 (最終サイズ確定)
-    SizeKnown,
-    /// 全データ受信
+    /// FIN を受信済み (アプリが読み取ると DataRead になり終端となる)
     DataRecvd,
-    /// RESET_STREAM 受信
-    ResetRecvd,
     /// 終端: アプリがデータ読み取り完了
     DataRead,
-    /// 終端: アプリがリセット読み取り完了
+    /// 終端: RESET_STREAM を受信し、アプリへの通知を配送キューへ積んだ状態
     ResetRead,
 }
 
@@ -183,7 +186,7 @@ impl RecvState {
     /// 受信可能かどうかを返す
     #[must_use]
     pub const fn can_recv(self) -> bool {
-        matches!(self, Self::Recv | Self::SizeKnown)
+        matches!(self, Self::Recv)
     }
 
     /// 終端状態かどうかを返す
@@ -372,7 +375,7 @@ impl WtStream {
 
         if fin {
             // draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 の順序配送により
-            // ACK が不要なため、DataSent を経由せず即座に DataRecvd へ遷移する
+            // ACK が不要なため、FIN の送信と同時に終端状態へ遷移する
             self.send_state = SendState::DataRecvd;
         } else {
             self.send_state = SendState::Send;
@@ -384,7 +387,7 @@ impl WtStream {
     /// リセットを送信する
     pub fn send_reset(&mut self) {
         // draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 の順序配送により
-        // ACK が不要なため、ResetSent を経由せず即座に ResetRecvd へ遷移する
+        // ACK が不要なため、RESET_STREAM の送信と同時に終端状態へ遷移する
         self.send_state = SendState::ResetRecvd;
     }
 
@@ -410,7 +413,7 @@ impl WtStream {
 
         if fin {
             // draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 の順序配送により
-            // 全データ到着済みなので、SizeKnown を経由せず即座に DataRecvd へ遷移する
+            // 全データ到着済みなので、最終サイズの確定と同時に DataRecvd へ遷移する
             self.recv_state = RecvState::DataRecvd;
         }
 
@@ -419,8 +422,8 @@ impl WtStream {
 
     /// リセットを受信する
     pub fn recv_reset(&mut self) {
-        // draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 の順序配送により
-        // 即座に ResetRead へ遷移する
+        // RESET_STREAM の受信とアプリへの通知 (WtEvent::StreamReset) を同時に行うため、
+        // アプリの読み取りを待たずに終端状態へ遷移する
         self.recv_state = RecvState::ResetRead;
     }
 

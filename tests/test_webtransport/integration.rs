@@ -4180,7 +4180,7 @@ fn stop_sending_reset_read_errors() {
 }
 
 /// 受信状態 `DataRecvd` のストリームへの stop_sending は受理されること
-/// (RFC 9000 Section 3.3: STOP_SENDING を送れないのは `ResetRecvd` / `ResetRead` のみ)
+/// (RFC 9000 Section 3.3: STOP_SENDING を送れないのは "Reset Recvd" / "Reset Read" のみ)
 #[test]
 fn stop_sending_data_recvd_accepted() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
@@ -4213,7 +4213,7 @@ fn stop_sending_data_recvd_accepted() {
 }
 
 /// 受信状態 `DataRead` のストリームへの stop_sending は受理されること
-/// (RFC 9000 Section 3.3: STOP_SENDING を送れないのは `ResetRecvd` / `ResetRead` のみ)
+/// (RFC 9000 Section 3.3: STOP_SENDING を送れないのは "Reset Recvd" / "Reset Read" のみ)
 #[test]
 fn stop_sending_data_read_accepted() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
