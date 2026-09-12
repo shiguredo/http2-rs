@@ -1,5 +1,7 @@
 # CODEBASE
 
+- この指示がなくなるまでは変更履歴を `CHANGES.md` に残さないこと
+
 ## このライブラリの前提
 
 - HTTP/2 (RFC 9113) と WebTransport over HTTP/2 (draft-ietf-webtrans-http2) を扱うライブラリであり、TCP/IP 上での利用を前提とする。QUIC / HTTP/3 は対象外とする
