@@ -1,7 +1,7 @@
 # 到達しないストリーム状態を削除する
 
 - Created: 2026-09-12
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-13
 - Branch: feature/remove-unreachable-stream-states
 - Polished: 2026-09-12
 
@@ -67,3 +67,13 @@
 - 中間状態を経由しない旨のコメントと `WtSession::stop_sending` のコメントが、削除後の状態を説明する内容になっていること (コードレビューで確認する)
 - `cargo test --all` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo fmt --all --check` が通過すること
 - `CHANGES.md` が変更されていないこと (`CODEBASE.md` の「この指示がなくなるまでは変更履歴を `CHANGES.md` に残さないこと」に従う)
+
+## 解決方法
+
+- `src/webtransport/stream.rs` の `RecvState` から `SizeKnown` と `ResetRecvd`、`SendState` から `DataSent` と `ResetSent` を削除し、それぞれ `Recv` / `DataRecvd` / `DataRead` / `ResetRead` と `Ready` / `Send` / `DataRecvd` / `ResetRecvd` の 4 状態にした。`RecvState::can_recv` は `Recv` のみ真になり、`WtStream::can_recv()` と `WtSession::check_max_stream_data_recv_state` の `Recv` 限定検証が同じ意味になった (削除前に到達不能だった 4 variant のみを削除しており、到達可能な挙動は変わらない)
+- 両 enum の doc の状態遷移図を「本実装が到達する状態」に書き換え、経由しない状態と理由を状態ごとに書き分けた。`Size Known` は HTTP/2 の順序配送により後続データの有無が FIN の受信時点で確定するため経由せず、`Data Sent` / `Reset Sent` は ACK を待たずに遷移するため経由しない。受信側の `Reset Recvd` は RESET_STREAM の受信とアプリへの通知 (`WtEvent::StreamReset`) を同時に行うため経由しない
+- 状態を直接操作する `WtStream` の公開メソッド (`send_reset` / `recv_reset` は状態を検証しない) を呼ぶと図に無い遷移も起こりうることを doc に明記した
+- `WtStream::send_data` / `send_reset` / `recv_data` / `recv_reset` のコメント、`WtSession::stop_sending` の検証順序を説明するコメント、`WtSession::check_max_stream_data_recv_state` の doc、`DriverState::maybe_grow_stream_window` のコメントを削除後の状態に合わせて更新した。テストの doc コメント 2 箇所は RFC 9000 の状態名 (`"Reset Recvd"` / `"Reset Read"`) で書き直した
+- `tests/test_webtransport/stream.rs` に、到達しうる 4 状態ずつについて `can_send` / `can_recv` / `is_terminal` の判定を直接確認するテストを追加した
+- `CODEBASE.md` の「この指示がなくなるまでは変更履歴を `CHANGES.md` に残さないこと」に従い、`CHANGES.md` は変更していない。公開 enum の variant 削除という後方互換のない変更であることは本 issue と PR で伝える
+- `cargo test --all` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo fmt --all --check` が通過することを確認した
