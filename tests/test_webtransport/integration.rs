@@ -2873,8 +2873,9 @@ fn receive_only_stream_recv_operations_accepted() {
         .expect("ストリームが存在するはず")
         .recv_available();
 
-    // 単調増加になるよう、grow_stream_recv_window が送る recv_max + 4096 より
-    // 大きい上限を後で送る
+    // send_max_stream_data は広告した上限を recv_max にも反映するため、
+    // grow_stream_recv_window の後に大きい値を送っても広告値は単調増加になる
+    // (呼び出し順は制約ではない)
     session
         .grow_stream_recv_window(peer_id, 4096)
         .expect("受信専用ストリームの受信ウィンドウ拡張は成功するはず");
@@ -3165,8 +3166,9 @@ fn bidi_stream_recv_operations_accepted() {
         .expect("ストリームが存在するはず")
         .recv_available();
 
-    // 単調増加になるよう、grow_stream_recv_window が送る recv_max + 4096 より
-    // 大きい上限を後で送る
+    // send_max_stream_data は広告した上限を recv_max にも反映するため、
+    // grow_stream_recv_window の後に大きい値を送っても広告値は単調増加になる
+    // (呼び出し順は制約ではない)
     session2
         .grow_stream_recv_window(stream_id2, 4096)
         .expect("双方向ストリームの受信ウィンドウ拡張は成功するはず");
@@ -4240,5 +4242,335 @@ fn stop_sending_data_read_accepted() {
             .expect("ストリームが存在するはず")
             .stop_sending_sent(),
         "WT_STOP_SENDING 送信済みフラグが立つはず"
+    );
+}
+
+/// send_max_stream_data が広告した上限を `recv_max` に反映し、
+/// ピアが広告値まで送ってもストリーム上限で拒否されないこと
+/// (draft-ietf-webtrans-http2-15 Section 6.6)
+#[test]
+fn send_max_stream_data_updates_recv_max() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, false);
+    open_peer_stream(&mut session, peer_id, b"x");
+    let before = session
+        .stream(peer_id)
+        .expect("ストリームが存在するはず")
+        .recv_max();
+    let advertised = before + 200_000;
+
+    session
+        .send_max_stream_data(peer_id, advertised)
+        .expect("WT_MAX_STREAM_DATA の送信は成功するはず");
+    let out = session
+        .poll_output()
+        .expect("WT_MAX_STREAM_DATA の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtMaxStreamData { stream_id, maximum } => {
+            assert_eq!(stream_id, peer_id);
+            assert_eq!(maximum, advertised);
+        }
+        other => panic!("WtMaxStreamData を期待したが {other:?} だった"),
+    }
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .recv_max(),
+        advertised,
+        "広告した上限が recv_max に反映されるはず"
+    );
+
+    // ピアが広告値まで送っても flow_control_error にならない。
+    // ピアの WtSession では送信上限 (send_max) が広告値まで増えないため、
+    // WT_STREAM capsule を直接組み立てて送る
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: peer_id,
+        data: vec![0u8; (advertised - 1) as usize],
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("広告値の範囲内のデータは受理されるはず");
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .recv_available(),
+        0,
+        "広告値まで受信できるはず"
+    );
+}
+
+/// send_max_stream_data に現在の受信上限より小さい値を渡すと
+/// flow_control_error になり、`recv_max` と出力が変化しないこと
+/// (draft-ietf-webtrans-http2-15 Section 6.6: 減少を広告されたピアは
+/// WT_FLOW_CONTROL_ERROR でセッションを閉じる)
+#[test]
+fn send_max_stream_data_decrease_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, false);
+    open_peer_stream(&mut session, peer_id, b"x");
+    let before = session
+        .stream(peer_id)
+        .expect("ストリームが存在するはず")
+        .recv_max();
+
+    let err = session
+        .send_max_stream_data(peer_id, before.saturating_sub(1))
+        .expect_err("現在の受信上限より小さい値は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(
+        err.reason().contains("advertised maximum"),
+        "広告値より小さいことが理由に含まれるはず (実際: {})",
+        err.reason()
+    );
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .recv_max(),
+        before,
+        "拒否時に recv_max が変化してはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// send_max_stream_data に現在の受信上限と同じ値を渡すと
+/// 従来どおり送信されること
+#[test]
+fn send_max_stream_data_equal_value_accepted() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, false);
+    open_peer_stream(&mut session, peer_id, b"x");
+    let before = session
+        .stream(peer_id)
+        .expect("ストリームが存在するはず")
+        .recv_max();
+
+    session
+        .send_max_stream_data(peer_id, before)
+        .expect("現在の受信上限と同じ値の送信は成功するはず");
+    let out = session
+        .poll_output()
+        .expect("WT_MAX_STREAM_DATA の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtMaxStreamData { stream_id, maximum } => {
+            assert_eq!(stream_id, peer_id);
+            assert_eq!(maximum, before);
+        }
+        other => panic!("WtMaxStreamData を期待したが {other:?} だった"),
+    }
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .recv_max(),
+        before,
+        "同じ値では recv_max が変化しないはず"
+    );
+}
+
+/// send_max_stream_data の後に grow_stream_recv_window を呼んでも
+/// 広告値が減少しないこと
+#[test]
+fn grow_stream_recv_window_after_send_max_stream_data_is_monotonic() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, false);
+    open_peer_stream(&mut session, peer_id, b"x");
+
+    let advertised = 1_000_000;
+    session
+        .send_max_stream_data(peer_id, advertised)
+        .expect("WT_MAX_STREAM_DATA の送信は成功するはず");
+    let _ = session
+        .poll_output()
+        .expect("WT_MAX_STREAM_DATA の出力が必要");
+
+    session
+        .grow_stream_recv_window(peer_id, 4096)
+        .expect("受信ウィンドウの拡張は成功するはず");
+    let out = session
+        .poll_output()
+        .expect("WT_MAX_STREAM_DATA の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtMaxStreamData { stream_id, maximum } => {
+            assert_eq!(stream_id, peer_id);
+            assert_eq!(maximum, advertised + 4096, "広告値が増加するはず");
+        }
+        other => panic!("WtMaxStreamData を期待したが {other:?} だった"),
+    }
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .recv_max(),
+        advertised + 4096,
+        "拡張後の値が recv_max に反映されるはず"
+    );
+}
+
+/// WT_STOP_SENDING 送信済みのストリームへの send_max_stream_data は、
+/// 値が現在の受信上限より小さくても減少エラーではなく送信済みエラーになること
+/// (検証順序の非回帰)
+#[test]
+fn send_max_stream_data_decrease_after_stop_sending_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, false);
+    open_peer_stream(&mut session, peer_id, b"x");
+    session
+        .stop_sending(peer_id, 7)
+        .expect("WT_STOP_SENDING の送信は成功するはず");
+    let _ = session.poll_output().expect("WT_STOP_SENDING の出力が必要");
+    let before = session
+        .stream(peer_id)
+        .expect("ストリームが存在するはず")
+        .recv_max();
+
+    let err = session
+        .send_max_stream_data(peer_id, before.saturating_sub(1))
+        .expect_err("WT_STOP_SENDING 送信済みのストリームへの送信は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("WT_STOP_SENDING already sent"),
+        "送信済みであることが理由に含まれるはず (実際: {})",
+        err.reason()
+    );
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .recv_max(),
+        before,
+        "拒否時に recv_max が変化してはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// 受信状態が `Recv` でないストリームへの send_max_stream_data は、
+/// 値が現在の受信上限より小さくても減少エラーではなく受信状態エラーになること
+/// (検証順序の非回帰)
+#[test]
+fn send_max_stream_data_decrease_on_non_recv_state_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = open_local_bidi_stream_data_read(&mut session);
+    let before = session
+        .stream(stream_id)
+        .expect("ストリームが存在するはず")
+        .recv_max();
+
+    let err = session
+        .send_max_stream_data(stream_id, before.saturating_sub(1))
+        .expect_err("DataRead のストリームへの送信は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("Recv state"),
+        "受信状態が理由に含まれるはず (実際: {})",
+        err.reason()
+    );
+    assert_eq!(
+        session
+            .stream(stream_id)
+            .expect("ストリームが存在するはず")
+            .recv_max(),
+        before,
+        "拒否時に recv_max が変化してはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// grow_stream_recv_window に varint 上限を超える増分を渡すと
+/// flow_control_error になり、`recv_max` と出力が変化しないこと
+/// (RFC 9000 Section 16)
+#[test]
+fn grow_stream_recv_window_varint_overflow_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, false);
+    open_peer_stream(&mut session, peer_id, b"x");
+    let before = session
+        .stream(peer_id)
+        .expect("ストリームが存在するはず")
+        .recv_max();
+
+    let err = session
+        .grow_stream_recv_window(peer_id, u64::MAX)
+        .expect_err("varint 上限を超える拡張は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(
+        err.reason().contains("WT_MAX_STREAM_DATA value"),
+        "WT_MAX_STREAM_DATA の値として拒否されるはず (実際: {})",
+        err.reason()
+    );
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .recv_max(),
+        before,
+        "拒否時に recv_max が変化してはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// 送信専用ストリームへの send_max_stream_data は、値が現在の受信上限より
+/// 小さくても減少エラーではなく方向エラーになること (検証順序の非回帰)
+#[test]
+fn send_max_stream_data_decrease_on_send_only_stream_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = session.open_uni_stream().expect("ストリームを開けるはず");
+    assert!(
+        session.poll_output().is_none(),
+        "ストリーム作成時点では出力が生成されないはず"
+    );
+
+    let err = session
+        .send_max_stream_data(stream_id, 0)
+        .expect_err("送信専用ストリームへの送信は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("send-only"),
+        "送信専用であることが理由に含まれるはず (実際: {})",
+        err.reason()
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
     );
 }

@@ -145,6 +145,21 @@ fn test_update_recv_max_varint_overflow() {
     assert!(stream.update_recv_max(MAX_VALUE + 1).is_err());
 }
 
+/// update_recv_max が同値と減少を無視することを確認する
+/// (RFC 9000 Section 4.1: 小さい上限の広告はエラーではなく効果が無い)
+#[test]
+fn test_update_recv_max_ignores_equal_and_smaller_values() {
+    let mut stream = WtStream::new(0, 65536, 65536, true, true);
+
+    // 同値 → 成功して値は変わらない
+    stream.update_recv_max(65536).expect("同値は成功すること");
+    assert_eq!(stream.recv_available(), 65536);
+
+    // 減少 → 成功するが値は変わらない
+    stream.update_recv_max(32768).expect("減少は無視されること");
+    assert_eq!(stream.recv_available(), 65536);
+}
+
 /// DataRecvd (FIN 送信済み) 後の send_data はエラーになることを確認する
 #[test]
 fn test_send_data_after_fin_is_error() {

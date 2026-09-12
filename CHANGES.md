@@ -71,5 +71,7 @@
   - @voluntas
 - [FIX] 受信状態が `Recv` でないストリームへの WT_MAX_STREAM_DATA の送信 (`send_max_stream_data` / `grow_stream_recv_window`) を WT_STREAM_STATE_ERROR として拒否し、受信状態が `ResetRead` のストリームへの WT_STOP_SENDING の送信 (`stop_sending`) も拒否する (draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 3.3 / Section 19.5 / Section 19.10)
   - @voluntas
+- [FIX] `send_max_stream_data` が広告した上限を `WtStream::recv_max` に反映し、ピアが広告どおりに送ったデータが WT_FLOW_CONTROL_ERROR にならないようにする。現在の受信上限より小さい値は WT_FLOW_CONTROL_ERROR として拒否する。`grow_stream_recv_window` が広告する値も最後に広告した上限を基準にする (draft-ietf-webtrans-http2-15 Section 6.6)
+  - @voluntas
 
 ### misc
