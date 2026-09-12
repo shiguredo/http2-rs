@@ -824,16 +824,24 @@ impl WtSession {
 
     /// ストリームレベルのフロー制御上限を増やす `WT_MAX_STREAM_DATA` を送信する
     ///
-    /// draft-ietf-webtrans-http2-15 Section 6.6: 指定ストリームの受信可能バイト数を通知する。
+    /// draft-ietf-webtrans-http2-15 Section 6.6: 指定ストリームの受信可能バイト数を通知し、
+    /// 広告した上限を `WtStream::recv_max` にも反映する。`WtStream::recv_max` を
+    /// 更新しないと、ピアが広告どおりに送ったデータを `WtStream::recv_data` が拒否する。
     ///
     /// 同一ストリームに対して既に `WT_STOP_SENDING` を送信済みの場合は
     /// `stream_state_error` を返す (Section 6.6 の MUST)。`maximum` が varint 上限
-    /// (2^62-1) を超える場合は `flow_control_error` を返す (RFC 9000 Section 16)。
+    /// (2^62-1) を超える場合、および現在の受信上限より小さい場合は
+    /// `flow_control_error` を返す (RFC 9000 Section 16、減少を広告されたピアは
+    /// Section 6.6 の MUST でセッションを閉じる)。
     /// 受信パートを持たない送信専用ストリーム (ローカル開始 uni) への
     /// WT_MAX_STREAM_DATA の送信、および受信状態が `Recv` でないストリームへの
     /// 送信は `stream_state_error` を返す
     /// (draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.6 /
     /// RFC 9000 Section 3.3 / Section 19.10)。
+    ///
+    /// 減少の判定は `WtStream::recv_max` を基準にするため、`WtConfig` には
+    /// SETTINGS で広告した初期値を設定しておくこと (未広告の項目の初期値は
+    /// draft-ietf-webtrans-http2-15 Section 11.2 により 0 として扱われる)。
     pub fn send_max_stream_data(&mut self, stream_id: WtStreamId, maximum: u64) -> WtResult<()> {
         // RFC 9000 Section 16: Maximum は varint でエンコードされるため、上限 (2^62-1) を
         // 超える値は CapsuleEncoder 内で panic する。事前に拒否する。
@@ -845,7 +853,7 @@ impl WtSession {
 
         let stream = self
             .streams
-            .get(&stream_id)
+            .get_mut(&stream_id)
             .ok_or_else(|| WtError::invalid_stream_id("stream not found"))?;
 
         // draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.6 /
@@ -868,6 +876,22 @@ impl WtSession {
 
         // RFC 9000 Section 3.3 / Section 19.10: 受信状態が `Recv` でなければ送れない
         Self::check_max_stream_data_recv_state(stream)?;
+
+        // draft-ietf-webtrans-http2-15 Section 6.6:
+        // 以前に広告した値より小さい Maximum Stream Data を受信したピアは
+        // WT_FLOW_CONTROL_ERROR でセッションを閉じる (MUST) ため、減少は送信しない
+        // (RFC 9000 Section 4.1 は減少の広告を許容し送信側の無視を MUST とするが、
+        //  本 API は draft の MUST に従い送信前に拒否する。同値は draft が
+        //  禁じていないため従来どおり送信する)
+        if maximum < stream.recv_max() {
+            return Err(WtError::flow_control_error(format!(
+                "WT_MAX_STREAM_DATA value {maximum} is less than the advertised maximum {}",
+                stream.recv_max()
+            )));
+        }
+        // 広告した上限をローカルの受信上限にも反映する。反映しないと、ピアが
+        // 広告どおりに送ったデータを `WtStream::recv_data` が拒否する
+        stream.update_recv_max(maximum)?;
 
         let capsule = Capsule::WtMaxStreamData { stream_id, maximum };
         self.capsule_encoder.encode(&capsule);
@@ -922,6 +946,9 @@ impl WtSession {
 
     /// ストリーム受信ウィンドウを拡張し、`WT_MAX_STREAM_DATA` を自動送信する
     ///
+    /// `WtStream::recv_max` に `increment` を加えた値を広告する。更新と送信は
+    /// `WtSession::send_max_stream_data` が行う。
+    ///
     /// draft-ietf-webtrans-http2-15 Section 6.6:
     /// `WT_STOP_SENDING` 送信済みのストリームでは `stream_state_error` を返す。
     /// 受信パートを持たない送信専用ストリーム (ローカル開始 uni) と、
@@ -935,7 +962,7 @@ impl WtSession {
     ) -> WtResult<()> {
         let stream = self
             .streams
-            .get_mut(&stream_id)
+            .get(&stream_id)
             .ok_or_else(|| WtError::invalid_stream_id("stream not found"))?;
         // draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.6 /
         // RFC 9000 Section 3.3 / Section 19.10:
@@ -956,8 +983,8 @@ impl WtSession {
         // ローカル状態の不整合を避ける
         Self::check_max_stream_data_recv_state(stream)?;
 
+        // `recv_max` の更新と WT_MAX_STREAM_DATA の送信は send_max_stream_data が行う
         let new_max = stream.recv_max().saturating_add(increment);
-        stream.update_recv_max(new_max)?;
         self.send_max_stream_data(stream_id, new_max)
     }
 

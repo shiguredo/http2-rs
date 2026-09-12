@@ -1,7 +1,7 @@
 # send_max_stream_data が広告した上限を recv_max に反映しない
 
 - Created: 2026-09-12
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-12
 - Branch: feature/fix-send-max-stream-data-recv-max
 - Polished: 2026-09-12
 
@@ -47,3 +47,13 @@
 - 方向・受信状態・`stop_sending_sent` の検証順序とエラー種別が非回帰であること (既存テストがそのまま通過すること)
 - 既存テスト 2 件 (`receive_only_stream_recv_operations_accepted` / `bidi_stream_recv_operations_accepted`) の呼び出し順のコメントが不要になっていれば削除または更新されていること
 - テストが `tests/test_webtransport/integration.rs` に追加され、`cargo test --all` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo fmt --all --check` が通過すること (`issues/0156-refactor-split-webtransport-integration-tests.md` の分割が先に入った場合は、対応するサブモジュールに追加する)
+
+## 解決方法
+
+- `src/webtransport.rs` の `WtSession::send_max_stream_data` で、既存の検証 (varint 上限 → ストリーム存在 → 方向 → `stop_sending_sent` → 受信状態) の後に「`maximum` が現在の `WtStream::recv_max` より小さければ `flow_control_error`」を追加し、そのうえで `WtStream::update_recv_max` で `recv_max` を更新してから capsule をエンコードするようにした。これで「`recv_max` = ピアへ最後に広告した上限」が保たれ、ピアが広告どおりに送ったデータを `WtStream::recv_data` が拒否しなくなる
+- 減少の判定を既存の検証の後ろに置くことで、`WT_STOP_SENDING` 送信済み・送信専用・受信状態が `Recv` でないストリームでは従来どおり `stream_state_error` が返る (tokio ドライバが CONNECT へ送る RST_STREAM のコードも変わらない)。同値 (`maximum == recv_max`) は draft-ietf-webtrans-http2-15 Section 6.6 が禁じていないため従来どおり送信する
+- `WtSession::grow_stream_recv_window` は `recv_max` の更新をやめ、`new_max = recv_max + increment` を `send_max_stream_data` に渡すだけにした。更新と広告が 1 箇所に集約され、`send_max_stream_data` の後に `grow_stream_recv_window` を呼んでも広告値が減少しない
+- `WtStream` の `recv_max` フィールドとアクセサ、`update_recv_max` の doc を更新し、「ピアへ最後に広告した値」であることと「増加のみ反映する」ことを明記した
+- `tests/test_webtransport/integration.rs` に 8 テストを追加した。広告値の `recv_max` 反映とピアが広告値まで送れること、減少の拒否、同値の受理、`grow_stream_recv_window` との組み合わせでの単調性、varint 上限、減少値と既存検証が重なる場合の検証順序 (送信済み / 受信状態 / 送信専用) を固定した。既存テスト 2 件の呼び出し順コメントは、制約が解消したことを述べる内容に更新した
+- `tests/test_webtransport/stream.rs` に `update_recv_max` が同値と減少を無視することを確認するテストを追加した
+- `CHANGES.md` の `## develop` に `[FIX]` のエントリを追加した

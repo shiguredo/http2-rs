@@ -212,7 +212,10 @@ pub struct WtStream {
     recv_offset: u64,
     /// ピアが許可した送信上限
     send_max: u64,
-    /// ローカルが許可した受信上限
+    /// ローカルが許可した受信上限 (ピアへ最後に広告した値)
+    ///
+    /// `WtSession::send_max_stream_data` と `WtSession::grow_stream_recv_window` が
+    /// 広告と同時に更新する
     recv_max: u64,
     /// STOP_SENDING を送信したかどうか
     ///
@@ -343,7 +346,7 @@ impl WtStream {
         self.recv_max.saturating_sub(self.recv_offset)
     }
 
-    /// 受信上限 (ローカルが許可した最大バイト数) を取得する
+    /// 受信上限 (ピアへ最後に広告した最大バイト数) を取得する
     #[must_use]
     pub const fn recv_max(&self) -> u64 {
         self.recv_max
@@ -449,7 +452,9 @@ impl WtStream {
 
     /// 受信上限を更新する
     ///
-    /// varint の最大値 (2^62 - 1) を超えた場合はエラーを返す。
+    /// varint の最大値 (2^62 - 1) を超えた場合はエラーを返す (RFC 9000 Section 16)。
+    /// 現在値より大きい場合のみ反映し、同値と減少は無視する
+    /// (RFC 9000 Section 4.1: 小さい上限の広告はエラーではなく効果が無い)。
     pub fn update_recv_max(&mut self, maximum: u64) -> WtResult<()> {
         if maximum > super::varint::MAX_VALUE {
             return Err(WtError::flow_control_error(
