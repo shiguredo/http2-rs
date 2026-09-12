@@ -1,7 +1,7 @@
 # ドライバのウィンドウ拡張判定が SizeKnown で受信状態検証と食い違う
 
 - Created: 2026-09-12
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-12
 - Branch: feature/fix-driver-recv-state-check
 - Polished: {YYYY-MM-DD}
 
@@ -26,7 +26,15 @@ tokio ドライバが受信ウィンドウを拡張してよいかを判定す�
 
 ## 完了条件
 
-- 判定が受信状態 `Recv` に限定され、`SizeKnown` では拡張を呼ばないこと
+- `DriverState::maybe_grow_stream_window` の判定が `WtStream::recv_state()` と `RecvState::Recv` の比較になり、`WtStream::can_recv()` を使っていないこと (`WtSession::check_max_stream_data_recv_state` と同じ基準)。`SizeKnown` は現行実装で到達しないため、この項目はコードレビューで確認する
 - FIN を受信したストリームのウィンドウが拡張されないことが非回帰であること (`test_wt_stream_window_not_grown_after_fin`)
 - `Recv` 状態のストリームのウィンドウが従来どおり拡張されること (`test_wt_local_bidi_window_grows_with_asymmetric_limits` / `test_wt_stream_window_grows_with_initial_one`)
 - `cargo test --all` が通過すること (判定基準の変更のみで現行の挙動は変わらないため、新しいテストの追加は求めない)
+
+## 解決方法
+
+本 issue では実装せず、`issues/0158-remove-unreachable-stream-states.md` で解消する。
+
+- 本 issue の食い違いは、`RecvState::SizeKnown` が到達しないのに `WtStream::can_recv()` がそれを許容していることに由来する。到達しない variant を削除すれば `can_recv()` は `Recv` のみ真になり、`WtSession::check_max_stream_data_recv_state` の `Recv` 限定検証と意味が一致する。ドライバの判定 (`DriverState::maybe_grow_stream_window` の `can_recv()`) は変更不要になる
+- 到達不能な variant を残したままドライバ側だけを `recv_state()` 比較に変える案も検討したが、`CODEBASE.md` の「未使用・テスト未使用の公開 API はテストを追加して動作を保証するか削除して解消する」に照らすと、`WtStream` の状態を設定する公開 API が無くテストで保証できないため、削除で解消するのが本筋と判断した
+- 0158 の完了時点で本 issue が扱っていた経路は消滅するため、本 issue は実装せず closed にする
