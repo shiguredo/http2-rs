@@ -1,5 +1,11 @@
 # CODEBASE
 
+## このライブラリの前提
+
+- HTTP/2 (RFC 9113) と WebTransport over HTTP/2 (draft-ietf-webtrans-http2) を扱うライブラリであり、TCP/IP 上での利用を前提とする。QUIC / HTTP/3 は対象外とする
+- 仕様が QUIC (RFC 9000) の状態や振る舞いを参照する場合でも、順序配送を前提とする HTTP/2 の性質に合わせて実装する。本ライブラリで到達しない状態は公開 API に持たない
+- 理由: HTTP/2 は順序配送であり、QUIC がもうける中間状態 (ACK 待ち・到着待ち) を経由せず即座に遷移できるため (draft-ietf-webtrans-http2-15 Section 5.2)
+
 ## 公開 API は必ず使用箇所とテストを用意すること
 
 - どこからも呼ばれない関数・メソッドを追加してはいけない
