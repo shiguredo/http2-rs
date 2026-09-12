@@ -145,6 +145,49 @@ fn test_update_recv_max_varint_overflow() {
     assert!(stream.update_recv_max(MAX_VALUE + 1).is_err());
 }
 
+/// 到達しうる状態ごとの述語 (`can_send` / `can_recv` / `is_terminal`) が
+/// それぞれの状態を正しく判定することを確認する
+#[test]
+fn test_state_predicates() {
+    // 送信側: Ready / Send は送信可能、DataRecvd / ResetRecvd は終端
+    assert!(SendState::Ready.can_send(), "Ready は送信可能なはず");
+    assert!(!SendState::Ready.is_terminal(), "Ready は終端ではないはず");
+    assert!(SendState::Send.can_send(), "Send は送信可能なはず");
+    assert!(!SendState::Send.is_terminal(), "Send は終端ではないはず");
+    assert!(
+        !SendState::DataRecvd.can_send(),
+        "DataRecvd は送信不可のはず"
+    );
+    assert!(SendState::DataRecvd.is_terminal(), "DataRecvd は終端のはず");
+    assert!(
+        !SendState::ResetRecvd.can_send(),
+        "ResetRecvd は送信不可のはず"
+    );
+    assert!(
+        SendState::ResetRecvd.is_terminal(),
+        "ResetRecvd は終端のはず"
+    );
+
+    // 受信側: Recv のみ受信可能、DataRead / ResetRead は終端
+    assert!(RecvState::Recv.can_recv(), "Recv は受信可能なはず");
+    assert!(!RecvState::Recv.is_terminal(), "Recv は終端ではないはず");
+    assert!(
+        !RecvState::DataRecvd.can_recv(),
+        "DataRecvd は受信不可のはず"
+    );
+    assert!(
+        !RecvState::DataRecvd.is_terminal(),
+        "DataRecvd はアプリが読み取るまで終端ではないはず"
+    );
+    assert!(!RecvState::DataRead.can_recv(), "DataRead は受信不可のはず");
+    assert!(RecvState::DataRead.is_terminal(), "DataRead は終端のはず");
+    assert!(
+        !RecvState::ResetRead.can_recv(),
+        "ResetRead は受信不可のはず"
+    );
+    assert!(RecvState::ResetRead.is_terminal(), "ResetRead は終端のはず");
+}
+
 /// update_recv_max が同値と減少を無視することを確認する
 /// (RFC 9000 Section 4.1: 小さい上限の広告はエラーではなく効果が無い)
 #[test]

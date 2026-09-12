@@ -718,11 +718,12 @@ impl WtSession {
 
         // RFC 9000 Section 3.3 / Section 19.5:
         // STOP_SENDING を送れるのは RESET_STREAM を受け取っていない状態に限られ、
-        // `ResetRead` のストリームへは送ることができない。Section 19.5 は `Recv` /
-        // `SizeKnown` に限定し、Section 3.5 はその 2 状態での送信を SHOULD とするが
+        // `ResetRead` のストリームへは送ることができない。Section 19.5 は "Recv" /
+        // "Size Known" に限定し、Section 3.5 はその 2 状態での送信を SHOULD とするが
         // (RESET_STREAM 受信済みへの送信は SHOULD NOT)、本 API は Section 3.3 の MAY に
-        // 従い `DataRecvd` / `DataRead` では受理する。`ResetRecvd` は現行実装では
-        // 到達しない (`WtStream::recv_reset` は `ResetRead` へ直接遷移する)
+        // 従い `DataRecvd` / `DataRead` では受理する。RFC 9000 の "Reset Recvd" は
+        // RESET_STREAM の受信とアプリへの通知を同時に行うため経由しない
+        // (`WtStream::recv_reset` は `ResetRead` へ直接遷移する)
         if stream.recv_state() == RecvState::ResetRead {
             return Err(WtError::stream_state_error(
                 "cannot send WT_STOP_SENDING on a reset stream",
@@ -1493,7 +1494,6 @@ impl WtSession {
     /// draft-ietf-webtrans-http2-15 Section 5.2: WebTransport ストリームの状態は
     /// QUIC ストリームの状態を mirror する。RFC 9000 Section 3.3 / Section 19.10:
     /// MAX_STREAM_DATA を送れるのは受信状態が `Recv` のストリームに限られる。
-    /// `WtStream::can_recv()` は `SizeKnown` も許容するため、判定には使わない。
     fn check_max_stream_data_recv_state(stream: &WtStream) -> WtResult<()> {
         if stream.recv_state() != RecvState::Recv {
             return Err(WtError::stream_state_error(

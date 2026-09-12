@@ -1239,10 +1239,11 @@ impl DriverState {
         };
         // draft-ietf-webtrans-http2-15 Section 5.2: WebTransport ストリームの状態は
         // QUIC ストリームの状態を mirror する。RFC 9000 Section 3.3 / Section 19.10:
-        // MAX_STREAM_DATA を送れるのは `Recv` 状態のストリームに限られる。
-        // `can_recv()` は `Recv` と `SizeKnown` で真になるが、`SizeKnown` は現行実装では
-        // 到達しないため、受信パートが終端したストリームはここで除外される。
-        // ピアはそのストリームへデータを送れないため、拡張しても意味がない
+        // MAX_STREAM_DATA を送れるのは `Recv` 状態のストリームに限られ、
+        // `WtSession::grow_stream_recv_window` も同じ基準で検証する。
+        // `WtStream::can_recv()` は `Recv` のときだけ真になるため、受信パートが
+        // 終端したストリームはここで除外される。ピアはそのストリームへデータを
+        // 送れないため、拡張しても意味がない
         if !stream.can_recv() {
             return Ok(());
         }
