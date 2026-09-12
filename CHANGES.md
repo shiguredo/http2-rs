@@ -63,5 +63,7 @@
   - @voluntas
 - [FIX] ピア開始 bidi の未知 ID への WT_STOP_SENDING / WT_MAX_STREAM_DATA の受信でストリームを作成し、WT_STOP_SENDING では WT_RESET_STREAM を自動応答し、WT_MAX_STREAM_DATA では送信上限を更新する。ピアが上位 ID を先に開いた場合は同一型・同方向の下位 ID も開いたものとして通知する。受信ストリーム数上限を超える場合は 1 件も作成せず WT_FLOW_CONTROL_ERROR として拒否し、削除済みストリームは再作成しない (draft-ietf-webtrans-http2-15 Section 4.3.1 / Section 6.3 / Section 6.4 / Section 6.6 / Section 6.7 / RFC 9000 Section 2.1 / Section 3.2 / Section 3.3 / Section 3.5 / Section 4.6 / Section 19.5 / Section 19.10)
   - @voluntas
+- [FIX] 未作成のローカル開始 ID への WT_STOP_SENDING / WT_MAX_STREAM_DATA を WT_STREAM_STATE_ERROR として拒否し、削除済み ID (採番済み範囲内) の受理は維持する (draft-ietf-webtrans-http2-15 Section 3.4 / Section 5.2 / RFC 9000 Section 2.1 / Section 19.5 / Section 19.10)
+  - @voluntas
 
 ### misc

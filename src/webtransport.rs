@@ -268,8 +268,14 @@ pub struct WtSession {
     /// イベントキュー
     events: VecDeque<WtEvent>,
     /// 次の双方向ストリーム ID
+    ///
+    /// ローカル開始 bidi ストリームの未作成範囲の下端 (採番済み範囲の上端)。
+    /// `stream_id < next_bidi_stream_id` が作成済み、`stream_id >= next_bidi_stream_id`
+    /// が未作成と一致する ([`Self::is_uncreated_local_id`] を参照)。
     next_bidi_stream_id: WtStreamId,
     /// 次の単方向ストリーム ID
+    ///
+    /// ローカル開始 uni ストリームの未作成範囲の下端。bidi と同じ不変条件を持つ。
     next_uni_stream_id: WtStreamId,
 }
 
@@ -344,6 +350,25 @@ impl WtSession {
     #[must_use]
     const fn is_receive_only_id(&self, stream_id: WtStreamId) -> bool {
         self.is_peer_initiated(stream_id) && stream::stream_id::is_unidirectional(stream_id)
+    }
+
+    /// ローカル開始 ID のうち、採番カウンタ (次に開く ID) 以上の
+    /// 未作成のストリーム ID かどうかを返す
+    ///
+    /// `next_bidi_stream_id` / `next_uni_stream_id` は `WtSession::open_stream` でのみ
+    /// 進み、その直後に `streams` へ挿入されるため、`stream_id` がカウンタ以上であれば
+    /// 未作成と判定できる。`streams` の有無は参照しないため、削除済みの ID
+    /// (採番済み範囲内) は未作成と判定されない (RFC 9000 Section 19.5 / Section 19.10)。
+    #[must_use]
+    const fn is_uncreated_local_id(&self, stream_id: WtStreamId) -> bool {
+        if self.is_peer_initiated(stream_id) {
+            return false;
+        }
+        if stream::stream_id::is_bidirectional(stream_id) {
+            stream_id >= self.next_bidi_stream_id
+        } else {
+            stream_id >= self.next_uni_stream_id
+        }
     }
 
     /// セッション状態を取得する
@@ -1020,6 +1045,18 @@ impl WtSession {
                     ));
                 }
 
+                // draft-ietf-webtrans-http2-15 Section 3.4 / Section 5.2 /
+                // RFC 9000 Section 2.1 / Section 19.5:
+                // 未作成のローカル開始 ID への WT_STOP_SENDING は WT_STREAM_STATE_ERROR
+                // (QUIC の connection error を draft-ietf-webtrans-http2-15 Section 3.4 に
+                // 従いストリームエラーで伝える)。削除済みの ID (採番済み範囲内) は
+                // 作成済みのため対象外
+                if self.is_uncreated_local_id(stream_id) {
+                    return Err(WtError::stream_state_error(
+                        "WT_STOP_SENDING received for locally-initiated stream that has not been created",
+                    ));
+                }
+
                 // draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 3.2:
                 // ピア開始 bidi の未知 ID への WT_STOP_SENDING はそのストリームを開く。
                 // 生成後も以降の検証・自動応答は同じ経路を通る
@@ -1062,6 +1099,18 @@ impl WtSession {
                 if self.is_receive_only_id(stream_id) {
                     return Err(WtError::stream_state_error(
                         "WT_MAX_STREAM_DATA received for receive-only stream",
+                    ));
+                }
+
+                // draft-ietf-webtrans-http2-15 Section 3.4 / Section 5.2 /
+                // RFC 9000 Section 2.1 / Section 19.10:
+                // 未作成のローカル開始 ID への WT_MAX_STREAM_DATA は WT_STREAM_STATE_ERROR
+                // (QUIC の connection error を draft-ietf-webtrans-http2-15 Section 3.4 に
+                // 従いストリームエラーで伝える)。削除済みの ID (採番済み範囲内) は
+                // 作成済みのため対象外
+                if self.is_uncreated_local_id(stream_id) {
+                    return Err(WtError::stream_state_error(
+                        "WT_MAX_STREAM_DATA received for locally-initiated stream that has not been created",
                     ));
                 }
 
@@ -1294,6 +1343,10 @@ impl WtSession {
         stream_id: WtStreamId,
         bidirectional: bool,
     ) -> WtResult<()> {
+        // ローカル開始 ID を渡すと、カウンタを進めずにローカル ID を `streams` へ
+        // 入れてしまい `WtSession::is_uncreated_local_id` の前提が崩れる。
+        // 呼び出し元はピア開始 ID のみを渡す契約である
+        debug_assert!(self.is_peer_initiated(stream_id));
         // 上限超過時は 1 件も作成せずに拒否する。途中まで作成すると `process` の
         // エラー後もストリームと `WtEvent::StreamOpened` が残り、呼び出し側が
         // エラーを無視した場合に存在しないストリームを受理したのと同じ状態になる

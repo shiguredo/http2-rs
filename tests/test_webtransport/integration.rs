@@ -1002,6 +1002,423 @@ fn server_role_implicit_peer_bidi_stream_creates_lower_ids() {
     );
 }
 
+/// 未作成のローカル開始 bidi ID への WT_STOP_SENDING は stream_state_error になり、
+/// イベントが送出されず出力が生成されないこと (RFC 9000 Section 19.5)
+#[test]
+fn wt_stop_sending_uncreated_local_bidi_id_errors() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // 0 はクライアントから見てローカル開始 bidi の最初の ID で、まだ開いていない
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: 0,
+        error_code: 7,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("未作成のローカル開始 ID への WT_STOP_SENDING は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("has not been created"),
+        "未作成であることが理由に含まれるはず"
+    );
+    assert!(
+        session.poll_event().is_none(),
+        "イベントが送出されてはいけない"
+    );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
+/// 未作成のローカル開始 uni ID への WT_STOP_SENDING は stream_state_error になり、
+/// イベントが送出されず出力が生成されないこと (RFC 9000 Section 19.5)
+#[test]
+fn wt_stop_sending_uncreated_local_uni_id_errors() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // 2 はクライアントから見てローカル開始 uni の最初の ID で、まだ開いていない
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: 2,
+        error_code: 7,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("未作成のローカル開始 uni ID への WT_STOP_SENDING は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("has not been created"),
+        "未作成であることが理由に含まれるはず"
+    );
+    assert!(
+        session.poll_event().is_none(),
+        "イベントが送出されてはいけない"
+    );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
+/// 未作成のローカル開始 bidi / uni ID への WT_MAX_STREAM_DATA は
+/// stream_state_error になり、イベントが送出されず出力が生成されないこと
+/// (RFC 9000 Section 19.10)
+#[test]
+fn wt_max_stream_data_uncreated_local_id_errors() {
+    // 双方向 (ID 0)
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: 0,
+        maximum: 1_000_000,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("未作成のローカル開始 bidi ID への WT_MAX_STREAM_DATA は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("has not been created"),
+        "未作成であることが理由に含まれるはず"
+    );
+    assert!(
+        session.poll_event().is_none(),
+        "イベントが送出されてはいけない"
+    );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+
+    // 単方向 (ID 2)
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: 2,
+        maximum: 1_000_000,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("未作成のローカル開始 uni ID への WT_MAX_STREAM_DATA は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("has not been created"),
+        "未作成であることが理由に含まれるはず"
+    );
+    assert!(
+        session.poll_event().is_none(),
+        "イベントが送出されてはいけない"
+    );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
+/// 開設済みのローカル開始 ID への受信は受理され、次の未作成 ID は拒否されること
+/// (RFC 9000 Section 19.5 / Section 19.10 の "has not yet been created" 境界)
+#[test]
+fn created_local_id_accepted_and_next_uncreated_id_errors() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // ローカル開始 bidi の 0 と uni の 2 を開く
+    let bidi_id = session.open_bidi_stream().expect("bidi を開けるはず");
+    let uni_id = session.open_uni_stream().expect("uni を開けるはず");
+    assert_eq!(bidi_id, 0, "最初のローカル開始 bidi ID は 0 のはず");
+    assert_eq!(uni_id, 2, "最初のローカル開始 uni ID は 2 のはず");
+
+    // 開設済みの ID への WT_MAX_STREAM_DATA は受理される
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: bidi_id,
+        maximum: 1_000_000,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("開設済みのローカル開始 ID への WT_MAX_STREAM_DATA は受理されるはず");
+    assert_eq!(
+        session
+            .stream(bidi_id)
+            .expect("ストリームが存在するはず")
+            .send_available(),
+        1_000_000,
+        "送信上限が更新されるはず"
+    );
+
+    // 開設済みの ID への WT_STOP_SENDING は受理される (受信パートがあるため)
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: bidi_id,
+        error_code: 7,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("開設済みのローカル開始 ID への WT_STOP_SENDING は受理されるはず");
+
+    // 送信パートが Ready のため WT_RESET_STREAM が自動応答される
+    let out = session.poll_output().expect("WT_RESET_STREAM の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtResetStream {
+            stream_id,
+            error_code,
+            reliable_size,
+        } => {
+            assert_eq!(stream_id, bidi_id);
+            assert_eq!(error_code, 7);
+            assert_eq!(reliable_size, 0, "未送信なので reliable_size は 0");
+        }
+        other => panic!("WtResetStream を期待したが {other:?} だった"),
+    }
+    while session.poll_event().is_some() {}
+
+    // 次の未作成 ID (bidi 4 / uni 6) は拒否される
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: 4,
+        maximum: 1_000_000,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("未作成のローカル開始 bidi ID (4) は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("has not been created"),
+        "未作成であることが理由に含まれるはず"
+    );
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: 6,
+        maximum: 1_000_000,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("未作成のローカル開始 uni ID (6) は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("has not been created"),
+        "未作成であることが理由に含まれるはず"
+    );
+}
+
+/// カウンタより十分に先の未作成 ID (4000 / 4002) も拒否されること
+/// (RFC 9000 Section 19.5 / Section 19.10 は「カウンタ同値」に限らず
+///  未作成のローカル開始 ID すべてを対象とする)
+#[test]
+fn far_uncreated_local_id_capsules_error() {
+    // 双方向 (ID 4000)
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: 4000,
+        error_code: 7,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("カウンタより先の未作成ローカル bidi ID は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("has not been created"),
+        "未作成であることが理由に含まれるはず (実際: {})",
+        err.reason()
+    );
+    assert!(
+        session.poll_event().is_none(),
+        "イベントが送出されてはいけない"
+    );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+
+    // 単方向 (ID 4002)
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: 4002,
+        maximum: 1_000_000,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("カウンタより先の未作成ローカル uni ID は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("has not been created"),
+        "未作成であることが理由に含まれるはず (実際: {})",
+        err.reason()
+    );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
+/// 開設済みのローカル開始 uni ID は未作成と誤判定されず、既存の扱いが維持されること
+/// (RFC 9000 Section 19.5 / Section 19.10)
+#[test]
+fn created_local_uni_id_is_not_treated_as_uncreated() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    let uni_id = session.open_uni_stream().expect("uni を開けるはず");
+    assert_eq!(uni_id, 2, "最初のローカル開始 uni ID は 2 のはず");
+
+    // 開設済みのローカル開始 uni への WT_MAX_STREAM_DATA は受理され、送信上限が更新される
+    // (送信パートを持つため。未作成と誤判定されれば拒否されてしまう)
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: uni_id,
+        maximum: 1_000_000,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("開設済みのローカル開始 uni への WT_MAX_STREAM_DATA は受理されるはず");
+    assert_eq!(
+        session
+            .stream(uni_id)
+            .expect("ストリームが存在するはず")
+            .send_available(),
+        1_000_000,
+        "送信上限が更新されるはず"
+    );
+
+    // 開設済みのローカル開始 uni への WT_STOP_SENDING は受理される
+    // (ピアからの停止要求は送信専用ストリームでも正当)
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: uni_id,
+        error_code: 7,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("開設済みのローカル開始 uni への WT_STOP_SENDING は受理されるはず");
+    // 送信パートが Ready のため RFC 9000 Section 3.5 の MUST により
+    // WT_RESET_STREAM が自動応答される
+    let out = session.poll_output().expect("WT_RESET_STREAM の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtResetStream {
+            stream_id,
+            error_code,
+            reliable_size,
+        } => {
+            assert_eq!(stream_id, uni_id);
+            assert_eq!(error_code, 7);
+            assert_eq!(reliable_size, 0, "未送信なので reliable_size は 0");
+        }
+        other => panic!("WtResetStream を期待したが {other:?} だった"),
+    }
+
+    let mut got_stop_sending = false;
+    while let Some(ev) = session.poll_event() {
+        if let WtEvent::StopSending {
+            stream_id,
+            error_code,
+        } = ev
+        {
+            assert_eq!(stream_id, uni_id);
+            assert_eq!(error_code, 7);
+            got_stop_sending = true;
+        }
+    }
+    assert!(got_stop_sending, "StopSending が送出されるはず");
+}
+
+/// 未作成のローカル開始 bidi ID への WT_STREAM が拒否されること
+/// (RFC 9000 Section 19.8 / draft-ietf-webtrans-http2-15 Section 5.2)
+#[test]
+fn wt_stream_uncreated_local_bidi_id_errors() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // 4 はクライアントから見てローカル開始 bidi の 2 番目の ID で、まだ開いていない
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: 4,
+        data: b"x".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("未作成のローカル開始 ID への WT_STREAM は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("locally-initiated"),
+        "ローカル開始 ID であることが理由に含まれるはず (実際: {})",
+        err.reason()
+    );
+    assert!(
+        session.stream(4).is_none(),
+        "ストリームが作成されてはいけない"
+    );
+    assert!(
+        session.poll_event().is_none(),
+        "イベントが送出されてはいけない"
+    );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
+/// サーバーセッションでも未作成のローカル開始 bidi ID への WT_STOP_SENDING が
+/// 拒否されること (RFC 9000 Section 19.5)
+#[test]
+fn server_role_wt_stop_sending_uncreated_local_bidi_id_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // 1 はサーバーから見てローカル開始 bidi の最初の ID で、まだ開いていない
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: 1,
+        error_code: 7,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("未作成のローカル開始 ID への WT_STOP_SENDING は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("has not been created"),
+        "未作成であることが理由に含まれるはず"
+    );
+    assert!(
+        session.poll_event().is_none(),
+        "イベントが送出されてはいけない"
+    );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
 /// 受信専用 ID (ピア開始 uni) への WT_STOP_SENDING はストリーム未作成でも
 /// stream_state_error になり、イベントが送出されないこと
 /// (RFC 9000 Section 19.5)
