@@ -3,7 +3,7 @@
 - Created: 2026-09-12
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-receive-only-stream-send-validation
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-09-12
 
 ## 目的
 
@@ -33,5 +33,5 @@
 - ピア開始 uni ストリームへの WT_STOP_SENDING 受信が `stream_state_error` を返し、WT_RESET_STREAM が応答されないこと
 - ピア開始 uni ストリームへの WT_MAX_STREAM_DATA 受信が `stream_state_error` を返すこと
 - ローカル開始 uni / ローカル開始 bidi / ピア開始 bidi への同操作は従来どおり動作すること
-- ピア開始 uni ストリームへの `stop_sending` と `send_max_stream_data` は従来どおり動作すること
+- ピア開始 uni ストリームへの `stop_sending` / `send_max_stream_data` / `grow_stream_recv_window` は従来どおり動作すること
 - テストが追加され、`cargo test --all` が通過すること
