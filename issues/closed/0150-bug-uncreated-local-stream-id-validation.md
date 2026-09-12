@@ -1,7 +1,7 @@
 # 未作成のローカル開始 ID への WT_STOP_SENDING / WT_MAX_STREAM_DATA が拒否されない
 
 - Created: 2026-09-12
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-12
 - Branch: feature/fix-uncreated-local-stream-id-validation
 - Polished: 2026-09-12
 
@@ -40,3 +40,11 @@ RFC 9000 Section 19.5 は「Receiving a STOP_SENDING frame for a locally initiat
 - 閉じて削除済みのローカル開始 ID への WT_STOP_SENDING が `WtEvent::StopSending` を送出し、WT_MAX_STREAM_DATA が暗黙に無視されること (受理の維持)
 - 開設済みのローカル開始 ID への受信が従来どおり動作すること
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/webtransport.rs` の `WtSession` に `is_uncreated_local_id` を追加した。ロールと ID からローカル開始と判定できる ID のうち、`next_bidi_stream_id` / `next_uni_stream_id` 以上 (採番済み範囲より先) のものを未作成として判定する。両カウンタは `WtSession::open_stream` の 1 箇所でしか進まず、その直後に `streams` へ挿入されるため「作成済み = カウンタ未満」「未作成 = カウンタ以上」が厳密に一致する (RFC 9000 Section 2.1)。判定は `streams` を参照しないため、削除済みの ID (採番済み範囲内) は未作成と判定されない
+- `WtSession::handle_capsule` の WT_STOP_SENDING / WT_MAX_STREAM_DATA の両分岐で、受信専用 ID の拒否の後にこの検証を追加し、未作成のローカル開始 ID への受信を `WtError::stream_state_error` で拒否するようにした。拒否はイベント送出・出力生成・状態変更の前に行う (draft-ietf-webtrans-http2-15 Section 3.4 / Section 5.2 / RFC 9000 Section 2.1 / Section 19.5 / Section 19.10)
+- `next_bidi_stream_id` / `next_uni_stream_id` のフィールド doc に、未作成判定の境界として使う不変条件を明記した。`create_peer_streams_up_to` にはピア開始 ID のみを渡す契約を `debug_assert` で明示した
+- `tests/test_webtransport/integration.rs` に、未作成の bidi / uni ID への拒否 (カウンタ同値と十分に先の ID の両方)、開設済み ID の受理、削除済み ID の受理維持、サーバーロール、`handle_stream_data` のローカル開始 ID 拒否の各テストを追加した
+- `CHANGES.md` の `## develop` に `[FIX]` のエントリを追加した
