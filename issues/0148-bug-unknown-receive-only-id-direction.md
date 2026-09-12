@@ -3,7 +3,7 @@
 - Created: 2026-09-12
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-unknown-receive-only-id-direction
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-09-12
 
 ## 目的
 
