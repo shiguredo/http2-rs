@@ -579,20 +579,22 @@ fn stop_sending_no_auto_reset_after_fin_sent() {
     assert!(got_stop_sending);
 }
 
-/// 存在しないストリーム ID への WT_STOP_SENDING はエラーにならず
-/// WtEvent::StopSending を発行することを確認する。
+/// 未作成のピア開始 bidi のストリーム ID (9997) への WT_STOP_SENDING は
+/// 受信専用ではないためエラーにならず、WtEvent::StopSending を発行することを確認する。
+/// ピア開始 bidi には先着し得る (RFC 9000 Section 3.2)。本実装はストリームを
+/// 作成せずイベント送出のみ行う。
 #[test]
-fn stop_sending_unknown_stream_emits_event() {
+fn stop_sending_unknown_peer_bidi_stream_emits_event() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
-    session.initiate().expect("initiate should succeed");
+    session.initiate().expect("セッションを開始できるはず");
 
     let mut encoder = CapsuleEncoder::new();
     encoder.encode(&Capsule::WtStopSending {
-        stream_id: 9999,
+        stream_id: 9997,
         error_code: 0,
     });
-    session.feed(&encoder.take()).expect("feed should succeed");
-    session.process().expect("process should succeed");
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
 
     assert!(!session.has_output());
 
@@ -603,6 +605,167 @@ fn stop_sending_unknown_stream_emits_event() {
         }
     }
     assert!(got_stop_sending);
+}
+
+/// 受信専用 ID (ピア開始 uni) への WT_STOP_SENDING はストリーム未作成でも
+/// stream_state_error になり、イベントが送出されないこと
+/// (RFC 9000 Section 19.5)
+#[test]
+fn wt_stop_sending_unknown_receive_only_id_errors() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    let mut encoder = CapsuleEncoder::new();
+    // 9999 はクライアントから見てピア (サーバー) 開始 uni の ID
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: 9999,
+        error_code: 0,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("受信専用 ID への WT_STOP_SENDING は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason().contains("receive-only"));
+    assert!(
+        session.poll_event().is_none(),
+        "イベントが送出されてはいけない"
+    );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
+/// 受信専用 ID (ピア開始 uni) への WT_MAX_STREAM_DATA はストリーム未作成でも
+/// stream_state_error になること (RFC 9000 Section 19.10)
+#[test]
+fn wt_max_stream_data_unknown_receive_only_id_errors() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    let mut encoder = CapsuleEncoder::new();
+    // 9999 はクライアントから見てピア (サーバー) 開始 uni の ID
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: 9999,
+        maximum: 1_000_000,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("受信専用 ID への WT_MAX_STREAM_DATA は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason().contains("receive-only"));
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
+/// 未知のピア開始 bidi ID (9997) への WT_MAX_STREAM_DATA は受信専用ではないため
+/// エラーにせず従来どおり無視されること (ストリームの暗黙オープンは未実装)
+#[test]
+fn wt_max_stream_data_unknown_peer_bidi_stream_ignored() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: 9997,
+        maximum: 1_000_000,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("ピア開始 bidi の未知 ID への WT_MAX_STREAM_DATA は受理されるはず");
+    assert!(
+        session.poll_event().is_none(),
+        "イベントが送出されてはいけない"
+    );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
+/// サーバーセッションでピア開始 uni ストリームを FIN 付き WT_STREAM で開き、
+/// FIN 受信イベントの消費まで進めて削除するヘルパー
+fn open_and_remove_peer_uni_stream(session: &mut WtSession) -> WtStreamId {
+    // サーバーから見てピア (クライアント) 開始 uni の ID
+    let peer_id = wt_stream_id::first(true, false);
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: peer_id,
+        data: b"x".to_vec(),
+        fin: true,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
+    assert!(
+        session.stream(peer_id).is_some(),
+        "FIN 受信イベント消費前はストリームが存在するはず"
+    );
+    // FIN 受信イベントを消費するとストリームが削除される
+    while session.poll_event().is_some() {}
+    assert!(
+        session.stream(peer_id).is_none(),
+        "FIN 受信後のストリームは削除されているはず"
+    );
+    peer_id
+}
+
+/// 受信専用ストリームが FIN 受信で削除された後も、その ID への
+/// WT_STOP_SENDING は stream_state_error になること
+/// (RFC 9000 Section 19.5)
+#[test]
+fn wt_stop_sending_removed_receive_only_stream_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = open_and_remove_peer_uni_stream(&mut session);
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: peer_id,
+        error_code: 0,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("削除済み受信専用 ID への WT_STOP_SENDING は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason().contains("receive-only"));
+    assert!(
+        session.poll_event().is_none(),
+        "イベントが送出されてはいけない"
+    );
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
+/// 受信専用ストリームが FIN 受信で削除された後も、その ID への
+/// WT_MAX_STREAM_DATA は stream_state_error になること
+/// (RFC 9000 Section 19.10)
+#[test]
+fn wt_max_stream_data_removed_receive_only_stream_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = open_and_remove_peer_uni_stream(&mut session);
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: peer_id,
+        maximum: 1_000_000,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("削除済み受信専用 ID への WT_MAX_STREAM_DATA は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason().contains("receive-only"));
+    assert!(!session.has_output(), "出力が生成されてはいけない");
 }
 
 /// 重複 WT_STOP_SENDING 受信は stream_state_error になることを確認する。
