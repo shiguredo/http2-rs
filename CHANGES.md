@@ -57,5 +57,7 @@
   - @voluntas
 - [FIX] 受信専用のピア開始 uni ストリームへの `send_stream_data` / `reset_stream` と WT_STOP_SENDING / WT_MAX_STREAM_DATA 受信を WT_STREAM_STATE_ERROR として拒否し、仕様違反の送信と WT_RESET_STREAM の自動応答が行われないようにする (draft-ietf-webtrans-http2-15 Section 6.2 / Section 6.3 / Section 6.4 / Section 6.6 / RFC 9000 Section 2.1 / Section 19.4 / Section 19.5 / Section 19.10)
   - @voluntas
+- [FIX] 送信専用のローカル開始 uni ストリームへの `stop_sending` / `send_max_stream_data` / `grow_stream_recv_window` を WT_STREAM_STATE_ERROR として拒否し、仕様違反の capsule が送信されないようにする (draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.3 / Section 6.6 / RFC 9000 Section 3.3 / Section 19.5 / Section 19.10)
+  - @voluntas
 
 ### misc

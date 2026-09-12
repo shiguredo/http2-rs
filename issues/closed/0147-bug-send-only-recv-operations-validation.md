@@ -1,7 +1,7 @@
 # 送信専用ストリームへの受信系操作が方向検証されない
 
 - Created: 2026-09-12
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-12
 - Branch: feature/fix-send-only-recv-operations-validation
 - Polished: 2026-09-12
 
@@ -32,3 +32,10 @@
 - ローカル開始 uni への `grow_stream_recv_window` が `stream_state_error` を返し、`recv_available` が変化しないこと
 - 受信専用ストリームと双方向ストリームへの同操作は従来どおり動作すること
 - テストが追加され、`cargo test --all` が通過すること
+
+## 解決方法
+
+- `src/webtransport.rs` の `WtSession::stop_sending` / `send_max_stream_data` / `grow_stream_recv_window` に `WtStream::has_recv_part()` の検証を追加し、送信専用のローカル開始 uni ストリームへの受信系操作を `WtError::stream_state_error` で拒否するようにした。`stop_sending` は送信済みフラグ設定と capsule エンコードの前、`grow_stream_recv_window` は `recv_max` 更新の前に拒否し、部分的な状態変更を残さない (draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.3 / Section 6.6 / RFC 9000 Section 3.3 / Section 19.5 / Section 19.10)
+- 受信専用 (ピア開始 uni) と双方向ストリームへの `stop_sending` / `send_max_stream_data` / `grow_stream_recv_window` は従来どおり受理する
+- `tests/test_webtransport/integration.rs` に拒否 3 テスト (エラー種別 / 出力なし / フラグ・受信ウィンドウ不変 / エンコーダー残留なし) と、双方向ストリームの受理を検証する非回帰テスト (カプセルの `stream_id` / `maximum` 検証を含む) を追加した
+- `CHANGES.md` の `## develop` に `[FIX]` のエントリを追加した

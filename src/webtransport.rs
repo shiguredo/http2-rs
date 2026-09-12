@@ -609,6 +609,10 @@ impl WtSession {
     ///
     /// `error_code` が 0xffffffff を超える場合は `flow_control_error` を返す
     /// (draft-ietf-webtrans-http2-15 Section 6.3 の MUST NOT)。
+    /// 受信パートを持たない送信専用ストリーム (ローカル開始 uni) への
+    /// WT_STOP_SENDING の送信は `stream_state_error` を返す
+    /// (draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.3 /
+    /// RFC 9000 Section 3.3 / Section 19.5)。
     pub fn stop_sending(&mut self, stream_id: WtStreamId, error_code: u64) -> WtResult<()> {
         // draft-ietf-webtrans-http2-15 Section 6.3:
         // Application Protocol Error Code は 0xffffffff 以下でなければならない (MUST NOT)。
@@ -628,6 +632,16 @@ impl WtSession {
             .streams
             .get_mut(&stream_id)
             .ok_or_else(|| WtError::invalid_stream_id("stream not found"))?;
+
+        // draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.3 /
+        // RFC 9000 Section 3.3 / Section 19.5:
+        // WT_STOP_SENDING は受信側の操作であり、受信パートを持たない
+        // 送信専用ストリーム (ローカル開始 uni) へは送ることができない
+        if !stream.has_recv_part() {
+            return Err(WtError::stream_state_error(
+                "cannot send WT_STOP_SENDING on a send-only stream",
+            ));
+        }
 
         // draft-ietf-webtrans-http2-15 Section 6.3:
         // WT_STOP_SENDING を複数回送信してはならない
@@ -737,6 +751,10 @@ impl WtSession {
     /// 同一ストリームに対して既に `WT_STOP_SENDING` を送信済みの場合は
     /// `stream_state_error` を返す (Section 6.6 の MUST)。`maximum` が varint 上限
     /// (2^62-1) を超える場合は `flow_control_error` を返す (RFC 9000 Section 16)。
+    /// 受信パートを持たない送信専用ストリーム (ローカル開始 uni) への
+    /// WT_MAX_STREAM_DATA の送信は `stream_state_error` を返す
+    /// (draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.6 /
+    /// RFC 9000 Section 3.3 / Section 19.10)。
     pub fn send_max_stream_data(&mut self, stream_id: WtStreamId, maximum: u64) -> WtResult<()> {
         // RFC 9000 Section 16: Maximum は varint でエンコードされるため、上限 (2^62-1) を
         // 超える値は CapsuleEncoder 内で panic する。事前に拒否する。
@@ -750,6 +768,17 @@ impl WtSession {
             .streams
             .get(&stream_id)
             .ok_or_else(|| WtError::invalid_stream_id("stream not found"))?;
+
+        // draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.6 /
+        // RFC 9000 Section 3.3 / Section 19.10:
+        // WT_MAX_STREAM_DATA は受信側の操作であり、受信パートを持たない
+        // 送信専用ストリーム (ローカル開始 uni) へは送ることができない
+        if !stream.has_recv_part() {
+            return Err(WtError::stream_state_error(
+                "cannot send WT_MAX_STREAM_DATA on a send-only stream",
+            ));
+        }
+
         // draft-ietf-webtrans-http2-15 Section 6.6:
         // WT_STOP_SENDING 送信後に WT_MAX_STREAM_DATA を送ってはならない (MUST NOT)
         if stream.stop_sending_sent() {
@@ -813,6 +842,9 @@ impl WtSession {
     ///
     /// draft-ietf-webtrans-http2-15 Section 6.6:
     /// `WT_STOP_SENDING` 送信済みのストリームでは `stream_state_error` を返す。
+    /// 受信パートを持たない送信専用ストリーム (ローカル開始 uni) では
+    /// `stream_state_error` を返す (draft-ietf-webtrans-http2-15 Section 5.2 /
+    /// Section 6.6 / RFC 9000 Section 3.3 / Section 19.10)。
     pub fn grow_stream_recv_window(
         &mut self,
         stream_id: WtStreamId,
@@ -822,9 +854,18 @@ impl WtSession {
             .streams
             .get_mut(&stream_id)
             .ok_or_else(|| WtError::invalid_stream_id("stream not found"))?;
+        // draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.6 /
+        // RFC 9000 Section 3.3 / Section 19.10:
+        // 受信パートを持たないストリームの受信ウィンドウは拡張できない。
+        // この検証と WT_STOP_SENDING 送信済みの検証はいずれも recv_max を
+        // 更新する前に拒否し、ローカル状態の不整合を避ける
+        if !stream.has_recv_part() {
+            return Err(WtError::stream_state_error(
+                "cannot grow stream recv window on a send-only stream",
+            ));
+        }
         // draft-ietf-webtrans-http2-15 Section 6.6:
         // WT_STOP_SENDING 送信後に WT_MAX_STREAM_DATA を送ってはならない (MUST NOT)
-        // recv_max を更新する前に拒否し、ローカル状態の不整合を避ける
         if stream.stop_sending_sent() {
             return Err(WtError::stream_state_error(
                 "cannot grow stream recv window: WT_STOP_SENDING already sent",

@@ -1396,6 +1396,194 @@ fn peer_bidi_stream_send_operations_accepted() {
     }
 }
 
+// ---- 送信専用ストリーム (ローカル開始 uni) への受信系操作の検証 (拒否と非回帰) ----
+
+/// 送信専用ストリームへの stop_sending は stream_state_error になり、
+/// ストリーム状態と出力が変化しないこと
+/// (draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 19.5)
+#[test]
+fn stop_sending_send_only_stream_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = session.open_uni_stream().expect("ストリームを開けるはず");
+    assert!(
+        session.poll_output().is_none(),
+        "ストリーム作成時点では出力が生成されないはず"
+    );
+
+    let err = session
+        .stop_sending(stream_id, 7)
+        .expect_err("送信専用ストリームへの stop_sending は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason().contains("send-only"));
+    assert!(
+        !session
+            .stream(stream_id)
+            .expect("ストリームが存在するはず")
+            .stop_sending_sent(),
+        "WT_STOP_SENDING 送信済みフラグが立ってはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// 送信専用ストリームへの send_max_stream_data は stream_state_error になり、
+/// 出力が生成されないこと
+/// (draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 19.10)
+#[test]
+fn send_max_stream_data_send_only_stream_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = session.open_uni_stream().expect("ストリームを開けるはず");
+    assert!(
+        session.poll_output().is_none(),
+        "ストリーム作成時点では出力が生成されないはず"
+    );
+
+    let err = session
+        .send_max_stream_data(stream_id, 1_000_000)
+        .expect_err("送信専用ストリームへの WT_MAX_STREAM_DATA 送信は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason().contains("send-only"));
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// 送信専用ストリームへの grow_stream_recv_window は stream_state_error になり、
+/// 受信ウィンドウと出力が変化しないこと
+/// (draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 19.10)
+#[test]
+fn grow_stream_recv_window_send_only_stream_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = session.open_uni_stream().expect("ストリームを開けるはず");
+    assert!(
+        session.poll_output().is_none(),
+        "ストリーム作成時点では出力が生成されないはず"
+    );
+    let before = session
+        .stream(stream_id)
+        .expect("ストリームが存在するはず")
+        .recv_available();
+
+    let err = session
+        .grow_stream_recv_window(stream_id, 4096)
+        .expect_err("送信専用ストリームの受信ウィンドウ拡張は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason().contains("send-only"));
+    assert_eq!(
+        session
+            .stream(stream_id)
+            .expect("ストリームが存在するはず")
+            .recv_available(),
+        before,
+        "拒否時に受信ウィンドウが変化してはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+
+    // 拒否後に成功操作を行い、拒否時に capsule がエンコーダー内部へ
+    // 積まれていないことを確認する (残留があれば先頭に現れる)
+    session
+        .send_stream_data(stream_id, b"data", false)
+        .expect("拒否後の送信は成功するはず");
+    let out = session.poll_output().expect("WT_STREAM の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtStream { .. } => {}
+        other => panic!("WtStream を期待したが {other:?} だった"),
+    }
+}
+
+/// 双方向ストリームでは stop_sending / send_max_stream_data /
+/// grow_stream_recv_window が従来どおり受理されること。
+///
+/// `has_recv_part()` は双方向で真になるため、双方向クラスの受理確認は
+/// ローカル開始 bidi で代表させる (ピア開始 bidi も同じ判定になる)。
+#[test]
+fn bidi_stream_recv_operations_accepted() {
+    // stop_sending
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = session.open_bidi_stream().expect("ストリームを開けるはず");
+    session
+        .stop_sending(stream_id, 7)
+        .expect("双方向ストリームへの stop_sending は成功するはず");
+    let out = session.poll_output().expect("WT_STOP_SENDING の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtStopSending {
+            stream_id: id,
+            error_code,
+        } => {
+            assert_eq!(id, stream_id);
+            assert_eq!(error_code, 7);
+        }
+        other => panic!("WtStopSending を期待したが {other:?} だった"),
+    }
+
+    // send_max_stream_data / grow_stream_recv_window
+    // WT_STOP_SENDING 送信後は WT_MAX_STREAM_DATA を送れないため別セッションで検証する
+    let mut session2 = WtSession::server(WtConfig::default(), WtConfig::default());
+    session2.initiate().expect("セッションを開始できるはず");
+    let stream_id2 = session2.open_bidi_stream().expect("ストリームを開けるはず");
+    let recv_before = session2
+        .stream(stream_id2)
+        .expect("ストリームが存在するはず")
+        .recv_available();
+
+    // 単調増加になるよう、grow_stream_recv_window が送る recv_max + 4096 より
+    // 大きい上限を後で送る
+    session2
+        .grow_stream_recv_window(stream_id2, 4096)
+        .expect("双方向ストリームの受信ウィンドウ拡張は成功するはず");
+    let out = session2
+        .poll_output()
+        .expect("WT_MAX_STREAM_DATA の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtMaxStreamData { stream_id, maximum } => {
+            assert_eq!(stream_id, stream_id2);
+            assert_eq!(maximum, recv_before + 4096);
+        }
+        other => panic!("WtMaxStreamData を期待したが {other:?} だった"),
+    }
+    assert_eq!(
+        session2
+            .stream(stream_id2)
+            .expect("ストリームが存在するはず")
+            .recv_available(),
+        recv_before + 4096,
+        "受信ウィンドウが拡張されること"
+    );
+
+    session2
+        .send_max_stream_data(stream_id2, 1_000_000)
+        .expect("双方向ストリームへの WT_MAX_STREAM_DATA 送信は成功するはず");
+    let out = session2
+        .poll_output()
+        .expect("WT_MAX_STREAM_DATA の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtMaxStreamData { stream_id, maximum } => {
+            assert_eq!(stream_id, stream_id2);
+            assert_eq!(maximum, 1_000_000);
+        }
+        other => panic!("WtMaxStreamData を期待したが {other:?} だった"),
+    }
+}
+
 /// ストリームレベルのフロー制御違反時に output_buffer が汚染されないことを確認する
 /// (draft-ietf-webtrans-http2-15 Section 6.6: ストリームレベルのフロー制御)
 #[test]
