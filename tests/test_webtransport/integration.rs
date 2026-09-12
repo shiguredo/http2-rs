@@ -1,6 +1,6 @@
 use shiguredo_http2::webtransport::{
     Capsule, CapsuleDecoder, CapsuleEncoder, MAX_VALUE, WtConfig, WtEvent, WtSession, WtStreamId,
-    stream::stream_id as wt_stream_id,
+    stream::{SendState, stream_id as wt_stream_id},
 };
 
 /// 1 つの Capsule をデコードするヘルパー
@@ -1074,6 +1074,326 @@ fn wt_max_stream_data_local_uni_stream_accepted() {
         before + 4096,
         "WT_MAX_STREAM_DATA で送信上限が更新されること"
     );
+}
+
+// ---- 受信専用ストリーム (ピア開始 uni) の送信系操作の検証 (拒否と非回帰) ----
+
+/// ピア開始ストリームを WT_STREAM で開くヘルパー
+fn open_peer_stream(session: &mut WtSession, peer_id: WtStreamId, data: &[u8]) {
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: peer_id,
+        data: data.to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
+}
+
+/// 受信専用ストリームへの send_stream_data は stream_state_error になり、
+/// ストリーム状態と出力が変化しないこと
+/// (draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1)
+#[test]
+fn send_stream_data_receive_only_stream_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, false);
+    open_peer_stream(&mut session, peer_id, b"x");
+
+    let err = session
+        .send_stream_data(peer_id, b"data", false)
+        .expect_err("受信専用ストリームへの送信は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason().contains("receive-only"));
+    let stream = session.stream(peer_id).expect("ストリームが存在するはず");
+    assert_eq!(
+        stream.send_offset(),
+        0,
+        "送信済みバイト数が進んではいけない"
+    );
+    assert_eq!(
+        stream.send_state(),
+        SendState::Ready,
+        "送信状態が変化してはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// 受信専用ストリームへの reset_stream は stream_state_error になり、
+/// ストリーム状態と出力が変化しないこと
+/// (draft-ietf-webtrans-http2-15 Section 6.2 / RFC 9000 Section 19.4)
+#[test]
+fn reset_stream_receive_only_stream_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, false);
+    open_peer_stream(&mut session, peer_id, b"x");
+
+    let err = session
+        .reset_stream(peer_id, 0)
+        .expect_err("受信専用ストリームへのリセットは拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason().contains("receive-only"));
+    let stream = session.stream(peer_id).expect("ストリームが存在するはず");
+    assert_eq!(
+        stream.send_offset(),
+        0,
+        "送信済みバイト数が進んではいけない"
+    );
+    assert_eq!(
+        stream.send_state(),
+        SendState::Ready,
+        "送信状態が変化してはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// 受信専用ストリームへの WT_STOP_SENDING 受信は stream_state_error になり、
+/// WT_RESET_STREAM が応答されないこと (RFC 9000 Section 19.5)
+#[test]
+fn wt_stop_sending_receive_only_stream_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, false);
+    open_peer_stream(&mut session, peer_id, b"x");
+    // 先にストリーム開始イベントを消費しておく
+    while session.poll_event().is_some() {}
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: peer_id,
+        error_code: 7,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("受信専用ストリームへの WT_STOP_SENDING は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason().contains("receive-only"));
+    assert!(
+        !session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .stop_sending_received(),
+        "WT_STOP_SENDING 受信フラグが立ってはいけない"
+    );
+    assert!(
+        session.poll_event().is_none(),
+        "イベントが送出されてはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "WT_RESET_STREAM を応答してはいけない"
+    );
+}
+
+/// 受信専用ストリームへの WT_MAX_STREAM_DATA 受信は stream_state_error になり、
+/// 送信上限が変化しないこと (RFC 9000 Section 19.10)
+#[test]
+fn wt_max_stream_data_receive_only_stream_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, false);
+    open_peer_stream(&mut session, peer_id, b"x");
+    let before = session
+        .stream(peer_id)
+        .expect("ストリームが存在するはず")
+        .send_available();
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: peer_id,
+        maximum: before + 4096,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("受信専用ストリームへの WT_MAX_STREAM_DATA は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(err.reason().contains("receive-only"));
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .send_available(),
+        before,
+        "拒否時に送信上限が変化してはいけない"
+    );
+}
+
+/// 受信専用ストリームへの stop_sending / send_max_stream_data /
+/// grow_stream_recv_window は受信側の操作として従来どおり受理されること
+#[test]
+fn receive_only_stream_recv_operations_accepted() {
+    // send_max_stream_data / grow_stream_recv_window の受理
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, false);
+    open_peer_stream(&mut session, peer_id, b"x");
+    let recv_before = session
+        .stream(peer_id)
+        .expect("ストリームが存在するはず")
+        .recv_available();
+
+    // 単調増加になるよう、grow_stream_recv_window が送る recv_max + 4096 より
+    // 大きい上限を後で送る
+    session
+        .grow_stream_recv_window(peer_id, 4096)
+        .expect("受信専用ストリームの受信ウィンドウ拡張は成功するはず");
+    let _ = session
+        .poll_output()
+        .expect("WT_MAX_STREAM_DATA の出力が必要");
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .recv_available(),
+        recv_before + 4096,
+        "受信ウィンドウが拡張されること"
+    );
+
+    session
+        .send_max_stream_data(peer_id, 1_000_000)
+        .expect("受信専用ストリームへの WT_MAX_STREAM_DATA 送信は成功するはず");
+    let _ = session
+        .poll_output()
+        .expect("WT_MAX_STREAM_DATA の出力が必要");
+
+    // stop_sending の受理
+    let mut session2 = WtSession::server(WtConfig::default(), WtConfig::default());
+    session2.initiate().expect("セッションを開始できるはず");
+    let peer_id2 = wt_stream_id::first(true, false);
+    open_peer_stream(&mut session2, peer_id2, b"x");
+    session2
+        .stop_sending(peer_id2, 7)
+        .expect("受信専用ストリームへの WT_STOP_SENDING 送信は成功するはず");
+    let out = session2
+        .poll_output()
+        .expect("WT_STOP_SENDING の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtStopSending {
+            stream_id,
+            error_code,
+        } => {
+            assert_eq!(stream_id, peer_id2);
+            assert_eq!(error_code, 7);
+        }
+        other => panic!("WtStopSending を期待したが {other:?} だった"),
+    }
+}
+
+/// ピア開始 bidi ストリームは送信パートを持つため、WT_MAX_STREAM_DATA 受信・
+/// send_stream_data・reset_stream・WT_STOP_SENDING 受信が従来どおり動作すること
+#[test]
+fn peer_bidi_stream_send_operations_accepted() {
+    // WT_MAX_STREAM_DATA 受信と send_stream_data / reset_stream
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, true);
+    open_peer_stream(&mut session, peer_id, b"hi");
+
+    let before = session
+        .stream(peer_id)
+        .expect("ストリームが存在するはず")
+        .send_available();
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: peer_id,
+        maximum: before + 4096,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("ピア開始 bidi への WT_MAX_STREAM_DATA は受理されるはず");
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .send_available(),
+        before + 4096,
+        "WT_MAX_STREAM_DATA で送信上限が更新されること"
+    );
+
+    session
+        .send_stream_data(peer_id, b"data", false)
+        .expect("ピア開始 bidi への送信は成功するはず");
+    let out = session.poll_output().expect("WT_STREAM の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtStream { .. } => {}
+        other => panic!("WtStream を期待したが {other:?} だった"),
+    }
+
+    session
+        .reset_stream(peer_id, 0)
+        .expect("ピア開始 bidi へのリセットは成功するはず");
+    let out = session.poll_output().expect("WT_RESET_STREAM の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtResetStream {
+            stream_id,
+            error_code,
+            reliable_size,
+        } => {
+            assert_eq!(stream_id, peer_id);
+            assert_eq!(error_code, 0);
+            assert_eq!(
+                reliable_size, 4,
+                "送信済み 4 バイトが Reliable Size になること"
+            );
+        }
+        other => panic!("WtResetStream を期待したが {other:?} だった"),
+    }
+
+    // WT_STOP_SENDING 受信では WT_RESET_STREAM が自動応答される
+    let mut session2 = WtSession::server(WtConfig::default(), WtConfig::default());
+    session2.initiate().expect("セッションを開始できるはず");
+    let peer_id2 = wt_stream_id::first(true, true);
+    open_peer_stream(&mut session2, peer_id2, b"hi");
+
+    let mut encoder2 = CapsuleEncoder::new();
+    encoder2.encode(&Capsule::WtStopSending {
+        stream_id: peer_id2,
+        error_code: 7,
+    });
+    session2
+        .feed(&encoder2.take())
+        .expect("feed に成功するはず");
+    session2
+        .process()
+        .expect("ピア開始 bidi への WT_STOP_SENDING は受理されるはず");
+
+    let out = session2
+        .poll_output()
+        .expect("WT_RESET_STREAM の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtResetStream {
+            stream_id,
+            error_code,
+            reliable_size,
+        } => {
+            assert_eq!(stream_id, peer_id2);
+            assert_eq!(error_code, 7);
+            assert_eq!(reliable_size, 0, "未送信なので reliable_size は 0");
+        }
+        other => panic!("WtResetStream を期待したが {other:?} だった"),
+    }
 }
 
 /// ストリームレベルのフロー制御違反時に output_buffer が汚染されないことを確認する
