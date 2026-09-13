@@ -262,6 +262,9 @@ async fn handle_bidi(mut bidi: WtBidiStream, remote: SocketAddr) -> Result<(), E
         tracing::debug!("[{remote}] bidi {sid}: received {} bytes", data.len());
         bidi.send(data, false).await?;
     }
+    // ストリームの終端を FIN capsule で通知する
+    // (draft-ietf-webtrans-http2-15 Section 6.4: 0x190B4D3C の並びの最後に 0x190B4D3B)
+    bidi.send(Vec::new(), true).await?;
     tracing::info!("[{remote}] bidi stream closed (id={sid})");
     Ok(())
 }

@@ -4,7 +4,7 @@ WebTransport over HTTP/2 エコーサーバーのサンプル実装。
 
 draft-ietf-webtrans-http2-15 に対応し、Extended CONNECT (`:protocol=webtransport`) で確立されたセッション上で以下をエコーする。
 
-- 双方向ストリーム: 受信データをそのまま返す
+- 双方向ストリーム: 受信データをそのまま返し、受信側の終端 (FIN) に応じて送信側も終端する
 - 単方向ストリーム: 受信データを新しい単方向ストリームで返す
 - DATAGRAM capsule: 受信ペイロードをそのまま返す
 
