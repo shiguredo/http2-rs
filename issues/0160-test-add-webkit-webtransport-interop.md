@@ -1,7 +1,7 @@
 # interop/browser を新設し WebKit から WebTransport over HTTP/2 の疎通を確認する
 
 - Created: 2026-09-13
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-14
 - Branch: feature/add-webkit-browser-interop
 - Polished: 2026-09-13
 
@@ -113,3 +113,16 @@ http3-rs は `interop/browser` で Chromium / WebKit から H3 の WebTransport 
 - CI の macOS ジョブに Node.js と WebKit の導入、および `node interop/browser/run.mjs` の実行が追加され、`timeout-minutes` が 30 に変更されていること
 - `workflow_dispatch` による手動実行で CI のブラウザ検証が動作することを確認していること (GitHub の仕様上、既定ブランチにワークフローが無いと手動実行できないため、マージ後に develop で実行して確認する)
 - `cargo test --workspace` / `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets -- -D warnings` が通ること
+
+## 解決方法
+
+- `interop/browser` を新設した (`run.mjs` / `serve.mjs` / `index.html` / `package.json` / `package-lock.json` / `README.md` / `.gitignore`)。依存は `playwright` のみでバージョンを固定した
+- 検証ページ用の証明書は `run.mjs` が `openssl` で実行時に生成し、`certs/` は `.gitignore` に追加した (リポジトリに秘密鍵を置かない)
+- 検証ページは HTTPS で配信し、`serverCertificateHashes` で接続先の自己署名証明書をピン留めする。配信するファイルは `.html` / `.js` に限定した
+- `examples/wt_server` に `--allow-origin` を追加し、ピアの SETTINGS / `:protocol` / Origin をログ出力するようにした。`handle_bidi` は受信ループを抜けた後に終端 FIN capsule (`0x190B4D3B`) を送るようにした (送らないとストリームが終端せず、終端を待つクライアントが停止する)
+- Makefile に `interop-test-browser` を追加し、CI の macOS ジョブで Node.js と WebKit を導入して `WT_FORCE=1` で実行するようにした。`timeout-minutes` を 30 にし、`on:` に `workflow_dispatch` を追加した
+- 実測結果 (WebKit 26.6 / Playwright 1.63.0 / macOS 26.6.2 arm64): `session` / `reliability` (`reliable-only`) / `bidiEcho` (18 バイト) / `uniSend` が成功し、`--allow-origin` が不一致のときは 403 になりセッションが確立しない。datagram は WebKit の HTTP/2 モードでは送信できず (`transport.datagrams.writable` が undefined)、4 KiB の bidi エコーは成功する。WebKit が送る SETTINGS、CONNECT の `:protocol` / `origin` / `authority` / `path` とあわせて `interop/browser/README.md` に記録した
+- 検証の妥当性は失敗注入 (エコー改変 / Origin 検証なし / RESULT を出さないページ) で harness が失敗することを確認した。`node run.mjs` は 25 回以上連続で失敗 0
+- datagram とピア起点の単方向ストリームの検証は合否に含めず `INFO` として記録する
+- CI のブラウザ検証は GitHub の仕様上、既定ブランチにワークフローが無いと手動実行できないため、マージ後に `develop` で `workflow_dispatch` を実行して確認する
+- `CHANGES.md` は変更していない (検証用の追加のみで公開 API と配布物に影響しないため)
