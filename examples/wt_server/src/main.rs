@@ -37,12 +37,22 @@ async fn main() {
 
     let args = parse_args();
 
-    if let Err(e) = run_server(&args.listen, args.reject_connect).await {
+    if let Err(e) = run_server(
+        &args.listen,
+        args.reject_connect,
+        args.allow_origin.as_deref(),
+    )
+    .await
+    {
         tracing::error!("server error: {e}");
     }
 }
 
-async fn run_server(listen: &str, reject_connect: bool) -> Result<(), Error> {
+async fn run_server(
+    listen: &str,
+    reject_connect: bool,
+    allow_origin: Option<&str>,
+) -> Result<(), Error> {
     let addr: SocketAddr = listen
         .parse()
         .map_err(|e| Error::Other(format!("invalid listen address: {e}")))?;
@@ -69,6 +79,8 @@ async fn run_server(listen: &str, reject_connect: bool) -> Result<(), Error> {
 
     tracing::info!("WebTransport (HTTP/2) server listening on https://{local_addr}");
 
+    let allow_origin = allow_origin.map(str::to_string);
+
     loop {
         tokio::select! {
             result = server.accept() => {
@@ -77,8 +89,11 @@ async fn run_server(listen: &str, reject_connect: bool) -> Result<(), Error> {
                         let remote = conn.remote_addr();
                         tracing::info!("[{remote}] connection accepted");
                         let reject = reject_connect;
+                        let allow_origin = allow_origin.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = handle_connection(conn, reject).await {
+                            if let Err(e) =
+                                handle_connection(conn, reject, allow_origin.as_deref()).await
+                            {
                                 tracing::error!("[{remote}] connection error: {e}");
                             }
                         });
@@ -98,7 +113,11 @@ async fn run_server(listen: &str, reject_connect: bool) -> Result<(), Error> {
     Ok(())
 }
 
-async fn handle_connection(mut conn: ServerConnection, reject_connect: bool) -> Result<(), Error> {
+async fn handle_connection(
+    mut conn: ServerConnection,
+    reject_connect: bool,
+    allow_origin: Option<&str>,
+) -> Result<(), Error> {
     let remote = conn.remote_addr();
 
     // Extended CONNECT 到着を待つ
@@ -124,11 +143,29 @@ async fn handle_connection(mut conn: ServerConnection, reject_connect: bool) -> 
                 tracing::warn!("[{remote}] CONNECT with END_STREAM (invalid); closing");
                 return Ok(());
             }
+            tracing::info!(
+                "[{remote}] WT CONNECT :protocol={}",
+                String::from_utf8_lossy(protocol.as_deref().unwrap_or_default())
+            );
             break (stream_id, headers);
         }
     };
 
+    // ピアが広告した SETTINGS を記録する (接続できない場合の切り分けに使う)
+    tracing::info!("[{remote}] peer SETTINGS: {:?}", conn.remote_settings());
+
     let req = WtServerRequest::from_connection(conn, stream_id, headers);
+
+    // Web context では Origin ヘッダーが必須である (draft-ietf-webtrans-http2-15 Section 3.2)
+    match req.origin() {
+        Some(origin) => {
+            tracing::info!(
+                "[{remote}] WT CONNECT origin={}",
+                String::from_utf8_lossy(origin)
+            );
+        }
+        None => tracing::warn!("[{remote}] WT CONNECT has no origin header"),
+    }
     let path = req
         .path()
         .map(|p| String::from_utf8_lossy(p).into_owned())
@@ -145,7 +182,10 @@ async fn handle_connection(mut conn: ServerConnection, reject_connect: bool) -> 
         return Ok(());
     }
 
-    let session = req.accept(WtConfig::default(), None, None).await?;
+    let allowed_origin = allow_origin.map(str::as_bytes);
+    let session = req
+        .accept(WtConfig::default(), allowed_origin, None)
+        .await?;
     tracing::info!(
         "[{remote}] session accepted (session_id={})",
         session.session_id()
@@ -255,6 +295,7 @@ async fn handle_uni(
 struct Args {
     listen: String,
     reject_connect: bool,
+    allow_origin: Option<String>,
 }
 
 fn parse_args() -> Args {
@@ -282,6 +323,13 @@ fn parse_args() -> Args {
         .take(&mut args)
         .is_present();
 
+    let allow_origin: Option<String> = noargs::opt("allow-origin")
+        .ty("ORIGIN")
+        .doc("Allowed Origin header value for WebTransport CONNECT (default: skip verification)")
+        .take(&mut args)
+        .present_and_then(|o| Ok::<_, std::convert::Infallible>(o.value().to_string()))
+        .expect("conversion should succeed");
+
     if let Ok(Some(help)) = args.finish() {
         print!("{help}");
         std::process::exit(0);
@@ -290,5 +338,6 @@ fn parse_args() -> Args {
     Args {
         listen,
         reject_connect,
+        allow_origin,
     }
 }

@@ -41,8 +41,25 @@ RUST_LOG=debug cargo run
 | --- | --- | --- |
 | `-l`, `--listen <ADDR>` | リッスンアドレス | `127.0.0.1:4443` |
 | `--reject-connect` | 全セッションを 405 で拒否 | 無効 |
+| `--allow-origin <ORIGIN>` | WebTransport CONNECT の `Origin` に許可する値。完全一致 (ASCII の大文字小文字は同一視) で比較し、一致しない場合は 403 を返す。`Origin` が欠落している場合は検証をスキップする | 検証しない |
 | `-h`, `--help` | ヘルプを表示 | |
 | `--version` | バージョンを表示 | |
+
+## ログ
+
+接続できない場合の切り分けに使う行を出力する。
+
+起動時の行:
+
+- `WebTransport (HTTP/2) server listening on https://<addr>`: 待ち受けを開始した
+- `Certificate SHA-256 (base64): <hash>`: 自己署名証明書の SHA-256 ハッシュ (`serverCertificateHashes` 用)
+
+接続ごとの行 (`[<remote>]` は接続元):
+
+- `peer SETTINGS: <SETTINGS>`: ピアの SETTINGS。ピアが送っていない項目は既定値のまま表示される
+- `WT CONNECT :protocol=<protocol>`: Extended CONNECT の `:protocol`
+- `WT CONNECT authority=<authority> path=<path>`: リクエストの `:authority` と `:path`
+- `WT CONNECT origin=<origin>`: `Origin`。欠落している場合は `WT CONNECT has no origin header` を警告として出力する
 
 ## 証明書
 
