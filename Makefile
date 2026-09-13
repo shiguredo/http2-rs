@@ -1,8 +1,12 @@
-.PHONY: test cover pbt pbt-cover fuzz fuzzing fuzzing-list check clippy fmt clean
+.PHONY: test interop-test cover pbt-with-cover fuzzing fuzzing-list check clippy fmt clean
 
 # 全テストを実行する
 test:
 	cargo test --workspace
+
+# interop テスト (tokio-nghttp2 との疎通確認) を実行する
+interop-test:
+	cargo test -p interop_h2
 
 # 全テストカバレッジ付きで実行する
 cover:
@@ -29,7 +33,7 @@ check:
 
 # cargo clippy を実行する
 clippy:
-	cargo clippy --workspace -- -D warnings
+	cargo clippy --workspace --all-targets -- -D warnings
 
 # cargo fmt を実行する
 fmt:

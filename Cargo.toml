@@ -19,6 +19,7 @@ members = [
   "examples/http2_client",
   "examples/http2_server",
   "examples/wt_server",
+  "interop/h2",
   "pbt",
 ]
 exclude = ["fuzz"]
