@@ -36,15 +36,15 @@ http3-rs は `interop/browser` で Chromium / WebKit から H3 の WebTransport 
 |---|---|
 | `run.mjs` | `examples/wt_server` の起動、証明書ハッシュの取得、検証ページ用証明書の生成、検証ページの配信、Playwright の webkit 駆動、`RESULT` 行の集計、終了コードの決定 |
 | `serve.mjs` | 検証ページを HTTPS で配信する |
-| `index.html` | 検証ページ。`window.WT_CONFIG` (`url` / `certificateHash`) を受け取り、検証項目を実行して `RESULT` 行を console へ出す |
+| `index.html` | 検証ページ。`window.WT_CONFIG` (`url` / `certificateHash` / `expectOriginRejected`) を受け取り、検証項目を実行して `RESULT` 行を console へ出す |
 | `package.json` / `package-lock.json` | 依存は `playwright` のみ。バージョンは固定で指定する (`shiguredo-typescript` の「バージョン番号は固定して指定すること」) |
 | `README.md` | 実行方法、検証項目、実測結果 |
-| `.gitignore` | `node_modules/` / `.profile/` / `certs/` |
+| `.gitignore` | `node_modules/` / `certs/` |
 
 - 対象エンジンは WebKit のみとする (`WT_BROWSER_ENGINES` の既定値を `webkit` にする)。Chromium の HTTP/2 WebTransport 対応は未確認であり、本 issue の対象外とする
 - 検証ページは接続先と同じ `127.0.0.1` で HTTPS 配信する。WebTransport は secure context を要求するためである
 - 環境変数は `WT_SERVER_BIN` / `WT_PORT` / `WT_PAGE_PORT` / `WT_BROWSER_ENGINES` / `WT_FORCE` / `WT_DUMP_SERVER` / `WT_ORIGIN_MISMATCH` を用意する
-  - `WT_DUMP_SERVER=1` のとき、終了時にサーバーログを stdout へ出力する (原因切り分け用)
+  - `WT_DUMP_SERVER=1` のとき、終了時にサーバーログを stdout へ出力する (失敗時は常に出力する。原因切り分け用)
   - `WT_ORIGIN_MISMATCH=1` のとき、検証ページと異なる Origin を `--allow-origin` に渡す
 - skip の判定は `playwright` の解決可否とブラウザキャッシュの有無の両方を見る。`WT_FORCE=1` のときは skip を失敗として扱い、対象エンジンが未導入の場合も失敗にする (`npm ci` の失敗は skip の対象外で、そのままジョブの失敗とする)
 
@@ -59,12 +59,13 @@ http3-rs は `interop/browser` で Chromium / WebKit から H3 の WebTransport 
 
 - `--allow-origin <ORIGIN>` を追加し、`WtServerRequest::accept` の `allowed_origin` に渡す。実ブラウザの `Origin` に対する検証経路 (draft-ietf-webtrans-http2-15 Section 3.2) を確認するためである
 - `handle_connection` で CONNECT を受信した後 (`WtServerRequest::from_connection` に `conn` を渡す前) に `ServerConnection::remote_settings()` の内容を `info` でログ出力する。WebKit が送る SETTINGS を記録し、接続できない場合の切り分けに使うためである。`Event::SettingsReceived` に値を載せる変更は公開 API の変更になるため本 issue の範囲外とする
-- `examples/wt_server/README.md` のオプション表にも `--allow-origin` を追記する
+- `handle_bidi` で受信ループを抜けた後に終端 FIN capsule (`0x190B4D3B`) を送る。送らないとストリームが終端せず、終端を待つクライアントがハングする (draft-ietf-webtrans-http2-15 Section 6.4)
+- `examples/wt_server/README.md` のオプション表にも `--allow-origin` を追記し、双方向ストリームの終端 FIN とログの説明も更新する
 - 証明書ハッシュのログ出力と、起動を表す `WebTransport (HTTP/2) server listening on` の行は `run.mjs` の待ち合わせに使う。これらの文字列は変更しない
 
 ### 検証項目
 
-1 項目が失敗しても残りを続行し、結果を `RESULT PASS` / `RESULT FAIL` として出力する。4 KiB の確認だけは `INFO` として出力し、合否には含めない。
+1 項目が失敗しても残りを続行し、結果を `RESULT PASS` / `RESULT FAIL` として出力する。網羅を目的としない確認 (`datagrams` / `uniEcho` / `bidiEcho4KiB`) は `INFO` として出力し、合否には含めない。
 
 | 項目 | 内容 |
 |---|---|
@@ -72,8 +73,15 @@ http3-rs は `interop/browser` で Chromium / WebKit から H3 の WebTransport 
 | `reliability` | `transport.reliability` が `reliable-only` であること (HTTP/2 へのフォールバックの確認) |
 | `bidiEcho` | 双方向ストリーム 1 本のエコー (小さい payload)。あわせて 4 KiB の payload でも同じ手順を実行し、結果を `INFO` として記録する (http3-rs が WebKit で 4 KiB 以上の bidi 書き込みが停止することを実測しているため、HTTP/2 でも同じ制約が出るかを記録する) |
 | `uniSend` | 単方向ストリームの送信 (サーバーは受信データを新しい単方向ストリームで返す) |
-| `datagrams` | `transport.datagrams.writable` へ書き、`transport.datagrams.readable` からエコーを読み戻す。HTTP/2 では再送されるため `reliability` は `reliable-only` のままである (draft-ietf-webtrans-http2-15 Section 5.1) |
 | `originRejected` | `WT_ORIGIN_MISMATCH=1` のときだけ実行し、セッションが確立しないこと (サーバーが 403 を返すこと) を判定する |
+
+合否に含めない確認 (`INFO`)。
+
+| 項目 | 内容 |
+|---|---|
+| `datagrams` | datagram が提供されるかを確認し、提供される場合は送受信を検証する |
+| `uniEcho` | ピア起点の単方向ストリーム (サーバーからのエコー) を受信できるかを確認する |
+| `bidiEcho4KiB` | 4 KiB の双方向エコー (WebKit の H3 実装では 4 KiB 以上の書き込みが停止する実測があるため、HTTP/2 でも同じ制約が出るかを記録する) |
 
 ### 実測結果の記録
 
@@ -93,7 +101,8 @@ http3-rs は `interop/browser` で Chromium / WebKit から H3 の WebTransport 
 ## 完了条件
 
 - `interop/browser` が新設され、`make interop-test-browser` で WebKit から `examples/wt_server` へ接続して `RESULT` 行が出力されること
-- セッション確立・双方向ストリームのエコー・単方向ストリーム送信・datagram の送受信の成否が判定されること
+- セッション確立・双方向ストリームのエコー・単方向ストリーム送信が判定されること
+- datagram の提供の有無 (提供される場合は送受信の成否) が記録されていること
 - `transport.reliability` の実測値が `reliable-only` であること
 - 4 KiB の bidi 書き込みの結果が `INFO` として記録されていること (合否には含めない)
 - 実測結果 (成否、WebKit が送った `Origin` の値、`remote_settings()` の内容、`:protocol`、`transport.reliability`) が `interop/browser/README.md` に記録されていること
@@ -102,5 +111,5 @@ http3-rs は `interop/browser` で Chromium / WebKit から H3 の WebTransport 
 - `examples/wt_server` に `--allow-origin` が追加され、`remote_settings()` がログ出力されること。`examples/wt_server/README.md` のオプション表も更新されていること
 - リポジトリに秘密鍵が追加されていないこと (ページ配信の証明書は実行時に生成する)
 - CI の macOS ジョブに Node.js と WebKit の導入、および `node interop/browser/run.mjs` の実行が追加され、`timeout-minutes` が 30 に変更されていること
-- `workflow_dispatch` による手動実行で CI のブラウザ検証が動作することを確認していること
+- `workflow_dispatch` による手動実行で CI のブラウザ検証が動作することを確認していること (GitHub の仕様上、既定ブランチにワークフローが無いと手動実行できないため、マージ後に develop で実行して確認する)
 - `cargo test --workspace` / `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets -- -D warnings` が通ること
