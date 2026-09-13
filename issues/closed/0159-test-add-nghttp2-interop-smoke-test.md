@@ -1,7 +1,7 @@
 # interop ディレクトリを新設し tokio-nghttp2 との疎通確認テストを追加する
 
 - Created: 2026-09-13
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-09-13
 - Branch: feature/add-nghttp2-interop-smoke-test
 - Polished: 2026-09-13
 
@@ -72,3 +72,14 @@
 - `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` が通ること
 - `crates/tokio-http2/tests/interop.rs` と `crates/tokio-http2/Cargo.toml` に変更が無いこと
 - モック・スタブを追加していないこと
+
+## 解決方法
+
+- `interop/h2` を新設した (`Cargo.toml` / `src/lib.rs` / `tests/nghttp2_client_http2_server.rs` / `tests/http2_client_nghttp2_server.rs` / `README.md`)。package 名は `interop_h2`、`publish = false`
+- ルートの `Cargo.toml` の `[workspace] members` に `interop/h2` を追加し、`cargo fmt` / `cargo clippy --workspace --all-targets` / `cargo test --workspace` の対象にした
+- Makefile に `interop-test` (`cargo test -p interop_h2`) を追加した。あわせて `.PHONY` を実ターゲットに合わせて整理し、`clippy` に `--all-targets` を追加した
+- 検証は双方向の GET 1 往復の 2 件のみとした。`rcgen` の自己署名証明書と `TlsClientConfig::insecure` を使い、モック・スタブは使っていない
+- 応答送信後はピアが接続を閉じるか `LINGER_TIMEOUT` (2 秒) まで `next_event` を回し続ける `drain_http2_connection` / `drain_nghttp2_connection` を追加した。未読データを残したまま接続を閉じると OS が RST を送り、送信済みの応答 DATA が失われていた (実測: 修正前は順方向 44/60 失敗、修正後は 0/60)
+- 接続確立と accept に `IO_TIMEOUT` (5 秒) を適用し、エラー値とタイムアウトを区別して報告するようにした。`StreamReset` / `StreamClosed` / `GOAWAY` も明示的に失敗として扱う
+- `crates/tokio-http2/tests/interop.rs` と `crates/tokio-http2/Cargo.toml` は変更していない
+- `CHANGES.md` は変更していない (`publish = false` のテスト専用 crate と Makefile の追加のみで、公開 API と配布物に影響しないため)

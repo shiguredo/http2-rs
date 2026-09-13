@@ -1,0 +1,21 @@
+[package]
+name = "interop_h2"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# 自己署名証明書の生成
+rcgen = "0.14"
+# 証明書の DER 型
+rustls-pki-types = { version = "1.15", features = ["std"] }
+# 非同期ランタイム
+tokio = { version = "1.53", features = ["full"] }
+# 本実装
+tokio-http2 = { path = "../../crates/tokio-http2" }
+# nghttp2 C ライブラリの Tokio 統合
+tokio-nghttp2 = { path = "../../crates/tokio-nghttp2" }
