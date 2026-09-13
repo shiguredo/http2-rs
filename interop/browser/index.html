@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>WebTransport over HTTP/2 相互運用テスト</title>
+</head>
+<body>
+<pre id="log"></pre>
+<script type="module">
+// 検証ページ
+//
+// Playwright の addInitScript で window.WT_CONFIG = { url, certificateHash, expectOriginRejected }
+// が注入される。各検証項目は独立した WebTransport セッションを開き、結果を
+// RESULT 行として console へ出力する。合否に含めない確認は INFO 行として出力する。
+//
+// 1 項目が失敗しても残りを続行する。失敗時は例外の内容を RESULT 行に含める。
+
+const config = window.WT_CONFIG || {};
+const logEl = document.getElementById('log');
+
+function emit(line) {
+  logEl.textContent += line + '\n';
+  console.log(line);
+}
+
+// 証明書ハッシュ (base64) を Uint8Array に変換する
+function decodeHash(base64) {
+  const raw = atob(base64);
+  const buf = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) {
+    buf[i] = raw.charCodeAt(i);
+  }
+  return buf;
+}
+
+// 新しい WebTransport セッションを開く
+//
+// serverCertificateHashes で自己署名証明書をピン留めする。乱数を含む証明書を使うため、
+// サーバーが起動ごとにハッシュを出力し、それを注入する。
+function openSession() {
+  const options = {};
+  if (config.certificateHash) {
+    options.serverCertificateHashes = [
+      { algorithm: 'sha-256', value: decodeHash(config.certificateHash) },
+    ];
+  }
+  const transport = new WebTransport(config.url, options);
+  // セッションが失敗すると closed が reject する。ハンドラを付けないと
+  // unhandled rejection になり pageerror として二重に報告される
+  transport.closed.catch(() => {});
+  return transport;
+}
+
+// 例外から原因究明に使える情報を取り出す
+//
+// WebTransportError は message が空のことがあるため、name / source /
+// streamErrorCode も含める。
+function describeError(e) {
+  if (!e) {
+    return String(e);
+  }
+  const parts = [];
+  if (e.name) {
+    parts.push(e.name);
+  }
+  if (e.message) {
+    parts.push(e.message);
+  }
+  if (e.source) {
+    parts.push(`source=${e.source}`);
+  }
+  if (e.streamErrorCode !== undefined && e.streamErrorCode !== null) {
+    parts.push(`streamErrorCode=${e.streamErrorCode}`);
+  }
+  return parts.length > 0 ? parts.join(' ') : String(e);
+}
+
+function withTimeout(promise, timeoutMs, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} が ${timeoutMs}ms でタイムアウトした`)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+// セッション確立を待つ
+async function readyTransport(transport, timeoutMs) {
+  await withTimeout(transport.ready, timeoutMs, 'transport.ready');
+  return transport;
+}
+
+// ストリームから全バイトを読み切る
+async function readAll(readable, label) {
+  const reader = readable.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { value, done } = await withTimeout(reader.read(), 20000, label);
+    if (done) {
+      break;
+    }
+    chunks.push(value);
+    total += value.length;
+  }
+
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}
+
+// 双方向ストリームで 1 往復する
+//
+// サーバーが送信側を閉じる (FIN) まで読み切ってから、こちらの送信側を閉じる。
+// 先に送信側を閉じると、セッションの終了通知がエコーの配送に先行して失敗することがある。
+async function roundTrip(stream, payload) {
+  const writer = stream.writable.getWriter();
+  await withTimeout(writer.write(payload), 20000, 'bidiEcho write');
+  const echoed = await readAll(stream.readable, 'bidiEcho read');
+  await withTimeout(writer.close(), 20000, 'bidiEcho close');
+  return echoed;
+}
+
+// バイト列を比較する
+function equalBytes(a, b) {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// 双方向ストリームを 1 本開いて payload をエコーさせる
+async function bidiEchoWithPayload(payload) {
+  const transport = await readyTransport(openSession(), 20000);
+  try {
+    const stream = await withTimeout(
+      transport.createBidirectionalStream(),
+      20000,
+      'createBidirectionalStream',
+    );
+    const echoed = await withTimeout(roundTrip(stream, payload), 20000, 'bidiEcho');
+    if (!equalBytes(echoed, payload)) {
+      throw new Error(`エコーが一致しない (${echoed.length} バイト)`);
+    }
+    return `${payload.length} バイト`;
+  } finally {
+    transport.close();
+  }
+}
+
+// 合否を判定する検証項目
+const checks = {
+  // セッション確立 (CONNECT と応答の交換が成功していること)
+  async session() {
+    const transport = await readyTransport(openSession(), 20000);
+    transport.close();
+    return 'ready';
+  },
+
+  // HTTP/2 へのフォールバック (unreliable delivery が無いこと) の確認
+  async reliability() {
+    const transport = await readyTransport(openSession(), 20000);
+    try {
+      if (transport.reliability !== 'reliable-only') {
+        throw new Error(`reliability が reliable-only でない: ${transport.reliability}`);
+      }
+      return transport.reliability;
+    } finally {
+      transport.close();
+    }
+  },
+
+  // 双方向ストリーム 1 本のエコー
+  async bidiEcho() {
+    return bidiEchoWithPayload(new TextEncoder().encode('hello-webtransport'));
+  },
+
+  // クライアント起点の単方向ストリーム送信
+  //
+  // サーバー側の受信はサーバーログで確認する。書き込みの完了はサーバーが
+  // 受理したことを意味しないため、受信の確認は uniEcho (INFO) で行う。
+  async uniSend() {
+    const transport = await readyTransport(openSession(), 20000);
+    try {
+      const stream = await withTimeout(
+        transport.createUnidirectionalStream(),
+        20000,
+        'createUnidirectionalStream',
+      );
+      const writer = stream.getWriter();
+      await withTimeout(writer.write(new TextEncoder().encode('uni-hello')), 20000, 'uniSend');
+      await withTimeout(writer.close(), 20000, 'uniSend close');
+      return 'sent';
+    } finally {
+      transport.close();
+    }
+  },
+
+  // 不一致の Origin でセッションが確立しないこと (サーバーの 403 応答)
+  //
+  // WT_ORIGIN_MISMATCH=1 のときだけ実行する。
+  async originRejected() {
+    const transport = openSession();
+    let established = false;
+    try {
+      await withTimeout(transport.ready, 20000, 'transport.ready');
+      established = true;
+    } catch {
+      // セッションが確立しなかったことを期待する
+    }
+    if (established) {
+      transport.close();
+      throw new Error('不一致の Origin でもセッションが確立した');
+    }
+    return 'rejected';
+  },
+};
+
+// 合否に含めない確認項目 (INFO 行として記録する)
+const infoChecks = {
+  // datagram の可否と送受信
+  //
+  // HTTP/2 では unreliable delivery を提供しないが、datagram 自体は capsule として
+  // 送受信できる (draft-ietf-webtrans-http2-15 Section 5.1 / Section 6.11)。WebKit の
+  // HTTP/2 モードでは transport.datagrams.writable が undefined であり送信できないため、
+  // 提供されない場合はその旨を記録する (提供するブラウザではエコーまで検証する)。
+  async datagrams() {
+    const transport = await readyTransport(openSession(), 20000);
+    try {
+      if (!transport.datagrams?.writable || !transport.datagrams?.readable) {
+        return `unavailable (datagrams=${typeof transport.datagrams}, writable=${typeof transport.datagrams?.writable}, readable=${typeof transport.datagrams?.readable})`;
+      }
+      const payload = new TextEncoder().encode('datagram-hello');
+      const writer = transport.datagrams.writable.getWriter();
+      await withTimeout(writer.write(payload), 20000, 'datagrams write');
+      const reader = transport.datagrams.readable.getReader();
+      const { value, done } = await withTimeout(reader.read(), 20000, 'datagrams read');
+      if (done || !value) {
+        throw new Error('datagram のエコーが読めなかった');
+      }
+      if (!equalBytes(new Uint8Array(value), payload)) {
+        throw new Error(`datagram のエコーが一致しない (${value.byteLength} バイト)`);
+      }
+      return `${payload.length} バイト`;
+    } finally {
+      transport.close();
+    }
+  },
+
+  // ピア起点の単方向ストリーム (サーバーからのエコー) の受信
+  //
+  // サーバーは受信データを新しい単方向ストリームで返す。合否に含めない確認として
+  // INFO に記録する (双方向ストリームのエコーとは別の経路のため)。
+  async uniEcho() {
+    const transport = await readyTransport(openSession(), 20000);
+    try {
+      const payload = new TextEncoder().encode('uni-hello');
+      const stream = await withTimeout(
+        transport.createUnidirectionalStream(),
+        20000,
+        'createUnidirectionalStream',
+      );
+      const writer = stream.getWriter();
+      await withTimeout(writer.write(payload), 20000, 'uniEcho');
+
+      // 送信側を閉じる (FIN) と同時にサーバーがセッションを閉じることがあり、
+      // エコーの受信と競合するため、エコーを読み切ってから閉じる
+      const streams = transport.incomingUnidirectionalStreams.getReader();
+      const { value: echoStream, done } = await withTimeout(
+        streams.read(),
+        10000,
+        'incomingUnidirectionalStreams',
+      );
+      if (done || !echoStream) {
+        throw new Error('ピア起点の単方向ストリームが届かなかった');
+      }
+      const echoed = await readAll(echoStream, 'uniEcho read');
+      if (!equalBytes(echoed, payload)) {
+        throw new Error(`単方向ストリームのエコーが一致しない (${echoed.length} バイト)`);
+      }
+      await withTimeout(writer.close(), 20000, 'uniEcho close');
+      return `${payload.length} バイト`;
+    } finally {
+      transport.close();
+    }
+  },
+
+  // 4 KiB の双方向エコー
+  //
+  // WebKit は 4 KiB 以上の bidi 書き込みが停止する実測があるため (http3-rs)、
+  // HTTP/2 でも同じ制約が出るかを記録する。合否には含めない。
+  async bidiEcho4KiB() {
+    return bidiEchoWithPayload(new Uint8Array(4096).fill(0x61));
+  },
+};
+
+// 実行する検証項目を決める
+//
+// 不一致の Origin を渡す実行では、セッションが確立しないことだけを確認する。
+function activeCheckNames() {
+  if (config.expectOriginRejected) {
+    return ['originRejected'];
+  }
+  return Object.keys(checks).filter((name) => name !== 'originRejected');
+}
+
+// 全項目を順に実行する
+async function run() {
+  const names = activeCheckNames();
+  emit(`INFO 接続先 ${config.url}`);
+  emit(`INFO 検証項目 ${names.length}`);
+
+  for (const name of names) {
+    const startedAt = Date.now();
+    try {
+      const detail = await checks[name]();
+      emit(`RESULT PASS ${name} ${detail} (${Date.now() - startedAt}ms)`);
+    } catch (e) {
+      emit(`RESULT FAIL ${name} ${describeError(e)} (${Date.now() - startedAt}ms)`);
+    }
+  }
+
+  // 不一致の Origin を渡す実行では、合否に含めない確認も実行しない
+  const infoNames = config.expectOriginRejected ? [] : Object.keys(infoChecks);
+  for (const name of infoNames) {
+    const startedAt = Date.now();
+    try {
+      const detail = await infoChecks[name]();
+      emit(`INFO ${name} ok ${detail} (${Date.now() - startedAt}ms)`);
+    } catch (e) {
+      emit(`INFO ${name} failed ${describeError(e)} (${Date.now() - startedAt}ms)`);
+    }
+  }
+
+  emit('DONE');
+}
+
+run().catch((e) => {
+  emit(`RESULT FAIL harness ${describeError(e)}`);
+  emit('DONE');
+});
+</script>
+</body>
+</html>
