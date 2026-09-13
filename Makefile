@@ -1,4 +1,4 @@
-.PHONY: test interop-test cover pbt-with-cover fuzzing fuzzing-list check clippy fmt clean
+.PHONY: test interop-test interop-test-browser cover pbt-with-cover fuzzing fuzzing-list check clippy fmt clean
 
 # 全テストを実行する
 test:
@@ -7,6 +7,13 @@ test:
 # interop テスト (tokio-nghttp2 との疎通確認) を実行する
 interop-test:
 	cargo test -p interop_h2
+
+# interop テスト (WebKit との WebTransport over HTTP/2 の疎通確認) を実行する
+#
+# npm とブラウザの導入に時間がかかるため interop-test には含めない。
+interop-test-browser:
+	cargo build -p wt_server
+	cd interop/browser && npm ci && npx playwright install webkit && node run.mjs
 
 # 全テストカバレッジ付きで実行する
 cover:

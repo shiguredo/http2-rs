@@ -4,6 +4,8 @@ on:
   schedule:
     # JST 11:00 (UTC 02:00), 月-金
     - cron: "0 2 * * 1-5"
+  # 追加した検証を手動で実行して確認するために使う
+  workflow_dispatch:
 
 jobs:
   ci:
@@ -17,7 +19,7 @@ jobs:
           # - windows-2025
           - macos-26
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Checkout sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,6 +35,27 @@ jobs:
       - name: Check fuzz crate
         if: matrix.os == 'ubuntu-24.04'
         run: cargo check --manifest-path fuzz/Cargo.toml
+      # 実ブラウザ (WebKit) から wt_server へ WebTransport over HTTP/2 で接続できることを確認する。
+      # ブラウザは macOS でのみ導入できるため macOS でのみ実行する。
+      - name: Set up Node.js
+        if: runner.os == 'macOS'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install Playwright browsers
+        if: runner.os == 'macOS'
+        run: |
+          npm ci --prefix interop/browser
+          npx --prefix interop/browser playwright install webkit
+      - name: Build WebTransport server
+        if: runner.os == 'macOS'
+        run: cargo build -p wt_server
+      - name: Run browser WebTransport interop tests
+        if: runner.os == 'macOS'
+        run: node interop/browser/run.mjs
+        env:
+          # Playwright 未導入を失敗として扱う (skip で CI が緑になるのを防ぐ)
+          WT_FORCE: "1"
 
   slack_notify:
     needs: [ci]
