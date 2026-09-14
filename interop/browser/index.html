@@ -204,6 +204,45 @@ const checks = {
     }
   },
 
+  // datagram の送受信
+  //
+  // HTTP/2 では unreliable delivery を提供しないが、datagram 自体は capsule として
+  // 送受信できる (draft-ietf-webtrans-http2-15 Section 5.1 / Section 6.11)。
+  // 送信側の API は仕様改訂で writable 属性から createWritable() に変わっており、
+  // 両方を受け付ける。
+  async datagrams() {
+    const transport = await readyTransport(openSession(), 20000);
+    try {
+      const datagrams = transport.datagrams;
+      if (!datagrams?.readable) {
+        throw new Error('datagrams.readable が無い');
+      }
+      const usesCreateWritable = typeof datagrams.createWritable === 'function';
+      const writable = usesCreateWritable ? datagrams.createWritable() : datagrams.writable;
+      if (!writable) {
+        throw new Error(
+          `datagram の送信 API が無い (createWritable=${typeof datagrams.createWritable}, writable=${typeof datagrams.writable})`,
+        );
+      }
+
+      const payload = new TextEncoder().encode('datagram-hello');
+      const writer = writable.getWriter();
+      await withTimeout(writer.write(payload), 20000, 'datagrams write');
+
+      const reader = datagrams.readable.getReader();
+      const { value, done } = await withTimeout(reader.read(), 20000, 'datagrams read');
+      if (done || !value) {
+        throw new Error('datagram のエコーが読めなかった');
+      }
+      if (!equalBytes(new Uint8Array(value), payload)) {
+        throw new Error(`datagram のエコーが一致しない (${value.byteLength} バイト)`);
+      }
+      return `${payload.length} バイト (${usesCreateWritable ? 'createWritable' : 'writable'})`;
+    } finally {
+      transport.close();
+    }
+  },
+
   // 不一致の Origin でセッションが確立しないこと (サーバーの 403 応答)
   //
   // WT_ORIGIN_MISMATCH=1 のときだけ実行する。
@@ -226,35 +265,6 @@ const checks = {
 
 // 合否に含めない確認項目 (INFO 行として記録する)
 const infoChecks = {
-  // datagram の可否と送受信
-  //
-  // HTTP/2 では unreliable delivery を提供しないが、datagram 自体は capsule として
-  // 送受信できる (draft-ietf-webtrans-http2-15 Section 5.1 / Section 6.11)。WebKit の
-  // HTTP/2 モードでは transport.datagrams.writable が undefined であり送信できないため、
-  // 提供されない場合はその旨を記録する (提供するブラウザではエコーまで検証する)。
-  async datagrams() {
-    const transport = await readyTransport(openSession(), 20000);
-    try {
-      if (!transport.datagrams?.writable || !transport.datagrams?.readable) {
-        return `unavailable (datagrams=${typeof transport.datagrams}, writable=${typeof transport.datagrams?.writable}, readable=${typeof transport.datagrams?.readable})`;
-      }
-      const payload = new TextEncoder().encode('datagram-hello');
-      const writer = transport.datagrams.writable.getWriter();
-      await withTimeout(writer.write(payload), 20000, 'datagrams write');
-      const reader = transport.datagrams.readable.getReader();
-      const { value, done } = await withTimeout(reader.read(), 20000, 'datagrams read');
-      if (done || !value) {
-        throw new Error('datagram のエコーが読めなかった');
-      }
-      if (!equalBytes(new Uint8Array(value), payload)) {
-        throw new Error(`datagram のエコーが一致しない (${value.byteLength} バイト)`);
-      }
-      return `${payload.length} バイト`;
-    } finally {
-      transport.close();
-    }
-  },
-
   // ピア起点の単方向ストリーム (サーバーからのエコー) の受信
   //
   // サーバーは受信データを新しい単方向ストリームで返す。合否に含めない確認として
