@@ -309,7 +309,7 @@ async function main() {
       // 必須の検証項目が実行されたかを照合する (項目が消えたら気づけるようにする)
       const expectedNames = expectOriginRejected
         ? ['originRejected']
-        : ['session', 'reliability', 'bidiEcho', 'uniSend'];
+        : ['session', 'reliability', 'bidiEcho', 'uniSend', 'datagrams'];
       const passedNames = passes.map((line) => line.split(' ')[2]);
       const missingNames = expectedNames.filter((name) => !passedNames.includes(name));
 

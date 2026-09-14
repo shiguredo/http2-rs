@@ -71,20 +71,20 @@ make interop-test-browser
 | `reliability` | `transport.reliability` が `reliable-only` であること (HTTP/2 へのフォールバックの確認) |
 | `bidiEcho` | 双方向ストリーム 1 本のエコー (サーバーが送信側を閉じるまで読み切ってから、こちらの送信側を閉じる。理由は「送信側を閉じる順序」を参照) |
 | `uniSend` | クライアント起点の単方向ストリーム送信 (ストリームの開設はサーバーログの `uni recv stream accepted` で確認できる。データの受信は `uniEcho` で確認する) |
+| `datagrams` | datagram の送受信 (`createWritable()` または `writable` へ書き、`readable` からエコーを読み戻す) |
 | `originRejected` | `WT_ORIGIN_MISMATCH=1` のときだけ実行し、セッションが確立しないこと (サーバーが 403 を返すこと) を判定する |
 
 合否に含めない確認は `INFO` 行として出力する。
 
 | 項目 | 内容 |
 |---|---|
-| `datagrams` | datagram が提供されるかを確認し、提供される場合はエコーを検証する (WebKit の HTTP/2 モードでは提供されないため、現状は「提供されない」ことの記録になる) |
 | `uniEcho` | ピア起点の単方向ストリーム (サーバーからのエコー) の受信 |
 | `bidiEcho4KiB` | 4 KiB の双方向エコー (WebKit の H3 実装では 4 KiB 以上の書き込みが停止する実測があるため、HTTP/2 でも同じ制約が出るかを記録する) |
 
 ## 実測結果
 
 - 確認環境: WebKit 26.6 (Playwright 1.63.0 の `webkit` エンジン、macOS 26.6.2 arm64)
-- 確認日: 2026-09-13
+- 確認日: 2026-09-14 (datagram は同日に再測定)
 - 検証対象: `examples/wt_server` (`--allow-origin` に検証ページの Origin を指定)
 
 | 項目 | 結果 |
@@ -94,9 +94,13 @@ make interop-test-browser
 | `bidiEcho` | PASS (18 バイトのエコー) |
 | `uniSend` | PASS (送信完了。サーバーログで `uni recv stream accepted` を確認できる) |
 | `originRejected` | PASS (`WT_ORIGIN_MISMATCH=1` の実行でセッションが確立しない) |
-| `datagrams` (INFO) | `transport.datagrams` は object だが `writable` が undefined であり、datagram を送信できない (`readable` は object) |
+| `datagrams` | PASS (14 バイトの送受信。使用した送信 API はログに記録する。HTTP/2 では再送されるため `reliability` は `reliable-only` のまま) |
 | `uniEcho` (INFO) | 9 バイトのエコーが成功する (ピア起点の単方向ストリームを受信できる) |
 | `bidiEcho4KiB` (INFO) | 4096 バイトのエコーが成功する (H3 の 4 KiB 停止は HTTP/2 では再現しない) |
+
+### datagram の送信 API
+
+WebKit 26.6 は仕様改訂後の `datagrams.createWritable()` を実装しており、旧仕様の `datagrams.writable` 属性は存在しない (`undefined` になる)。本検証は `createWritable()` があればそれを使い、無ければ `writable` を使う。
 
 ### 送信側を閉じる順序
 
@@ -139,7 +143,7 @@ make interop-test-browser
 
 ## 既知の制約
 
-- datagram は WebKit の HTTP/2 モードでは送信できない (`transport.datagrams.writable` が undefined)。検証項目ではなく `INFO` として記録する
 - `--allow-origin` の一致判定は完全一致 (ASCII の大文字小文字は同一視) であり、末尾スラッシュの有無やポートの省略は一致しない。`WT_ORIGIN_MISMATCH` が確認するのはこの完全一致から外れた Origin が拒否されることである
 - 検証項目は `:status = 200` と本文一致の範囲で判定し、フロー制御や複数ストリームの網羅は対象外である
+- datagram の検証は 14 バイトを 1 個送受信するだけで、`maxDatagramSize` 付近の大きさ・複数個の順序・フロー制御は対象外である (HTTP/2 では受信側が datagram を破棄できるため、大量送信の検証には向かない)
 - 双方向 / 単方向ストリームの検証はエコー本体の一致までを見る。サーバーが終端 FIN capsule を送るかどうかは判定していない (サーバーが終端 FIN capsule を送らなくてもクライアントの readable は終端する)

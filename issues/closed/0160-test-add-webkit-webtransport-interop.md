@@ -126,3 +126,7 @@ http3-rs は `interop/browser` で Chromium / WebKit から H3 の WebTransport 
 - datagram とピア起点の単方向ストリームの検証は合否に含めず `INFO` として記録する
 - CI のブラウザ検証は GitHub の仕様上、既定ブランチにワークフローが無いと手動実行できないため、マージ後に `develop` で `workflow_dispatch` を実行して確認する
 - `CHANGES.md` は変更していない (検証用の追加のみで公開 API と配布物に影響しないため)
+
+## 訂正 (2026-09-14)
+
+初回の実測では datagram を `transport.datagrams.writable` で判定していたため「WebKit の HTTP/2 モードでは送信できない」と記録していたが、これは誤りである。WebKit 26.6 は仕様改訂後の `datagrams.createWritable()` を実装しており、旧仕様の `writable` 属性は存在しない (`undefined` になる)。`createWritable()` を使うと HTTP/2 でも datagram を送受信でき、サーバーからのエコーも一致する (14 バイトで実測)。`interop/browser` の検証項目を `createWritable()` 対応にし、`datagrams` を合否に含める検証項目へ変更した。
