@@ -5,7 +5,7 @@ use shiguredo_http2::webtransport::CapsuleDecoder;
 
 fuzz_target!(|data: &[u8]| {
     let mut decoder = CapsuleDecoder::new();
-    decoder.feed(data);
+    let _ = decoder.feed(data);
 
     // 全ての Capsule をデコードし尽くすまで繰り返す
     loop {
