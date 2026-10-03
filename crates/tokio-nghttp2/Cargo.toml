@@ -7,15 +7,7 @@ publish = false
 
 [dependencies]
 # TLS
-rustls = {
-  version = "0.23",
-  default-features = false,
-  features = [
-    "aws_lc_rs",
-    "std",
-    "tls12",
-  ]
-}
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 # 証明書の DER 型
 rustls-pki-types = { version = "1.15", features = ["std"] }
 # システム信頼ストア検証
@@ -23,17 +15,7 @@ rustls-platform-verifier = "0.7"
 # nghttp2 Sans I/O バインディング
 shiguredo_nghttp2 = { path = "../shiguredo_nghttp2" }
 # 非同期ランタイム
-tokio = {
-  version = "1.53",
-  features = [
-    "io-util",
-    "macros",
-    "net",
-    "rt",
-    "sync",
-    "time",
-  ]
-}
+tokio = { version = "1.53", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 # TLS ストリームの tokio 統合
 tokio-rustls = "0.26"
 
