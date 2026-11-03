@@ -11,8 +11,12 @@
 //! draft の改訂や RFC 化に伴い仕様が変更される可能性がある。
 //! `WT_MAX_DATA` の厳密増加規則 (`send_max_data` / `grow_recv_window`) は
 //! draft-ietf-webtrans-http2-16 Section 6.5 に、`WT_MAX_STREAM_DATA` の厳密増加規則は
-//! 同 Section 6.6 に従う。送信は `send_max_stream_data` / `grow_stream_recv_window`、
-//! 受信は `WtSession::process` の初期値・削除済み判定と `WtStream::update_send_max` が担う。
+//! 同 Section 6.6 に、`WT_MAX_STREAMS` の厳密増加規則は同 Section 6.7 に従う。
+//! ストリームデータの受信上限の広告は `send_max_stream_data` / `grow_stream_recv_window`、
+//! 受信した `WT_MAX_STREAM_DATA` の検証は `WtSession::process` の初期値・削除済み判定と
+//! `WtStream::update_send_max` が担う。
+//! ストリーム数の送信は `send_max_streams` / `grow_max_streams`、受信は
+//! `WtFlowControl::update_max_streams` が担う。
 //!
 //! # 参照仕様
 //!
@@ -152,8 +156,16 @@ pub struct WtConfig {
     /// (draft-ietf-webtrans-http2-15 Section 4.3)。
     pub initial_max_stream_data_uni: u64,
     /// 双方向ストリームの初期最大数
+    ///
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI で広告する値と一致させること
+    /// (未広告の項目の初期値は 0 として扱われる)。2^60 以下でなければならない
+    /// (draft-ietf-webtrans-http2-16 Section 4.3 / Section 6.7 / Section 11.2)。
     pub initial_max_streams_bidi: u64,
     /// 単方向ストリームの初期最大数
+    ///
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI で広告する値と一致させること
+    /// (未広告の項目の初期値は 0 として扱われる)。2^60 以下でなければならない
+    /// (draft-ietf-webtrans-http2-16 Section 4.3 / Section 6.7 / Section 11.2)。
     pub initial_max_streams_uni: u64,
 }
 
@@ -212,6 +224,17 @@ impl WtConfig {
             self.initial_max_stream_data_bidi_remote =
                 self.initial_max_stream_data_bidi_remote.max(br);
         }
+    }
+
+    /// ローカルが広告した SETTINGS からローカル初期値を適用する
+    ///
+    /// draft-ietf-webtrans-http2-15 Section 4.3.1 / draft-ietf-webtrans-http2-16 Section 11.2:
+    /// SETTINGS で広告した項目はその値を使い、未広告の項目は Initial Value の 0 にする。
+    /// ローカル `WtConfig` を SETTINGS の広告値と一致させるために使う。
+    /// ピア広告値の適用には [`Self::overlay_settings`] を使う。
+    pub fn apply_advertised_settings(&mut self, settings: &crate::settings::Settings) {
+        *self = Self::peer_default();
+        self.overlay_settings(settings);
     }
 
     /// HTTP/2 SETTINGS 由来の初期フロー制御値を上書き適用する
@@ -920,16 +943,36 @@ impl WtSession {
 
     /// ストリーム数上限を増やす `WT_MAX_STREAMS` を送信する
     ///
-    /// draft-ietf-webtrans-http2-15 Section 6.7: ピアが新規ストリームを開ける上限を通知する。
-    /// 2^60 を超える値は送信できない。
+    /// draft-ietf-webtrans-http2-16 Section 6.7: ピアが新規ストリームを開ける上限を通知する。
+    /// 対象方向の初期値または最後に広告した上限を増加させない値は `flow_control_error` を
+    /// 返し、ローカル上限と出力を変更しない。2^60 を超える値も拒否する。
+    /// 成功時はローカル上限を広告値へ更新し、`can_accept_stream` の判定と一致させる。
+    /// セッション状態が `Active` または `Draining` でない場合は `session_state_error` を
+    /// 返し、ローカル上限と出力を変更しない。
+    ///
+    /// 増加の判定は `WtFlowControl::max_streams_bidi_local` / `max_streams_uni_local` を
+    /// 基準にするため、`WtConfig` には SETTINGS で広告した初期値を設定しておくこと
+    /// (未広告の項目の初期値は Section 11.2 により 0 として扱われる)。非増加の広告を
+    /// 受信したピアは Section 6.7 の MUST でセッションを閉じるため、送信前に拒否する。
+    ///
+    /// 注: 以前の実装は現在値と同値・減少の広告も送信していたが、draft-16 では
+    /// 拒否する (後方互換のない仕様変更)。
+    ///
+    /// 注: 広告した上限までピアがストリームを開くと、下位 ID のストリームをまとめて
+    /// 生成するため、上限を大きくするとメモリ使用量が増える (既知の制限)。
     pub fn send_max_streams(&mut self, maximum: u64, bidirectional: bool) -> WtResult<()> {
-        // draft-ietf-webtrans-http2-15 Section 6.7: 2^60 超過値の送信は不可
-        if maximum > (1u64 << 60) {
-            return Err(WtError::flow_control_error(format!(
-                "WT_MAX_STREAMS value {} exceeds 2^60 limit",
-                maximum
-            )));
+        // セッションが終了・初期状態では広告できない (send_stream_data と同じ扱い)
+        if !matches!(
+            self.state,
+            WtSessionState::Active | WtSessionState::Draining
+        ) {
+            return Err(WtError::session_state_error(
+                "cannot send WT_MAX_STREAMS: session is not active",
+            ));
         }
+        // 2^60 上限と厳密増加の検証、ローカル上限の更新は WtFlowControl に集約する
+        self.flow_control
+            .update_max_streams_local(maximum, bidirectional)?;
         let capsule = Capsule::WtMaxStreams {
             maximum,
             bidirectional,
@@ -1011,16 +1054,26 @@ impl WtSession {
 
     /// ローカル側ストリーム上限を拡張し、`WT_MAX_STREAMS` を自動送信する
     ///
-    /// draft-ietf-webtrans-http2-15 Section 6.7: 2^60 を超える値は送信できない。
+    /// `WtFlowControl::max_streams_bidi_local` / `max_streams_uni_local` に
+    /// `increment` を加えた値を広告する。増分 0 (広告値が増加しない)、u64 の範囲超過、
+    /// 2^60 超過は `flow_control_error` を返し、ローカル上限と出力を変更しない。
+    /// セッション状態が `Active` / `Draining` でない場合は [`Self::send_max_streams`] が
+    /// `session_state_error` を返す。検証に成功した場合だけローカル上限を一度だけ
+    /// 更新する (draft-ietf-webtrans-http2-16 Section 6.7)。
+    ///
+    /// 注: 以前の実装は増分 0 でも同値の広告を送信していたが、draft-16 では拒否する
+    /// (後方互換のない仕様変更)。
     pub fn grow_max_streams(&mut self, increment: u64, bidirectional: bool) -> WtResult<()> {
-        self.flow_control
-            .add_max_streams_local(increment, bidirectional);
-        let new_max = if bidirectional {
+        let current = if bidirectional {
             self.flow_control.max_streams_bidi_local()
         } else {
             self.flow_control.max_streams_uni_local()
         };
-        // saturating_add で 2^60 を超えた場合にエラーを返す
+        let new_max = current.checked_add(increment).ok_or_else(|| {
+            WtError::flow_control_error(format!(
+                "WT_MAX_STREAMS increment {increment} from {current} overflows u64"
+            ))
+        })?;
         self.send_max_streams(new_max, bidirectional)
     }
 
@@ -1254,6 +1307,8 @@ impl WtSession {
                 maximum,
                 bidirectional,
             } => {
+                // draft-ietf-webtrans-http2-16 Section 6.7:
+                // 初期値または最後に受理した上限を増加させない値は WT_FLOW_CONTROL_ERROR
                 self.flow_control
                     .update_max_streams(maximum, bidirectional)?;
             }

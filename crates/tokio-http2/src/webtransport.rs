@@ -149,6 +149,10 @@ impl WtServerRequest {
     /// `WT-Available-Protocols` に含まれる値であることを検証し、
     /// レスポンスに `wt-protocol` (RFC 8941 sf-string) を付与する
     /// (draft-ietf-webtrans-http2-15 Section 3.3)。
+    ///
+    /// `config` の WT 初期値は、この接続が広告した SETTINGS の値で上書きされる。
+    /// SETTINGS で広告していない項目は Initial Value の 0 になる
+    /// (draft-ietf-webtrans-http2-16 Section 11.2)。
     pub async fn accept(
         mut self,
         mut config: WtConfig,
@@ -220,9 +224,10 @@ impl WtServerRequest {
             }
         }
 
-        // draft-ietf-webtrans-http2-15 Section 4.3.1:
+        // draft-ietf-webtrans-http2-15 Section 4.3.1 / draft-ietf-webtrans-http2-16 Section 11.2:
         // セッション確立時は ACK 済みの自広告 SETTINGS 初期値を適用する。
-        config.overlay_settings(conn.local_settings());
+        // 未広告の WT 初期値は Initial Value の 0 として扱う。
+        config.apply_advertised_settings(conn.local_settings());
 
         // draft-ietf-webtrans-http2-15 Section 4.3.1:
         // ピア (クライアント) の SETTINGS からピア用 WtConfig を構築する。

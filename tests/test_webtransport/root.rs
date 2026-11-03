@@ -229,9 +229,9 @@ fn test_duplicate_operations_are_errors() {
     assert!(session.stop_sending(stream_id2, error_code).is_err());
 }
 
-/// draft-ietf-webtrans-http2-15 Section 6.7: send_max_streams で 2^60 を超える値はエラー
+/// draft-ietf-webtrans-http2-16 Section 6.7: send_max_streams で 2^60 を超える値と同値はエラー
 #[test]
-fn test_send_max_streams_exceeds_2_60() {
+fn test_send_max_streams_boundary_errors() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
     session.initiate().expect("initiate should succeed");
 
@@ -239,6 +239,20 @@ fn test_send_max_streams_exceeds_2_60() {
     session
         .send_max_streams(1u64 << 60, true)
         .expect("2^60 は成功すること");
+
+    // 到達後の同値は拒否され、ローカル上限は 2^60 のまま
+    let err = session
+        .send_max_streams(1u64 << 60, true)
+        .expect_err("到達後の同値は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert_eq!(
+        session.flow_control().max_streams_bidi_local(),
+        1u64 << 60,
+        "拒否時にローカル上限が変わってはいけない"
+    );
 
     // 2^60 + 1 はエラー
     let err = session
@@ -313,4 +327,31 @@ fn test_overlay_settings() {
     let empty_settings = Settings::default();
     config2.overlay_settings(&empty_settings);
     assert_eq!(config2.initial_max_data, original_max_data);
+}
+
+/// `apply_advertised_settings` が SETTINGS で広告した値だけを反映し、
+/// 未広告の WT 初期値を 0 にすること
+///
+/// draft-ietf-webtrans-http2-16 Section 11.2: 未広告の Initial Value は 0。
+#[test]
+fn test_apply_advertised_settings_zeros_unadvertised_values() {
+    use shiguredo_http2::settings::{Setting, Settings};
+
+    // WT 初期値を一切広告しない SETTINGS では初期値が 0 になる
+    let mut config = WtConfig::default();
+    config.apply_advertised_settings(&Settings::new());
+    assert_eq!(config.initial_max_data, 0);
+    assert_eq!(config.initial_max_stream_data_uni, 0);
+    assert_eq!(config.initial_max_stream_data_bidi_local, 0);
+    assert_eq!(config.initial_max_stream_data_bidi_remote, 0);
+    assert_eq!(config.initial_max_streams_bidi, 0);
+    assert_eq!(config.initial_max_streams_uni, 0);
+
+    // 広告した項目だけが反映され、未広告の項目は 0 のまま
+    let mut settings = Settings::new();
+    settings.apply(Setting::WtInitialMaxStreamsBidi(3));
+    config.apply_advertised_settings(&settings);
+    assert_eq!(config.initial_max_streams_bidi, 3);
+    assert_eq!(config.initial_max_streams_uni, 0);
+    assert_eq!(config.initial_max_data, 0);
 }
