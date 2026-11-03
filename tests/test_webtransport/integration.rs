@@ -1,5 +1,7 @@
+use shiguredo_http2::settings::{Setting, Settings};
 use shiguredo_http2::webtransport::{
-    Capsule, CapsuleDecoder, CapsuleEncoder, MAX_VALUE, WtConfig, WtEvent, WtSession, WtStreamId,
+    Capsule, CapsuleDecoder, CapsuleEncoder, MAX_VALUE, WtConfig, WtEvent, WtInit, WtSession,
+    WtStreamId,
     stream::{RecvState, SendState, stream_id as wt_stream_id},
 };
 
@@ -2284,39 +2286,28 @@ fn first_stop_sending_on_removed_peer_bidi_stream_accepted() {
 }
 
 /// ピアから WT_STOP_SENDING を受信していない削除済みのピア開始 bidi ID への
-/// WT_MAX_STREAM_DATA は再作成せず無視されること
+/// 増加する WT_MAX_STREAM_DATA は、ストリームを再作成せず受理して記録だけ更新すること
 /// (RFC 9000 Section 3.3 / Section 19.10 がエラーとするのは未作成のローカル開始
 ///  ストリームと受信専用ストリームのみ)
 #[test]
-fn max_stream_data_on_removed_peer_bidi_stream_ignored() {
-    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+fn max_stream_data_on_removed_peer_bidi_stream_accepted_without_stream_effect() {
+    let peer_config = WtConfig {
+        initial_max_stream_data_bidi_local: 100_000,
+        ..WtConfig::peer_default()
+    };
+    let mut session = WtSession::client(WtConfig::default(), peer_config);
     session.initiate().expect("セッションを開始できるはず");
 
-    // ピア開始 bidi (ID=5) を WT_STREAM で開く。ピアからの WT_STOP_SENDING は受信しない
-    let mut encoder = CapsuleEncoder::new();
-    encoder.encode(&Capsule::WtStream {
-        stream_id: 5,
-        data: b"x".to_vec(),
-        fin: true,
-    });
-    session.feed(&encoder.take()).expect("feed に成功するはず");
-    session.process().expect("process に成功するはず");
-    // 送信パートを終端させるためローカルから WT_RESET_STREAM を送って削除する
-    session
-        .reset_stream(5, 0)
-        .expect("WT_RESET_STREAM を送信できるはず");
-    let _ = session.poll_output();
-    while session.poll_event().is_some() {}
-    assert!(
-        session.stream(5).is_none(),
-        "両パートの終端でストリームは削除されるはず"
-    );
+    // ピア開始 bidi (ID=5) を fin 付き WT_STREAM で受信して削除する。
+    // ピアからの WT_STOP_SENDING は受信しない
+    let send_max = remove_peer_bidi_stream(&mut session, 5);
+    assert_eq!(send_max, 100_000, "削除時点の送信上限が返るはず");
 
-    // 削除済み ID は再作成せず無視する
+    // 削除済み ID は再作成せず、増加は記録だけ更新する
     let mut encoder = CapsuleEncoder::new();
     encoder.encode(&Capsule::WtMaxStreamData {
         stream_id: 5,
-        maximum: 1_000_000,
+        maximum: 100_001,
     });
     session.feed(&encoder.take()).expect("feed に成功するはず");
     session.process().expect(
@@ -2331,6 +2322,77 @@ fn max_stream_data_on_removed_peer_bidi_stream_ignored() {
         "イベントが送出されてはいけない"
     );
     assert!(!session.has_output(), "出力が生成されてはいけない");
+}
+
+/// 削除済みストリームへの WT_MAX_STREAM_DATA でも、初期値または最後に受理した
+/// 送信上限を増加させない値は拒否されること
+///
+/// draft-ietf-webtrans-http2-16 Section 6.6。削除済み ID と送信上限の
+/// 対応は上限付きで保持するため、記録から追い出された ID は検証しない (既知の制限)。
+#[test]
+fn max_stream_data_on_removed_peer_bidi_stream_non_increase_errors() {
+    let peer_config = WtConfig {
+        initial_max_stream_data_bidi_local: 100_000,
+        ..WtConfig::peer_default()
+    };
+    let mut session = WtSession::client(WtConfig::default(), peer_config);
+    session.initiate().expect("セッションを開始できるはず");
+
+    // ピア (サーバー) 開始 bidi (ID=5) を fin 付き WT_STREAM で受信して削除する
+    let send_max = remove_peer_bidi_stream(&mut session, 5);
+    assert_eq!(send_max, 100_000, "削除時点の送信上限が返るはず");
+
+    // 初期値または最後に受理した送信上限と同値・減少はセッションエラーになる
+    for maximum in [send_max, send_max.saturating_sub(1)] {
+        let mut encoder = CapsuleEncoder::new();
+        encoder.encode(&Capsule::WtMaxStreamData {
+            stream_id: 5,
+            maximum,
+        });
+        session
+            .feed(&encoder.take())
+            .expect("WT_MAX_STREAM_DATA の受信に成功しなければならない");
+        let err = session
+            .process()
+            .expect_err("削除済みストリームでも非増加は拒否されるはず");
+        assert_eq!(
+            err.kind(),
+            shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+        );
+        assert!(
+            session.stream(5).is_none(),
+            "ストリームが再作成されてはいけない"
+        );
+        assert!(
+            session.poll_event().is_none(),
+            "イベントが送出されてはいけない"
+        );
+    }
+
+    // 増加はストリームが存在しないため記録のみ更新して無視する
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: 5,
+        maximum: send_max + 1_000,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("削除済みストリームへの増加は無視されるはず");
+    assert!(!session.has_output(), "出力が生成されてはいけない");
+
+    // 記録を更新した後の同値は再び拒否される
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: 5,
+        maximum: send_max + 1_000,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session.process().expect_err("更新後の同値も拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
 }
 
 /// 削除済みのローカル開始 bidi ID への WT_STOP_SENDING はストリーム不在のまま
@@ -3030,6 +3092,35 @@ fn wt_max_stream_data_local_uni_stream_accepted() {
 }
 
 // ---- 受信専用ストリーム (ピア開始 uni) の送信系操作の検証 (拒否と非回帰) ----
+
+/// ピア開始 bidi ストリームを fin 付き WT_STREAM で受信し、送信パートを
+/// WT_RESET_STREAM で終端して削除するヘルパー
+///
+/// 削除時点の送信上限を返す。削除済みストリームの非増加検証テストで使う。
+fn remove_peer_bidi_stream(session: &mut WtSession, stream_id: WtStreamId) -> u64 {
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id,
+        data: b"x".to_vec(),
+        fin: true,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
+    let send_max = session
+        .stream(stream_id)
+        .expect("ストリームが存在するはず")
+        .send_max();
+    session
+        .reset_stream(stream_id, 0)
+        .expect("WT_RESET_STREAM を送信できるはず");
+    let _ = session.poll_output();
+    while session.poll_event().is_some() {}
+    assert!(
+        session.stream(stream_id).is_none(),
+        "両パートの終端でストリームは削除されるはず"
+    );
+    send_max
+}
 
 /// ピア開始ストリームを WT_STREAM で開くヘルパー
 fn open_peer_stream(session: &mut WtSession, peer_id: WtStreamId, data: &[u8]) {
@@ -4640,7 +4731,7 @@ fn send_max_stream_data_updates_recv_max() {
 
 /// send_max_stream_data に現在の受信上限より小さい値を渡すと
 /// flow_control_error になり、`recv_max` と出力が変化しないこと
-/// (draft-ietf-webtrans-http2-15 Section 6.6: 減少を広告されたピアは
+/// (draft-ietf-webtrans-http2-16 Section 6.6: 増加させない値を広告されたピアは
 /// WT_FLOW_CONTROL_ERROR でセッションを閉じる)
 #[test]
 fn send_max_stream_data_decrease_errors() {
@@ -4661,8 +4752,8 @@ fn send_max_stream_data_decrease_errors() {
         shiguredo_http2::webtransport::WtErrorKind::FlowControlError
     );
     assert!(
-        err.reason().contains("advertised maximum"),
-        "広告値より小さいことが理由に含まれるはず (実際: {})",
+        err.reason().contains("does not increase"),
+        "増加しないことが理由に含まれるはず (実際: {})",
         err.reason()
     );
     assert_eq!(
@@ -4679,10 +4770,12 @@ fn send_max_stream_data_decrease_errors() {
     );
 }
 
-/// send_max_stream_data に現在の受信上限と同じ値を渡すと
-/// 従来どおり送信されること
+/// send_max_stream_data に現在の受信上限と同じ値を渡すと拒否され、
+/// `recv_max` と出力が変化しないこと
+/// (draft-ietf-webtrans-http2-16 Section 6.6: 増加させない値を広告されたピアは
+/// WT_FLOW_CONTROL_ERROR でセッションを閉じる)
 #[test]
-fn send_max_stream_data_equal_value_accepted() {
+fn send_max_stream_data_equal_value_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
     session.initiate().expect("セッションを開始できるはず");
     let peer_id = wt_stream_id::first(true, false);
@@ -4692,26 +4785,569 @@ fn send_max_stream_data_equal_value_accepted() {
         .expect("ストリームが存在するはず")
         .recv_max();
 
-    session
+    let err = session
         .send_max_stream_data(peer_id, before)
-        .expect("現在の受信上限と同じ値の送信は成功するはず");
-    let out = session
-        .poll_output()
-        .expect("WT_MAX_STREAM_DATA の出力が必要");
-    match decode_single_capsule(&out) {
-        Capsule::WtMaxStreamData { stream_id, maximum } => {
-            assert_eq!(stream_id, peer_id);
-            assert_eq!(maximum, before);
-        }
-        other => panic!("WtMaxStreamData を期待したが {other:?} だった"),
-    }
+        .expect_err("現在の受信上限と同じ値は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(
+        err.reason().contains("does not increase"),
+        "増加しないことが理由に含まれるはず (実際: {})",
+        err.reason()
+    );
     assert_eq!(
         session
             .stream(peer_id)
             .expect("ストリームが存在するはず")
             .recv_max(),
         before,
-        "同じ値では recv_max が変化しないはず"
+        "拒否時に recv_max が変化してはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// ピア開始 bidi の暗黙生成前に非増加の WT_MAX_STREAM_DATA を拒否し、
+/// ストリームと StreamOpened を残さないこと
+///
+/// draft-ietf-webtrans-http2-16 Section 6.6: ストリームの初期値を増加させない値は
+/// WT_FLOW_CONTROL_ERROR。初期値は SETTINGS と `WebTransport-Init` の `bl` の
+/// 大きい方になる (Section 4.3)。
+#[test]
+fn received_wt_max_stream_data_implicit_peer_bidi_rejects_non_increase() {
+    // SETTINGS の bidi_local が 100,000、WebTransport-Init の bl が 500,000 のとき、
+    // 初期値は大きい方の 500,000 になる
+    let mut peer_config = WtConfig::peer_default();
+    let mut settings = Settings::new();
+    settings.apply(Setting::WtInitialMaxStreamDataBidiLocal(100_000));
+    peer_config.overlay_settings(&settings);
+    peer_config.apply_init_as_peer(&WtInit {
+        u: None,
+        bl: Some(500_000),
+        br: None,
+    });
+    let peer_id = wt_stream_id::first(true, true);
+
+    // 初期値 (500,000) を増加させない値は拒否され、ストリームとイベントを残さない
+    for maximum in [100_000, 500_000, 499_999] {
+        let mut session = WtSession::server(WtConfig::default(), peer_config.clone());
+        session.initiate().expect("セッションを開始できるはず");
+        let mut encoder = CapsuleEncoder::new();
+        encoder.encode(&Capsule::WtMaxStreamData {
+            stream_id: peer_id,
+            maximum,
+        });
+        session
+            .feed(&encoder.take())
+            .expect("WT_MAX_STREAM_DATA の受信に成功しなければならない");
+        let err = session
+            .process()
+            .expect_err("初期値を増加させない WT_MAX_STREAM_DATA は拒否されるはず");
+        assert_eq!(
+            err.kind(),
+            shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+        );
+        assert!(
+            session.stream(peer_id).is_none(),
+            "拒否時にストリームを生成してはいけない (maximum: {maximum})"
+        );
+        assert!(
+            session.poll_event().is_none(),
+            "拒否時に StreamOpened を通知してはいけない (maximum: {maximum})"
+        );
+    }
+
+    // 初期値 + 1 は受理され、暗黙生成したストリームに反映される
+    let mut session = WtSession::server(WtConfig::default(), peer_config);
+    session.initiate().expect("セッションを開始できるはず");
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: peer_id,
+        maximum: 500_001,
+    });
+    session
+        .feed(&encoder.take())
+        .expect("WT_MAX_STREAM_DATA の受信に成功しなければならない");
+    session
+        .process()
+        .expect("初期値 + 1 は受理されなければならない");
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .send_available(),
+        500_001,
+        "暗黙生成したストリームの送信上限に反映されるはず"
+    );
+    let mut opened = false;
+    while let Some(event) = session.poll_event() {
+        if let WtEvent::StreamOpened { stream_id, .. } = event
+            && stream_id == peer_id
+        {
+            opened = true;
+        }
+    }
+    assert!(
+        opened,
+        "暗黙生成したストリームの StreamOpened が通知されるはず"
+    );
+}
+
+/// クライアントセッションでもピア開始 bidi の暗黙生成経路が厳密増加を検証すること
+///
+/// draft-ietf-webtrans-http2-16 Section 6.6。
+#[test]
+fn received_wt_max_stream_data_implicit_peer_bidi_strict_increase_client() {
+    let mut peer_config = WtConfig::peer_default();
+    peer_config.initial_max_stream_data_bidi_local = 250_000;
+    // クライアント視点のピア (サーバー) 開始 bidi は ID 1
+    let peer_id = wt_stream_id::first(false, true);
+
+    let mut session = WtSession::client(WtConfig::default(), peer_config.clone());
+    session.initiate().expect("セッションを開始できるはず");
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: peer_id,
+        maximum: 250_000,
+    });
+    session
+        .feed(&encoder.take())
+        .expect("WT_MAX_STREAM_DATA の受信に成功しなければならない");
+    let err = session
+        .process()
+        .expect_err("初期値と同値の WT_MAX_STREAM_DATA は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(
+        session.stream(peer_id).is_none(),
+        "拒否時にストリームを生成してはいけない"
+    );
+
+    let mut session = WtSession::client(WtConfig::default(), peer_config);
+    session.initiate().expect("セッションを開始できるはず");
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: peer_id,
+        maximum: 250_001,
+    });
+    session
+        .feed(&encoder.take())
+        .expect("WT_MAX_STREAM_DATA の受信に成功しなければならない");
+    session
+        .process()
+        .expect("初期値 + 1 は受理されなければならない");
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .send_available(),
+        250_001
+    );
+}
+
+/// ローカル開始 bidi の送信広告はローカル config の `bidi_local` を基準にすること
+///
+/// draft-ietf-webtrans-http2-16 Section 4.3 / Section 6.6。
+#[test]
+fn send_max_stream_data_uses_local_bidi_local_initial() {
+    let local_config = WtConfig {
+        initial_max_stream_data_bidi_local: 300_000,
+        ..WtConfig::default()
+    };
+    let peer_config = WtConfig {
+        initial_max_streams_bidi: 10,
+        ..WtConfig::peer_default()
+    };
+    let mut session = WtSession::client(local_config, peer_config);
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = session
+        .open_bidi_stream()
+        .expect("bidi ストリームを開けるはず");
+    assert_eq!(
+        session
+            .stream(stream_id)
+            .expect("ストリームが存在するはず")
+            .recv_max(),
+        300_000,
+        "ローカル開始 bidi の受信上限は bidi_local から初期化されるはず"
+    );
+    let err = session
+        .send_max_stream_data(stream_id, 300_000)
+        .expect_err("bidi_local と同値は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    session
+        .send_max_stream_data(stream_id, 300_001)
+        .expect("bidi_local + 1 は受理されるはず");
+}
+
+/// ピア開始 bidi の送信広告はローカル config の `bidi_remote` を基準にすること
+///
+/// draft-ietf-webtrans-http2-16 Section 4.3 / Section 6.6。
+#[test]
+fn send_max_stream_data_uses_peer_bidi_remote_initial() {
+    let local_config = WtConfig {
+        initial_max_stream_data_bidi_remote: 400_000,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(local_config, WtConfig::peer_default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, true);
+    open_peer_stream(&mut session, peer_id, b"");
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .recv_max(),
+        400_000,
+        "ピア開始 bidi の受信上限は bidi_remote から初期化されるはず"
+    );
+    let err = session
+        .send_max_stream_data(peer_id, 400_000)
+        .expect_err("bidi_remote と同値は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    session
+        .send_max_stream_data(peer_id, 400_001)
+        .expect("bidi_remote + 1 は受理されるはず");
+}
+
+/// ピア開始 bidi の受信側初期値はピア config の `bidi_local` を基準にすること
+///
+/// draft-ietf-webtrans-http2-16 Section 4.3 / Section 6.6。
+#[test]
+fn received_wt_max_stream_data_uses_peer_bidi_local_initial() {
+    let mut peer_config = WtConfig::peer_default();
+    peer_config.initial_max_stream_data_bidi_local = 500_000;
+    let peer_id = wt_stream_id::first(true, true);
+
+    let mut session = WtSession::server(WtConfig::default(), peer_config.clone());
+    session.initiate().expect("セッションを開始できるはず");
+    open_peer_stream(&mut session, peer_id, b"");
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .send_max(),
+        500_000,
+        "ピア開始 bidi の送信上限はピア config の bidi_local から初期化されるはず"
+    );
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: peer_id,
+        maximum: 500_000,
+    });
+    session
+        .feed(&encoder.take())
+        .expect("WT_MAX_STREAM_DATA の受信に成功しなければならない");
+    let err = session
+        .process()
+        .expect_err("ピアの bidi_local と同値は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .send_max(),
+        500_000,
+        "拒否時に送信上限が変わってはいけない"
+    );
+
+    let mut session = WtSession::server(WtConfig::default(), peer_config);
+    session.initiate().expect("セッションを開始できるはず");
+    open_peer_stream(&mut session, peer_id, b"");
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id: peer_id,
+        maximum: 500_001,
+    });
+    session
+        .feed(&encoder.take())
+        .expect("WT_MAX_STREAM_DATA の受信に成功しなければならない");
+    session
+        .process()
+        .expect("ピアの bidi_local + 1 は受理されるはず");
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .send_available(),
+        500_001
+    );
+}
+
+/// ピア開始 uni の送信広告と、ローカル開始 uni の受信は方向ごとの初期値を使うこと
+///
+/// draft-ietf-webtrans-http2-16 Section 4.3 / Section 6.6。
+#[test]
+fn send_max_stream_data_uses_uni_initial() {
+    let local_config = WtConfig {
+        initial_max_stream_data_uni: 400_000,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(local_config, WtConfig::peer_default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, false);
+    open_peer_stream(&mut session, peer_id, b"");
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .recv_max(),
+        400_000,
+        "ピア開始 uni の受信上限は uni から初期化されるはず"
+    );
+    let err = session
+        .send_max_stream_data(peer_id, 400_000)
+        .expect_err("uni と同値は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    session
+        .send_max_stream_data(peer_id, 400_001)
+        .expect("uni + 1 は受理されるはず");
+}
+
+/// ローカル開始 uni の受信上限はピア config の `uni` を基準にすること
+///
+/// draft-ietf-webtrans-http2-16 Section 4.3 / Section 6.6。
+#[test]
+fn received_wt_max_stream_data_uses_peer_uni_initial() {
+    let peer_config = WtConfig {
+        initial_max_stream_data_uni: 200_000,
+        initial_max_streams_uni: 10,
+        ..WtConfig::peer_default()
+    };
+    let mut session = WtSession::client(WtConfig::default(), peer_config);
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = session
+        .open_uni_stream()
+        .expect("uni ストリームを開けるはず");
+    assert_eq!(
+        session
+            .stream(stream_id)
+            .expect("ストリームが存在するはず")
+            .send_max(),
+        200_000,
+        "ローカル開始 uni の送信上限はピア config の uni から初期化されるはず"
+    );
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id,
+        maximum: 200_000,
+    });
+    session
+        .feed(&encoder.take())
+        .expect("WT_MAX_STREAM_DATA の受信に成功しなければならない");
+    let err = session
+        .process()
+        .expect_err("ピアの uni と同値は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+}
+
+/// `send_max_stream_data` の検証順が存在・値域・状態の順であること
+///
+/// RFC 9000 Section 16 / draft-ietf-webtrans-http2-16 Section 6.6。
+#[test]
+fn send_max_stream_data_error_precedence() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let send_only = session.open_uni_stream().expect("uni を開けるはず");
+
+    // varint 上限超過は状態より先に評価される
+    let err = session
+        .send_max_stream_data(send_only, MAX_VALUE + 1)
+        .expect_err("varint 上限超過は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    // 値域内なら状態エラーになる
+    let err = session
+        .send_max_stream_data(send_only, 1_000)
+        .expect_err("送信専用ストリームは拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    // 存在しないストリームでも varint 上限超過が先に評価される
+    let err = session
+        .send_max_stream_data(999, MAX_VALUE + 1)
+        .expect_err("varint 上限超過は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    let err = session
+        .send_max_stream_data(999, 1_000)
+        .expect_err("存在しないストリームは拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::InvalidStreamId
+    );
+}
+
+/// `grow_stream_recv_window` の検証順が存在・値域・状態の順であること
+///
+/// RFC 9000 Section 16 / draft-ietf-webtrans-http2-16 Section 6.6。
+#[test]
+fn grow_stream_recv_window_error_precedence() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let send_only = session.open_uni_stream().expect("uni を開けるはず");
+
+    // u64 オーバーフローは状態より先に評価される
+    let err = session
+        .grow_stream_recv_window(send_only, u64::MAX)
+        .expect_err("u64 オーバーフローは拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    // 値域内なら状態エラーになる
+    let err = session
+        .grow_stream_recv_window(send_only, 1)
+        .expect_err("送信専用ストリームは拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    // 存在しないストリームは、値域より先に存在確認で invalid_stream_id になる
+    let err = session
+        .grow_stream_recv_window(999, 1)
+        .expect_err("存在しないストリームは拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::InvalidStreamId
+    );
+    let err = session
+        .grow_stream_recv_window(999, MAX_VALUE + 1)
+        .expect_err("存在確認が値域より先に評価されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::InvalidStreamId
+    );
+}
+
+/// `grow_stream_recv_window` に増分 0 を渡すと拒否され、
+/// `recv_max` と出力が変化しないこと
+/// (draft-ietf-webtrans-http2-16 Section 6.6)
+#[test]
+fn grow_stream_recv_window_zero_increment_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let peer_id = wt_stream_id::first(true, false);
+    open_peer_stream(&mut session, peer_id, b"x");
+    let before = session
+        .stream(peer_id)
+        .expect("ストリームが存在するはず")
+        .recv_max();
+
+    let err = session
+        .grow_stream_recv_window(peer_id, 0)
+        .expect_err("増分 0 は広告値が増加しないため拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .recv_max(),
+        before,
+        "拒否時に recv_max が変化してはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// ピアから受信した `WT_MAX_STREAM_DATA` が初期値・受理済みの上限と同値なら
+/// セッションエラーになること
+/// (draft-ietf-webtrans-http2-16 Section 6.6)
+#[test]
+fn received_wt_max_stream_data_equal_errors() {
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = session
+        .open_bidi_stream()
+        .expect("bidi ストリームを開けるはず");
+    let initial_send_max = session
+        .stream(stream_id)
+        .expect("ストリームが存在するはず")
+        .send_available();
+
+    // 初期値と同値の WT_MAX_STREAM_DATA は拒否される
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreamData {
+        stream_id,
+        maximum: initial_send_max,
+    });
+    session
+        .feed(&encoder.take())
+        .expect("WT_MAX_STREAM_DATA の受信に成功しなければならない");
+    let err = session
+        .process()
+        .expect_err("初期値と同値の WT_MAX_STREAM_DATA は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+
+    // 一度増加を受理した後の同値も拒否される
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let stream_id = session
+        .open_bidi_stream()
+        .expect("bidi ストリームを開けるはず");
+    let increased = session
+        .stream(stream_id)
+        .expect("ストリームが存在するはず")
+        .send_available()
+        + 1;
+    let mut encoder2 = CapsuleEncoder::new();
+    encoder2.encode(&Capsule::WtMaxStreamData {
+        stream_id,
+        maximum: increased,
+    });
+    session
+        .feed(&encoder2.take())
+        .expect("WT_MAX_STREAM_DATA の受信に成功しなければならない");
+    session.process().expect("増加は受理されるはず");
+
+    let mut encoder3 = CapsuleEncoder::new();
+    encoder3.encode(&Capsule::WtMaxStreamData {
+        stream_id,
+        maximum: increased,
+    });
+    session
+        .feed(&encoder3.take())
+        .expect("WT_MAX_STREAM_DATA の受信に成功しなければならない");
+    let err = session
+        .process()
+        .expect_err("受理済みの値と同値の WT_MAX_STREAM_DATA は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
     );
 }
 
@@ -4838,43 +5474,87 @@ fn send_max_stream_data_decrease_on_non_recv_state_errors() {
     );
 }
 
-/// grow_stream_recv_window に varint 上限を超える増分を渡すと
-/// flow_control_error になり、`recv_max` と出力が変化しないこと
-/// (RFC 9000 Section 16)
+/// grow_stream_recv_window の varint 上限境界で、varint 上限ちょうどへの拡張は
+/// 受理し、上限超過と u64 オーバーフローは拒否して受信上限と出力を変更しないこと
+///
+/// RFC 9000 Section 16 / draft-ietf-webtrans-http2-16 Section 6.6。
 #[test]
 fn grow_stream_recv_window_varint_overflow_errors() {
-    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    let local_config = WtConfig {
+        initial_max_stream_data_uni: MAX_VALUE - 1,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(local_config, WtConfig::peer_default());
     session.initiate().expect("セッションを開始できるはず");
     let peer_id = wt_stream_id::first(true, false);
-    open_peer_stream(&mut session, peer_id, b"x");
-    let before = session
-        .stream(peer_id)
-        .expect("ストリームが存在するはず")
-        .recv_max();
+    open_peer_stream(&mut session, peer_id, b"");
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .recv_max(),
+        MAX_VALUE - 1
+    );
 
+    // 上限 - 1 からの +1 は varint 上限ちょうどに到達するため受理される
+    session
+        .grow_stream_recv_window(peer_id, 1)
+        .expect("varint 上限ちょうどへの拡張は受理されるはず");
+    assert_eq!(
+        session
+            .stream(peer_id)
+            .expect("ストリームが存在するはず")
+            .recv_max(),
+        MAX_VALUE
+    );
+    match decode_single_capsule(
+        &session
+            .poll_output()
+            .expect("WT_MAX_STREAM_DATA の出力が必要"),
+    ) {
+        Capsule::WtMaxStreamData { maximum, .. } => assert_eq!(maximum, MAX_VALUE),
+        other => panic!("WtMaxStreamData を期待したが {other:?} だった"),
+    }
+
+    // varint 上限 + 1 は送信検証で拒否される
     let err = session
-        .grow_stream_recv_window(peer_id, u64::MAX)
+        .grow_stream_recv_window(peer_id, 1)
         .expect_err("varint 上限を超える拡張は拒否されるはず");
     assert_eq!(
         err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::FlowControlError
     );
     assert!(
-        err.reason().contains("WT_MAX_STREAM_DATA value"),
-        "WT_MAX_STREAM_DATA の値として拒否されるはず (実際: {})",
+        err.reason().contains("value") && err.reason().contains("varint maximum"),
+        "varint 上限超過として拒否されるはず (実際: {})",
         err.reason()
     );
+
+    // u64 の範囲を超える増分は checked_add で拒否される
+    let err = session
+        .grow_stream_recv_window(peer_id, u64::MAX)
+        .expect_err("u64 を超える拡張は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(
+        err.reason().contains("increment") && err.reason().contains("overflows u64"),
+        "加算のオーバーフローとして拒否されるはず (実際: {})",
+        err.reason()
+    );
+
     assert_eq!(
         session
             .stream(peer_id)
             .expect("ストリームが存在するはず")
             .recv_max(),
-        before,
+        MAX_VALUE,
         "拒否時に recv_max が変化してはいけない"
     );
     assert!(
         session.poll_output().is_none(),
-        "拒否時に出力が生成されてはいけない"
+        "拒否時に WT_MAX_STREAM_DATA を出力してはいけない"
     );
 }
 

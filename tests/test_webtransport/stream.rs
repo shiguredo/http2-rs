@@ -55,7 +55,7 @@ fn test_send_data() {
 
     stream
         .send_data(100, false)
-        .expect("operation should succeed");
+        .expect("操作は成功しなければならない");
     assert_eq!(stream.send_state(), SendState::Send);
     assert_eq!(stream.send_offset(), 100);
     assert!(stream.can_send());
@@ -63,7 +63,7 @@ fn test_send_data() {
     // draft-ietf-webtrans-http2-15 Section 5.2: FIN 送信で即座に DataRecvd へ遷移
     stream
         .send_data(100, true)
-        .expect("operation should succeed");
+        .expect("操作は成功しなければならない");
     assert_eq!(stream.send_state(), SendState::DataRecvd);
     assert_eq!(stream.send_offset(), 200);
     assert!(!stream.can_send());
@@ -75,7 +75,7 @@ fn test_recv_data() {
 
     stream
         .recv_data(100, false)
-        .expect("operation should succeed");
+        .expect("操作は成功しなければならない");
     assert_eq!(stream.recv_state(), RecvState::Recv);
     assert_eq!(stream.recv_offset(), 100);
     assert!(stream.can_recv());
@@ -83,7 +83,7 @@ fn test_recv_data() {
     // draft-ietf-webtrans-http2-15 Section 5.2: FIN 受信で即座に DataRecvd へ遷移
     stream
         .recv_data(100, true)
-        .expect("operation should succeed");
+        .expect("操作は成功しなければならない");
     assert_eq!(stream.recv_state(), RecvState::DataRecvd);
     assert_eq!(stream.recv_offset(), 200);
 }
@@ -94,7 +94,7 @@ fn test_send_reset() {
 
     stream
         .send_data(100, false)
-        .expect("operation should succeed");
+        .expect("操作は成功しなければならない");
     // draft-ietf-webtrans-http2-15 Section 5.2: リセット送信で即座に ResetRecvd へ遷移
     stream.send_reset();
     assert_eq!(stream.send_state(), SendState::ResetRecvd);
@@ -107,7 +107,7 @@ fn test_recv_reset() {
 
     stream
         .recv_data(100, false)
-        .expect("operation should succeed");
+        .expect("操作は成功しなければならない");
     // draft-ietf-webtrans-http2-15 Section 5.2: リセット受信で即座に ResetRead へ遷移
     stream.recv_reset();
     assert_eq!(stream.recv_state(), RecvState::ResetRead);
@@ -121,11 +121,40 @@ fn test_update_send_max() {
 
     stream
         .update_send_max(131072)
-        .expect("operation should succeed");
+        .expect("送信上限の増加は受理されなければならない");
     assert_eq!(stream.send_available(), 131072);
 
-    // draft-ietf-webtrans-http2-15 Section 6.6: 減少はエラー
-    assert!(stream.update_send_max(32768).is_err());
+    // draft-ietf-webtrans-http2-16 Section 6.6: 同値・減少はエラー
+    assert!(
+        stream.update_send_max(131072).is_err(),
+        "同値は拒否されなければならない"
+    );
+    assert!(
+        stream.update_send_max(32768).is_err(),
+        "減少は拒否されなければならない"
+    );
+    assert_eq!(
+        stream.send_available(),
+        131072,
+        "拒否時に送信上限が変わってはいけない"
+    );
+}
+
+/// update_send_max が varint 上限を超える値を拒否することを確認する
+/// (RFC 9000 Section 16)
+#[test]
+fn test_update_send_max_varint_overflow() {
+    use shiguredo_http2::webtransport::MAX_VALUE;
+
+    let mut stream = WtStream::new(0, 0, 0, true, true);
+
+    stream
+        .update_send_max(MAX_VALUE)
+        .expect("varint 上限ちょうどは受理されなければならない");
+    assert_eq!(stream.send_available(), MAX_VALUE);
+
+    assert!(stream.update_send_max(MAX_VALUE + 1).is_err());
+    assert_eq!(stream.send_available(), MAX_VALUE);
 }
 
 /// update_recv_max が varint MAX_VALUE を超えた場合にエラーを返すことを確認する
@@ -211,7 +240,7 @@ fn test_send_data_after_fin_is_error() {
     // FIN 付きで送信 → DataRecvd に遷移
     stream
         .send_data(100, true)
-        .expect("operation should succeed");
+        .expect("操作は成功しなければならない");
     assert_eq!(stream.send_state(), SendState::DataRecvd);
 
     // DataRecvd 後の send_data はエラー
@@ -226,7 +255,7 @@ fn test_recv_data_after_fin_is_error() {
     // FIN 付きで受信 → DataRecvd に遷移
     stream
         .recv_data(100, true)
-        .expect("operation should succeed");
+        .expect("操作は成功しなければならない");
     assert_eq!(stream.recv_state(), RecvState::DataRecvd);
 
     // DataRecvd 後の recv_data はエラー
