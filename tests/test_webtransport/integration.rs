@@ -5587,3 +5587,472 @@ fn send_max_stream_data_decrease_on_send_only_stream_errors() {
         "拒否時に出力が生成されてはいけない"
     );
 }
+
+/// `send_max_streams` が同値・減少を拒否し、ローカル上限と出力を変更しないこと
+///
+/// draft-ietf-webtrans-http2-16 Section 6.7。
+#[test]
+fn send_max_streams_rejects_non_increasing_values() {
+    let config = WtConfig {
+        initial_max_streams_bidi: 2,
+        initial_max_streams_uni: 1,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(config, WtConfig::peer_default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // 初期値と同値も拒否される
+    let err = session
+        .send_max_streams(2, true)
+        .expect_err("bidi の初期値と同値は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+
+    // 増加は受理され、広告値がローカル上限に反映される
+    session
+        .send_max_streams(3, true)
+        .expect("bidi の増加は受理されなければならない");
+    match decode_single_capsule(&session.poll_output().expect("WT_MAX_STREAMS の出力が必要"))
+    {
+        Capsule::WtMaxStreams {
+            maximum,
+            bidirectional,
+        } => {
+            assert_eq!(maximum, 3);
+            assert!(bidirectional);
+        }
+        other => panic!("WtMaxStreams を期待したが {other:?} だった"),
+    }
+
+    // 広告後の同値・減少も拒否される
+    let err = session
+        .send_max_streams(3, true)
+        .expect_err("広告後の同値は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    let err = session
+        .send_max_streams(1, true)
+        .expect_err("減少は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+
+    // 他方向は独立して広告できる
+    let err = session
+        .send_max_streams(1, false)
+        .expect_err("uni の初期値と同値は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    session
+        .send_max_streams(2, false)
+        .expect("uni の増加は受理されなければならない");
+}
+
+/// `grow_max_streams` が増分 0 を拒否し、ローカル上限と出力を変更しないこと
+///
+/// draft-ietf-webtrans-http2-16 Section 6.7。
+#[test]
+fn grow_max_streams_zero_increment_errors() {
+    let config = WtConfig {
+        initial_max_streams_bidi: 2,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(config, WtConfig::peer_default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    let err = session
+        .grow_max_streams(0, true)
+        .expect_err("増分 0 は広告値が増加しないため拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert_eq!(
+        session.flow_control().max_streams_bidi_local(),
+        2,
+        "拒否時にローカル上限が変わってはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+
+    // 拒否後の正常な増加は初期値を基準に受理される
+    session
+        .grow_max_streams(1, true)
+        .expect("増分 1 は受理されなければならない");
+    match decode_single_capsule(&session.poll_output().expect("WT_MAX_STREAMS の出力が必要"))
+    {
+        Capsule::WtMaxStreams { maximum, .. } => assert_eq!(maximum, 3),
+        other => panic!("WtMaxStreams を期待したが {other:?} だった"),
+    }
+}
+
+/// `grow_max_streams` が 2^60 境界と u64 オーバーフローを出力・状態更新前に拒否すること
+///
+/// draft-ietf-webtrans-http2-16 Section 6.7 / RFC 9000 Section 16。
+#[test]
+fn grow_max_streams_boundary_errors() {
+    let config = WtConfig {
+        initial_max_streams_bidi: (1u64 << 60) - 4,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(config, WtConfig::peer_default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // 2^60 ちょうどへの増加は受理される
+    session
+        .grow_max_streams(4, true)
+        .expect("2^60 ちょうどへの増加は受理されるはず");
+    match decode_single_capsule(&session.poll_output().expect("WT_MAX_STREAMS の出力が必要"))
+    {
+        Capsule::WtMaxStreams { maximum, .. } => assert_eq!(maximum, 1u64 << 60),
+        other => panic!("WtMaxStreams を期待したが {other:?} だった"),
+    }
+
+    // 2^60 を超える増加は拒否され、ローカル上限は 2^60 のまま
+    let err = session
+        .grow_max_streams(1, true)
+        .expect_err("2^60 を超える増加は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert_eq!(session.flow_control().max_streams_bidi_local(), 1u64 << 60);
+
+    // uni 方向でも 2^60 ちょうどの増加は受理され、超過は拒否される
+    let config = WtConfig {
+        initial_max_streams_uni: (1u64 << 60) - 4,
+        ..WtConfig::default()
+    };
+    let mut uni_session = WtSession::server(config, WtConfig::peer_default());
+    uni_session.initiate().expect("セッションを開始できるはず");
+    uni_session
+        .grow_max_streams(4, false)
+        .expect("uni の 2^60 ちょうどへの増加は受理されるはず");
+    assert_eq!(
+        uni_session.flow_control().max_streams_uni_local(),
+        1u64 << 60
+    );
+    assert!(uni_session.grow_max_streams(1, false).is_err());
+
+    // u64 の範囲を超える増分は拒否され、ローカル上限は 2^60 のまま
+    let err = session
+        .grow_max_streams(u64::MAX, true)
+        .expect_err("u64 を超える増加は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert_eq!(
+        session.flow_control().max_streams_bidi_local(),
+        1u64 << 60,
+        "拒否時にローカル上限が変わってはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// 受信した `WT_MAX_STREAMS` が対象方向の初期値・受理済み上限と同値なら
+/// セッションエラーになり、他方向に影響しないこと
+///
+/// draft-ietf-webtrans-http2-16 Section 6.7。
+#[test]
+fn received_wt_max_streams_equal_errors() {
+    // 初期値 0 と同値の最初の値は拒否される
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::peer_default());
+    session.initiate().expect("セッションを開始できるはず");
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreams {
+        maximum: 0,
+        bidirectional: true,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("初期値 0 と同値の WT_MAX_STREAMS は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert_eq!(session.flow_control().max_streams_bidi_remote(), 0);
+
+    // 初期値 0 からの増加は受理され、bidi のピア上限だけが進む
+    let mut session = WtSession::client(WtConfig::default(), WtConfig::peer_default());
+    session.initiate().expect("セッションを開始できるはず");
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreams {
+        maximum: 1,
+        bidirectional: true,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("初期値 0 からの増加は受理されるはず");
+    assert_eq!(
+        session.flow_control().max_streams_bidi_remote(),
+        1,
+        "bidi のピア上限が進むはず"
+    );
+    assert_eq!(
+        session.flow_control().max_streams_uni_remote(),
+        0,
+        "uni のピア上限は不変"
+    );
+
+    // 受理済みの値と同値は拒否され、上限は変わらない
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxStreams {
+        maximum: 1,
+        bidirectional: true,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("受理済みの値と同値の WT_MAX_STREAMS は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert_eq!(session.flow_control().max_streams_bidi_remote(), 1);
+}
+
+/// `send_max_streams` の広告後に、新上限までピア開始ストリームを受け入れられること
+///
+/// draft-ietf-webtrans-http2-16 Section 6.7。
+#[test]
+fn send_max_streams_advertisement_allows_peer_streams() {
+    let config = WtConfig {
+        initial_max_streams_bidi: 2,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(config, WtConfig::peer_default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // 上限 2 では ID 8 (3 本目) は拒否される
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: 8,
+        error_code: 7,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("受信ストリーム数上限を超える WT_STOP_SENDING は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(
+        session.stream(8).is_none(),
+        "拒否時に上限超過のストリームを作成してはいけない"
+    );
+    assert!(
+        session.stream(0).is_none() && session.stream(4).is_none(),
+        "拒否時に下位 ID のストリームも作成してはいけない"
+    );
+
+    // 上限を 3 に広告すると ID 8 が受理され、下位 ID 0 / 4 も開かれる
+    session
+        .send_max_streams(3, true)
+        .expect("上限の広告は成功するはず");
+    let _ = session.poll_output();
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: 8,
+        error_code: 7,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("広告後の ID 8 は受理されるはず");
+    assert!(
+        session.stream(0).is_some() && session.stream(4).is_some(),
+        "下位 ID 0 / 4 も開かれるはず"
+    );
+    assert!(session.stream(8).is_some(), "対象 ID が開かれるはず");
+    let mut opened = Vec::new();
+    while let Some(event) = session.poll_event() {
+        if let WtEvent::StreamOpened { stream_id, .. } = event {
+            opened.push(stream_id);
+        }
+    }
+    assert_eq!(
+        opened,
+        vec![0, 4, 8],
+        "StreamOpened が ID 順に通知されるはず"
+    );
+
+    // 上限 3 の境界を超える ID 12 は拒否され、状態とイベントを残さない
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: 12,
+        error_code: 7,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("上限を超える ID 12 は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(session.stream(12).is_none(), "拒否時は状態が変わらないはず");
+    assert!(
+        session.poll_event().is_none(),
+        "拒否時はイベントが送出されてはいけない"
+    );
+}
+
+/// Closed のセッションでは `send_max_streams` が状態エラーになり、
+/// ローカル上限と出力を変更しないこと
+///
+/// draft-ietf-webtrans-http2-16 Section 6.7。
+#[test]
+fn send_max_streams_closed_session_errors() {
+    let config = WtConfig {
+        initial_max_streams_bidi: 2,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(config, WtConfig::peer_default());
+    session.initiate().expect("セッションを開始できるはず");
+    session.close(0, "bye").expect("セッションを閉じられるはず");
+    let _ = session.poll_output();
+
+    let err = session
+        .send_max_streams(3, true)
+        .expect_err("Closed のセッションでは広告できないはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::SessionStateError
+    );
+    assert_eq!(
+        session.flow_control().max_streams_bidi_local(),
+        2,
+        "拒否時にローカル上限が変わってはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力が生成されてはいけない"
+    );
+}
+
+/// `send_max_streams` が Initial では状態エラーになり、Draining では受理されること
+///
+/// draft-ietf-webtrans-http2-16 Section 6.7。
+#[test]
+fn send_max_streams_session_state_errors() {
+    // Initial 状態では広告できない
+    let config = WtConfig {
+        initial_max_streams_bidi: 2,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(config, WtConfig::peer_default());
+    let err = session
+        .send_max_streams(3, true)
+        .expect_err("Initial 状態では広告できないはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::SessionStateError
+    );
+    assert_eq!(session.flow_control().max_streams_bidi_local(), 2);
+
+    // Draining 状態では広告できる
+    session.initiate().expect("セッションを開始できるはず");
+    session.drain().expect("セッションをドレインできるはず");
+    let _ = session.poll_output();
+    session
+        .send_max_streams(3, true)
+        .expect("Draining 状態では広告できるはず");
+    assert_eq!(session.flow_control().max_streams_bidi_local(), 3);
+}
+
+/// uni 方向でも `send_max_streams` の広告後に新上限までピア開始ストリームを
+/// 受け入れられること
+///
+/// draft-ietf-webtrans-http2-16 Section 6.7 / RFC 9000 Section 4.6。
+#[test]
+fn send_max_streams_advertisement_allows_peer_uni_streams() {
+    let config = WtConfig {
+        initial_max_streams_uni: 2,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(config, WtConfig::peer_default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // 上限 2 では ID 10 (3 本目) は拒否される
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: 10,
+        data: Vec::new(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("受信ストリーム数上限を超える WT_STREAM は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(
+        session.stream(2).is_none() && session.stream(6).is_none(),
+        "拒否時に下位 ID 2 / 6 のストリームも作成してはいけない"
+    );
+
+    // 上限を 3 に広告すると ID 10 が受理され、下位 ID 2 / 6 も開かれる
+    session
+        .send_max_streams(3, false)
+        .expect("uni の上限の広告は成功するはず");
+    let _ = session.poll_output();
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: 10,
+        data: Vec::new(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("広告後の ID 10 は受理されるはず");
+    assert!(
+        session.stream(2).is_some() && session.stream(6).is_some() && session.stream(10).is_some(),
+        "uni の ID 2 / 6 / 10 が開かれるはず"
+    );
+}
+
+/// 初期値 0 から `send_max_streams` で 1 への広告が受理されること
+///
+/// draft-ietf-webtrans-http2-16 Section 6.7 / Section 11.2。
+#[test]
+fn send_max_streams_from_zero_initial_succeeds() {
+    let config = WtConfig {
+        initial_max_streams_bidi: 0,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(config, WtConfig::peer_default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    session
+        .send_max_streams(1, true)
+        .expect("初期値 0 からの増加は受理されるはず");
+    assert_eq!(session.flow_control().max_streams_bidi_local(), 1);
+    match decode_single_capsule(&session.poll_output().expect("WT_MAX_STREAMS の出力が必要"))
+    {
+        Capsule::WtMaxStreams { maximum, .. } => assert_eq!(maximum, 1),
+        other => panic!("WtMaxStreams を期待したが {other:?} だった"),
+    }
+}

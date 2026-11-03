@@ -14,8 +14,8 @@ enum WtFlowAction {
         maximum: u64,
         bidirectional: bool,
     },
-    AddMaxStreamsLocal {
-        increment: u64,
+    UpdateMaxStreamsLocal {
+        maximum: u64,
         bidirectional: bool,
     },
     OpenedStream {
@@ -62,11 +62,11 @@ fuzz_target!(|input: FuzzInput| {
             } => {
                 let _ = fc.update_max_streams(*maximum, *bidirectional);
             }
-            WtFlowAction::AddMaxStreamsLocal {
-                increment,
+            WtFlowAction::UpdateMaxStreamsLocal {
+                maximum,
                 bidirectional,
             } => {
-                fc.add_max_streams_local(*increment, *bidirectional);
+                let _ = fc.update_max_streams_local(*maximum, *bidirectional);
             }
             WtFlowAction::OpenedStream { bidirectional } => {
                 fc.opened_stream(*bidirectional);

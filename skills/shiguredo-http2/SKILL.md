@@ -12,7 +12,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 - **依存なし**: 外部依存ゼロ (`std` のみ)
 - **Sans I/O**: I/O を完全に分離した設計 (Tokio, async-std, 同期 I/O など任意の環境で使用可能)
 - **RFC 準拠**: RFC 9113 (HTTP/2), RFC 7541 (HPACK), RFC 9218 (Extensible Priorities) に対応
-- **WebTransport over HTTP/2**: draft-ietf-webtrans-http2-16 の `SETTINGS_WT_ENABLED` (0x2b67) と `WT_MAX_DATA` / `WT_MAX_STREAM_DATA` の厳密増加規則に対応し、それ以外の WebTransport 動作は draft-ietf-webtrans-http2-15 に基づく
+- **WebTransport over HTTP/2**: draft-ietf-webtrans-http2-16 の `SETTINGS_WT_ENABLED` (0x2b67) と `WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` の厳密増加規則に対応し、それ以外の WebTransport 動作は draft-ietf-webtrans-http2-15 に基づく
 - **HPACK**: 静的/動的テーブル、Huffman 符号化、サイズ更新対応
 - **フロー制御**: 接続レベル/ストリームレベル両対応
 - **DoS 対策**: `Limits` による各種上限設定
@@ -174,7 +174,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 
 ## WebTransport over HTTP/2
 
-`webtransport` モジュール。Sans I/O の `WtSession` を中心に、Capsule Protocol (RFC 9297) と WebTransport Capsule を扱う。Capsule の定義は draft-ietf-webtrans-http2-15 に基づき、`WT_MAX_DATA` / `WT_MAX_STREAM_DATA` の厳密増加規則だけは draft-ietf-webtrans-http2-16 に従う。
+`webtransport` モジュール。Sans I/O の `WtSession` を中心に、Capsule Protocol (RFC 9297) と WebTransport Capsule を扱う。Capsule の定義は draft-ietf-webtrans-http2-15 に基づき、`WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` の厳密増加規則だけは draft-ietf-webtrans-http2-16 に従う。
 
 ### WtSession
 
@@ -197,12 +197,12 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 | `drain()` | `WtResult<()>` | WT_DRAIN_SESSION を送信 |
 | `send_max_data(maximum: u64)` | `WtResult<()>` | WT_MAX_DATA を送信。初期値・最後に広告した値を増加させない値は `flow_control_error` |
 | `send_max_stream_data(WtStreamId, maximum: u64)` | `WtResult<()>` | WT_MAX_STREAM_DATA を送信。varint 上限超過は `flow_control_error`、存在しないストリームは `invalid_stream_id`、状態不正は `stream_state_error`、初期値・最後に広告した上限を増加させない値は `flow_control_error` |
-| `send_max_streams(maximum: u64, bidirectional: bool)` | `WtResult<()>` | WT_MAX_STREAMS を送信 |
+| `send_max_streams(maximum: u64, bidirectional: bool)` | `WtResult<()>` | WT_MAX_STREAMS を送信。セッションが Active / Draining でない場合は `session_state_error`、対象方向の初期値・最後に広告した上限を増加させない値と 2^60 超過は `flow_control_error` |
 | `flow_control()` / `flow_control_mut()` | `&WtFlowControl` / `&mut WtFlowControl` | フロー制御状態 |
 | `stream(WtStreamId)` | `Option<&WtStream>` | ストリーム参照取得 |
 | `grow_recv_window(increment: u64)` | `WtResult<()>` | 接続受信ウィンドウを拡張し WT_MAX_DATA を送信。増分 0 や varint 上限超過は `flow_control_error` |
 | `grow_stream_recv_window(WtStreamId, increment: u64)` | `WtResult<()>` | ストリーム受信ウィンドウを拡張し WT_MAX_STREAM_DATA を送信。存在しないストリームは `invalid_stream_id`、状態不正は `stream_state_error`、増分 0 や varint 上限超過は `flow_control_error` |
-| `grow_max_streams(increment: u64, bidirectional: bool)` | `WtResult<()>` | 最大ストリーム数を拡張 |
+| `grow_max_streams(increment: u64, bidirectional: bool)` | `WtResult<()>` | 最大ストリーム数を拡張し WT_MAX_STREAMS を送信。増分 0、u64 オーバーフロー、2^60 超過は `flow_control_error`、セッションが Active / Draining でない場合は `session_state_error` |
 | `config()` | `&WtConfig` | 設定参照 |
 
 ### WtConfig / WtInit
@@ -213,7 +213,8 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 |---------|------|
 | `peer_default()` | ピア用 `WtConfig` を仕様の Initial Value (全て 0) で生成。ピア広告値の適用前に使う (Section 11.2) |
 | `apply_init_as_peer(&WtInit)` | ピア側設定として `WebTransport-Init` を反映 |
-| `overlay_settings(&Settings)` | HTTP/2 SETTINGS の `SETTINGS_WT_INITIAL_MAX_*` を上書き適用 (`accept()` で自動呼出) |
+| `overlay_settings(&Settings)` | HTTP/2 SETTINGS の `SETTINGS_WT_INITIAL_MAX_*` を上書き適用 (ピア設定の構築用。`None` は既存値を維持) |
+| `apply_advertised_settings(&Settings)` | ローカル側設定として SETTINGS の広告値を反映。未広告の WT 初期値は 0 にリセットする |
 
 ### WtEvent / WtSessionState
 
@@ -227,7 +228,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 | `SessionDraining` | WT_DRAIN_SESSION を受信 |
 | `SessionClosed { error_code, reason }` | WT_CLOSE_SESSION を受信 |
 
-フロー制御 Capsule (`WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` / `*_BLOCKED`) の受信は内部状態を更新するが、`WtEvent` としては公開しない。ただしピア開始 bidi の未知 ID への `WT_MAX_STREAM_DATA` は、初期値を増加させる場合に限りストリームを開いて `StreamOpened` を送出する (RFC 9000 Section 3.2)。増加させない場合は draft-ietf-webtrans-http2-16 Section 6.6 の MUST により `flow_control_error` となり、ストリームもイベントも生成されない。削除済みストリームでは初期値または最後に受理した送信上限を上限付きで保持して非増加を検出し、削除後の増加は記録のみ更新して無視する (記録から追い出された ID は非増加の検出を行わない既知の制限がある)。
+フロー制御 Capsule (`WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` / `*_BLOCKED`) の受信は内部状態を更新するが、`WtEvent` としては公開しない。`WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` は初期値または最後に受理した上限を増加させない値を draft-ietf-webtrans-http2-16 の MUST に従い `flow_control_error` で拒否する (Section 6.5 / 6.6 / 6.7)。ただしピア開始 bidi の未知 ID への `WT_MAX_STREAM_DATA` は、初期値を増加させる場合に限りストリームを開いて `StreamOpened` を送出する (RFC 9000 Section 3.2)。増加させない場合は draft-ietf-webtrans-http2-16 Section 6.6 の MUST により `flow_control_error` となり、ストリームもイベントも生成されない。削除済みストリームでは初期値または最後に受理した送信上限を上限付きで保持して非増加を検出し、削除後の増加は記録のみ更新して無視する (記録から追い出された ID は非増加の検出を行わない既知の制限がある)。
 
 ピアが上位 ID を先に開いた場合、同一型・同方向の下位 ID も開かれたものとして `StreamOpened` が送出されるため、`accept_bidi` / `accept_uni` は受信した capsule に現れていない ID のストリームも返し得る (draft-ietf-webtrans-http2-15 Section 6.7)。
 
@@ -449,7 +450,7 @@ WebTransport 関連型: `WtServerRequest`, `WtServerSession`, `WtSessionHandle`,
 - `allowed_origin: Some(_)` のとき、Origin ヘッダーが存在する場合のみ検証する。欠落時は検証スキップ。不一致は 403
 - `selected_protocol: Some(_)` のとき、リクエストの `WT-Available-Protocols` に含まれることを検証し、レスポンスに `wt-protocol` を付与 (Section 3.3)
 - `WebTransport-Init` のパース失敗時は `:status=400` で拒否
-- 自広告 SETTINGS は `WtConfig::overlay_settings` でローカル config に反映し、ピア SETTINGS は `WtConfig::peer_default` (Initial Value 0) から開始した config に `overlay_settings` で反映する (Section 4.3.1 / Section 11.2)
+- 自広告 SETTINGS は `WtConfig::apply_advertised_settings` でローカル config に反映する (未広告の WT 初期値は 0)。ピア SETTINGS は `WtConfig::peer_default` (Initial Value 0) から開始した config に `overlay_settings` で反映する (Section 4.3.1 / Section 11.2)
 
 `WtServerSession::export_keying_material` / `WtSessionHandle::export_keying_material` で TLS Keying Material Exporter を利用できる (Section 5.3)。
 
@@ -541,7 +542,7 @@ RFC 9113 §7 の HTTP/2 エラーコードに加え、draft-ietf-webtrans-http2-
 | RFC 9297 | HTTP Datagrams and the Capsule Protocol | Capsule, DATAGRAM, PADDING |
 | draft-ietf-webtrans-http2-15 | WebTransport over HTTP/2 | WT_* Capsule, WebTransport SETTINGS, Extended CONNECT (`webtransport`), TLS 1.3 要件, Origin 検証 |
 
-`SETTINGS_WT_ENABLED` (識別子 `0x2b67`) と `WT_MAX_DATA` / `WT_MAX_STREAM_DATA` の厳密増加規則だけは draft-ietf-webtrans-http2-16 に従う (それ以外の WebTransport 動作は draft-ietf-webtrans-http2-15 に基づく)。
+`SETTINGS_WT_ENABLED` (識別子 `0x2b67`) と `WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` の厳密増加規則だけは draft-ietf-webtrans-http2-16 に従う (それ以外の WebTransport 動作は draft-ietf-webtrans-http2-15 に基づく)。
 
 ## 既知の未対応 / 制限
 

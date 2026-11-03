@@ -3038,3 +3038,150 @@ async fn test_wt_max_data_auto_grows_session_window() {
     let _ = done_tx.send(());
     server_task.await.expect("サーバータスクの join に失敗した");
 }
+
+/// ピアが開いた bidi ストリームが閉じられたとき、tokio ドライバが WT_MAX_STREAMS で
+/// ストリーム数上限を自動拡張し、クライアントが新しい上限までストリームを開けることを確認する
+///
+/// draft-ietf-webtrans-http2-16 Section 6.7: driver の `maybe_grow_max_streams` は
+/// `grow_max_streams` を呼び、成功時に広告値とローカル上限を一致させる。
+#[tokio::test]
+async fn test_wt_max_streams_auto_grows_bidi_limit() {
+    // ストリーム数上限を小さくして自動拡張を発火させる
+    let small_limits = Limits::builder()
+        .enable_connect_protocol(true)
+        .wt_enabled(true)
+        .webtransport(
+            Some(1 << 20),   // initial_max_data
+            Some(64 * 1024), // initial_max_stream_data_uni
+            Some(64 * 1024), // initial_max_stream_data_bidi_local
+            Some(10),        // initial_max_streams_uni
+            Some(2),         // initial_max_streams_bidi: 自動拡張を発火させるため小さくする
+            Some(64 * 1024), // initial_max_stream_data_bidi_remote
+        )
+        .build()
+        .expect("サーバーの Limits を構築できなければならない");
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("アドレスのパースに失敗した"),
+        tls,
+        small_limits,
+    )
+    .await
+    .expect("サーバーのバインドに失敗した");
+    let addr = server.local_addr();
+
+    // サーバー側でクライアントが開いた bidi ストリームを 3 本受け取り、
+    // ローカル上限の更新で実際に受理されたことを確認する
+    let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel::<Vec<u64>>();
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続の受け入れに失敗した");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let mut session = req
+            .accept(WtConfig::default(), None, None)
+            .await
+            .expect("WebTransport セッションの受け入れに失敗した");
+        let mut accepted = Vec::new();
+        for _ in 0..3 {
+            let Some(stream) = session.accept_bidi().await else {
+                break;
+            };
+            accepted.push(stream.stream_id());
+        }
+        let _ = accepted_tx.send(accepted);
+        let _ = done_rx.await;
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗した");
+    let connect_stream = perform_connect(&mut client).await;
+
+    // クライアントの SETTINGS は WT 初期値を広告しない (Limits::default()) ため、
+    // ローカル設定は peer_default (全 0) から開始する
+    let peer_config = WtConfig {
+        initial_max_data: 1 << 20,
+        initial_max_streams_bidi: 2,
+        initial_max_stream_data_bidi_remote: 64 * 1024,
+        ..WtConfig::peer_default()
+    };
+    let mut wt_client = WtSession::client(WtConfig::peer_default(), peer_config);
+    wt_client
+        .initiate()
+        .expect("セッションを開始できなければならない");
+
+    // 上限 (2 本) まで bidi ストリームを開いて fin で閉じる
+    for _ in 0..2 {
+        let stream_id = wt_client
+            .open_bidi_stream()
+            .expect("bidi ストリームを開けなければならない");
+        wt_client
+            .send_stream_data(stream_id, b"x", true)
+            .expect("データ送信に失敗した");
+        while let Some(out) = wt_client.poll_output() {
+            client
+                .send_data(connect_stream, out, false)
+                .await
+                .expect("WT_STREAM の送信に失敗した");
+        }
+    }
+
+    // サーバーからの WT_MAX_STREAMS を処理し、bidi の送信上限が増えるまで待つ
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let ev = client
+                .next_event()
+                .await
+                .expect("クライアントイベント取得に失敗した");
+            match ev {
+                Event::DataReceived {
+                    stream_id, data, ..
+                } if stream_id == connect_stream => {
+                    wt_client.feed(&data).expect("受信データの feed に失敗した");
+                    wt_client.process().expect("受信データの処理に失敗した");
+                    if wt_client.flow_control().max_streams_bidi_remote() > 2 {
+                        break;
+                    }
+                }
+                Event::StreamReset { stream_id, .. } if stream_id == connect_stream => {
+                    panic!("自動拡張の途中でセッションがリセットされた");
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("自動拡張の WT_MAX_STREAMS の受信がタイムアウトした");
+
+    // 新しい上限まで bidi ストリームを開ける。
+    // 1 本目の close を観測した driver が closed=1 を加算するため、初期値 2 から 3 になる
+    let grown_limit = wt_client.flow_control().max_streams_bidi_remote();
+    assert_eq!(grown_limit, 3, "ピア広告値が初期値 + 閉鎖本数になるはず");
+    let third = wt_client
+        .open_bidi_stream()
+        .expect("自動拡張後は新しいストリームを開けるはず");
+    wt_client
+        .send_stream_data(third, b"z", true)
+        .expect("自動拡張後のデータ送信に失敗した");
+    while let Some(out) = wt_client.poll_output() {
+        client
+            .send_data(connect_stream, out, false)
+            .await
+            .expect("WT_STREAM の送信に失敗した");
+    }
+
+    // サーバーが ID 0, 4, 8 を受理したことを確認する
+    // (ローカル上限が 3 に更新されていなければ ID 8 は拒否される)
+    let accepted = accepted_rx
+        .await
+        .expect("サーバーの受理結果の受信に失敗した");
+    assert_eq!(
+        accepted,
+        vec![0, 4, 8],
+        "サーバーが新しい上限まで bidi ストリームを受理するはず"
+    );
+
+    let _ = done_tx.send(());
+    server_task.await.expect("サーバータスクの join に失敗した");
+}

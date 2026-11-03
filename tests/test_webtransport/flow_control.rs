@@ -116,17 +116,94 @@ fn test_update_max_streams() {
     fc.opened_stream(true);
     assert!(!fc.can_open_bidi_stream());
 
-    fc.update_max_streams(4, true).expect("should succeed");
+    fc.update_max_streams(4, true)
+        .expect("増加する上限は受理されなければならない");
     assert!(fc.can_open_bidi_stream());
 }
 
 #[test]
-fn test_update_max_streams_decrease_error() {
+fn test_update_max_streams_non_increase_error() {
     let mut fc = WtFlowControl::new(65536, 65536, 100, 100, 50, 50);
 
-    // draft-ietf-webtrans-http2-15 Section 6.7: 減少はエラー
+    // draft-ietf-webtrans-http2-16 Section 6.7: 同値・減少はエラー
+    assert!(
+        fc.update_max_streams(100, true).is_err(),
+        "bidi の同値は拒否されなければならない"
+    );
+    assert!(
+        fc.update_max_streams(50, false).is_err(),
+        "uni の同値は拒否されなければならない"
+    );
     assert!(fc.update_max_streams(50, true).is_err());
     assert!(fc.update_max_streams(25, false).is_err());
+}
+
+/// 一方の方向の更新と拒否が他方の上限を変更しないことを確認する
+///
+/// draft-ietf-webtrans-http2-16 Section 6.7。
+#[test]
+fn test_update_max_streams_direction_independence() {
+    let mut fc = WtFlowControl::new(65536, 65536, 2, 2, 1, 1);
+
+    // 両方向とも上限まで開設して can_open_* を偽にしておく
+    fc.opened_stream(true);
+    fc.opened_stream(true);
+    fc.opened_stream(false);
+    assert!(!fc.can_open_bidi_stream());
+    assert!(!fc.can_open_uni_stream());
+
+    // bidi の更新は bidi のピア上限だけを進め、uni の開設可否は変わらない
+    fc.update_max_streams(3, true)
+        .expect("bidi の増加は受理されなければならない");
+    assert!(fc.can_open_bidi_stream(), "bidi の開設可否が変わる");
+    assert!(!fc.can_open_uni_stream(), "uni の開設可否は変わらない");
+    assert_eq!(fc.max_streams_bidi_local(), 2, "ローカル上限は不変");
+    assert_eq!(fc.max_streams_bidi_remote(), 3, "ピア上限が進む");
+    assert_eq!(fc.max_streams_uni_local(), 1, "uni のローカル上限は不変");
+    assert_eq!(fc.max_streams_uni_remote(), 1, "uni のピア上限は不変");
+
+    // uni の更新は uni のピア上限だけを進め、bidi の開設可否は変わらない
+    fc.update_max_streams(2, false)
+        .expect("uni の増加は受理されなければならない");
+    assert!(fc.can_open_uni_stream(), "uni の開設可否が変わる");
+    assert_eq!(fc.max_streams_uni_remote(), 2);
+    assert_eq!(fc.max_streams_bidi_remote(), 3, "bidi のピア上限は不変");
+
+    // uni の同値拒否で bidi の上限も開設可否も変わらない
+    assert!(fc.update_max_streams(2, false).is_err());
+    assert_eq!(fc.max_streams_bidi_remote(), 3);
+    assert_eq!(fc.max_streams_uni_remote(), 2);
+}
+
+/// ローカル広告 API が 2^60 と厳密増加を検証し、成功時にローカル上限を更新すること
+///
+/// draft-ietf-webtrans-http2-16 Section 6.7。
+#[test]
+fn test_update_max_streams_local() {
+    let mut fc = WtFlowControl::new(65536, 65536, 2, 2, 1, 1);
+
+    // 同値・減少は拒否され、ローカル上限は変わらない
+    assert!(fc.update_max_streams_local(2, true).is_err());
+    assert!(fc.update_max_streams_local(1, true).is_err());
+    assert_eq!(fc.max_streams_bidi_local(), 2);
+
+    // 増加は受理され、ローカル上限に反映される
+    fc.update_max_streams_local(3, true)
+        .expect("増加する広告は受理されなければならない");
+    assert_eq!(fc.max_streams_bidi_local(), 3);
+    assert_eq!(fc.max_streams_uni_local(), 1, "uni は不変");
+    fc.update_max_streams_local(2, false)
+        .expect("uni の増加も受理されなければならない");
+    assert_eq!(fc.max_streams_uni_local(), 2);
+
+    // 2^60 ちょうどは受理され、超過は拒否される (上限は 2^60 のまま)
+    fc.update_max_streams_local(1u64 << 60, true)
+        .expect("2^60 ちょうどは受理されなければならない");
+    assert_eq!(fc.max_streams_bidi_local(), 1u64 << 60);
+    assert!(fc.update_max_streams_local(1u64 << 60, true).is_err());
+    assert_eq!(fc.max_streams_bidi_local(), 1u64 << 60);
+    assert!(fc.update_max_streams_local((1u64 << 60) + 1, true).is_err());
+    assert_eq!(fc.max_streams_bidi_local(), 1u64 << 60);
 }
 
 #[test]
@@ -209,14 +286,21 @@ fn test_update_recv_max_requires_strict_increase() {
 }
 
 /// update_max_streams で 2^60 を超える値はエラーになることを確認する
-/// (draft-ietf-webtrans-http2-15 Section 6.7)
+/// (draft-ietf-webtrans-http2-16 Section 6.7)
 #[test]
-fn test_update_max_streams_exceeds_2_60() {
+fn test_update_max_streams_boundary_errors() {
     let mut fc = WtFlowControl::new(65536, 65536, 100, 100, 50, 50);
 
-    // 2^60 ちょうどは成功
+    // 2^60 ちょうどは成功し、上限が 2^60 のままになる
     fc.update_max_streams(1u64 << 60, true)
         .expect("2^60 は成功すること");
+    assert_eq!(fc.max_streams_bidi_remote(), 1u64 << 60);
+
+    // 到達後の同値は拒否される
+    assert!(
+        fc.update_max_streams(1u64 << 60, true).is_err(),
+        "2^60 到達後の同値は拒否されなければならない"
+    );
 
     // 2^60 + 1 はエラー
     assert!(fc.update_max_streams((1u64 << 60) + 1, true).is_err());
