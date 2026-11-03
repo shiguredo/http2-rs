@@ -1,7 +1,9 @@
 //! `WtInit` パーサーと `WtConfig` のピア設定構築規則の単体テスト
 //!
-//! draft-ietf-webtrans-http2-15 Section 4.3.2 (L583-L604) と RFC 8941
+//! draft-ietf-webtrans-http2-16 Section 4.3.2 と RFC 9651
 //! Section 4.2 (Parsing Structured Fields) の動作を境界値・型不一致を含めて検証する。
+//! RFC 9651 で追加された Date / Display String は、未知キー・未知パラメータ・
+//! Inner List 内では構文検証して読み飛ばし、構文不正は拒否することを確認する。
 //! 加えて、`WtConfig::peer_default` の Initial Value (Section 11.2) と
 //! `apply_init_as_peer` のマージ結果が `WtSession` の送信上限へ反映されることを
 //! Sans I/O 層で確認する。
@@ -159,6 +161,272 @@ fn test_parse_skips_inner_list_on_unknown_key() {
 fn test_parse_skips_unknown_boolean_shorthand() {
     let init = WtInit::parse(b"x, u=100").expect("Boolean 省略形は無視されるはず");
     assert_eq!(init.u, Some(100));
+}
+
+/// RFC 9651 の Date を未知キー・未知パラメータ・Inner List 内で読み飛ばせること
+///
+/// draft-ietf-webtrans-http2-16 Section 4.3.2 / RFC 9651 Section 4.2.9。
+#[test]
+fn test_parse_skips_date_on_unknown_key() {
+    // 未知キー・未知パラメータの Date を読み飛ばせること
+    let init = WtInit::parse(b"u=100, x=@0").expect("未知キーの Date は受理されるはず");
+    assert_eq!(init.u, Some(100));
+    let init = WtInit::parse(b"u=100;x=@0").expect("未知パラメータの Date は受理されるはず");
+    assert_eq!(init.u, Some(100));
+
+    // 正負の Date と、Inner List 内の Date
+    for input in [
+        b"u=100, x=@1659578233".as_slice(),
+        b"u=100, x=@-1".as_slice(),
+        b"u=100, x=(@0 @1);p=@2".as_slice(),
+        // Inner List の項目に付くパラメータ
+        b"u=100, x=(@0;p=@1)".as_slice(),
+    ] {
+        let init = WtInit::parse(input).expect("Date は受理されるはず");
+        assert_eq!(
+            init.u,
+            Some(100),
+            "入力: {}",
+            String::from_utf8_lossy(input)
+        );
+    }
+}
+
+/// RFC 9651 の Display String を未知キー・未知パラメータ・Inner List 内で
+/// 読み飛ばせること
+///
+/// draft-ietf-webtrans-http2-16 Section 4.3.2 / RFC 9651 Section 4.2.10。
+#[test]
+fn test_parse_skips_display_string_on_unknown_key() {
+    // 未知キー・未知パラメータ・Inner List の Display String を読み飛ばせること
+    let init = WtInit::parse(b"u=100, x=%\"hello\"").expect("Display String は受理されるはず");
+    assert_eq!(init.u, Some(100));
+
+    for input in [
+        // 小文字 16 進数による percent encoding (UTF-8 の é)
+        b"u=100, x=%\"caf%c3%a9\"".as_slice(),
+        // パラメータと Inner List
+        b"u=100;x=%\"a b\"".as_slice(),
+        b"u=100, x=(%\"a\" %\"b\");p=%\"c\"".as_slice(),
+        // Inner List の項目に付くパラメータ
+        b"u=100, x=(%\"a\";p=%\"b\")".as_slice(),
+    ] {
+        let init = WtInit::parse(input).expect("Display String は受理されるはず");
+        assert_eq!(
+            init.u,
+            Some(100),
+            "入力: {}",
+            String::from_utf8_lossy(input)
+        );
+    }
+}
+
+/// 既知キーの重複と型違反が組み合わさった場合に型違反で拒否すること
+///
+/// RFC 9651 Section 4.2.2 の last-wins より前に、各メンバーの型検査を行う。
+#[test]
+fn test_parse_rejects_type_violation_before_last_wins() {
+    for input in [b"u=@1, u=100".as_slice(), b"u=%\"x\", u=100".as_slice()] {
+        let err = WtInit::parse(input).expect_err("型違反を含む重複キーは拒否されるはず");
+        assert!(
+            format!("{err}").contains("must be an Integer"),
+            "Integer 型違反のメッセージを含むこと、入力: {}、実際: {err}",
+            String::from_utf8_lossy(input)
+        );
+    }
+}
+
+/// 既知キーに Date / Display String を指定すると Integer 型違反として拒否すること
+///
+/// draft-ietf-webtrans-http2-16 Section 4.3.2。
+#[test]
+fn test_parse_rejects_new_types_on_known_key() {
+    for input in [
+        b"u=@1".as_slice(),
+        b"bl=%\"x\"".as_slice(),
+        b"br=@0".as_slice(),
+    ] {
+        let err = WtInit::parse(input).expect_err("既知キーの型違反は拒否されるはず");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("must be an Integer"),
+            "Integer 型違反のメッセージを含むこと、実際: {msg}"
+        );
+    }
+}
+
+/// Date の構文違反を拒否すること
+///
+/// RFC 9651 Section 4.2.9 / Section 4.2.4。
+#[test]
+fn test_parse_rejects_invalid_date() {
+    // Decimal は Date として不正
+    let err = WtInit::parse(b"u=100, x=@1.5").expect_err("Decimal の Date は拒否されるはず");
+    assert!(
+        format!("{err}").contains("must not be a decimal"),
+        "Decimal の Date は拒否されること、実際: {err}"
+    );
+    // 数値がない
+    for input in [b"u=100, x=@".as_slice(), b"u=100, x=@z".as_slice()] {
+        assert!(
+            WtInit::parse(input).is_err(),
+            "数値のない Date は拒否されるはず: {}",
+            String::from_utf8_lossy(input)
+        );
+    }
+}
+
+/// Display String の構文違反を拒否すること
+///
+/// RFC 9651 Section 4.2.10。
+#[test]
+fn test_parse_rejects_invalid_display_string() {
+    // 16 進英字は小文字のみ
+    let err = WtInit::parse(b"u=100, x=%\"%C3\"").expect_err("大文字 16 進数は拒否されるはず");
+    assert!(
+        format!("{err}").contains("lowercase hexadecimal"),
+        "小文字 16 進数を要求するメッセージを含むこと、実際: {err}"
+    );
+    // 終端の DQUOTE がない
+    let err = WtInit::parse(b"u=100, x=%\"abc").expect_err("終端のない Display String は拒否");
+    assert!(format!("{err}").contains("unterminated display string"));
+    // percent encoding の 2 文字目が 16 進数でない
+    let err = WtInit::parse(b"u=100, x=%\"%a\"").expect_err("16 進数でない文字は拒否");
+    assert!(format!("{err}").contains("lowercase hexadecimal digits"));
+    // percent encoding の 2 文字目が末尾で欠けている
+    let err = WtInit::parse(b"u=100, x=%\"%a").expect_err("2 文字ない percent encoding は拒否");
+    assert!(format!("{err}").contains("two lowercase hexadecimal digits"));
+    // 復号後の UTF-8 が不正
+    let err = WtInit::parse(b"u=100, x=%\"%ff\"").expect_err("不正な UTF-8 は拒否されるはず");
+    assert!(format!("{err}").contains("not valid UTF-8"));
+    // 制御文字 (0x1f) はそのまま含められない
+    assert!(WtInit::parse(b"u=100, x=%\"\x1f\"").is_err());
+}
+
+/// 未知キーの Date / Display String の後ろに既知キーがあっても取得できること
+///
+/// 新型の読み飛ばしが終端まで過剰に消費しないことを確認する
+/// (RFC 9651 Section 4.2.9 / Section 4.2.10)。
+#[test]
+fn test_parse_skips_new_types_before_known_key() {
+    for (input, expected) in [
+        (b"x=@0, u=100".as_slice(), (Some(100), None, None)),
+        (b"x=@1659578233, bl=200".as_slice(), (None, Some(200), None)),
+        (b"x=%\"a\", br=300".as_slice(), (None, None, Some(300))),
+        (
+            b"x=%\"caf%c3%a9\", u=100".as_slice(),
+            (Some(100), None, None),
+        ),
+        (b"x=1;p=@0, u=100".as_slice(), (Some(100), None, None)),
+        (b"x=(@0 %\"a\"), u=100".as_slice(), (Some(100), None, None)),
+    ] {
+        let init = WtInit::parse(input).expect("未知値を読み飛ばして既知キーを取得できるはず");
+        assert_eq!(
+            (init.u, init.bl, init.br),
+            expected,
+            "入力: {}",
+            String::from_utf8_lossy(input)
+        );
+    }
+
+    // 新型の後ろに不正なゴミがあれば拒否される
+    assert!(WtInit::parse(b"x=@0 z, u=100").is_err());
+    assert!(WtInit::parse(b"x=%\"a\" z, u=100").is_err());
+}
+
+/// Display String の境界値を検証すること
+///
+/// RFC 9651 Section 4.2.10。
+#[test]
+fn test_parse_display_string_boundaries() {
+    // 空の Display String は有効
+    let init = WtInit::parse(b"u=100, x=%\"\"").expect("空の Display String は受理されるはず");
+    assert_eq!(init.u, Some(100));
+
+    // percent encoding された DQUOTE と % は内容として扱われ、終端と誤認しない
+    let init = WtInit::parse(b"u=100, x=%\"a%22b%25c\"").expect("%22 / %25 は内容として扱われる");
+    assert_eq!(init.u, Some(100));
+
+    // 生のバックスラッシュはエスケープではなく内容として扱われる
+    let init = WtInit::parse(b"u=100, x=%\"a\\b\"").expect("生のバックスラッシュは内容として扱う");
+    assert_eq!(init.u, Some(100));
+
+    // カンマを含む Display String は Dictionary の区切りと誤認しない
+    let init = WtInit::parse(b"u=100, x=%\"a,b\", bl=200").expect("カンマ入りは受理される");
+    assert_eq!(init.u, Some(100));
+    assert_eq!(init.bl, Some(200));
+
+    // `%` の直後で入力が終わる場合は拒否される
+    assert!(WtInit::parse(b"u=100, x=%\"%").is_err());
+    // 0x7f (DEL) は未エンコード文字として不正
+    assert!(WtInit::parse(b"u=100, x=%\"\x7f\"").is_err());
+}
+
+/// RFC 9651 の Decimal の境界値を検証すること
+///
+/// RFC 9651 Section 4.2.4: 整数部は 12 桁まで、小数部は 1-3 桁。
+#[test]
+fn test_parse_decimal_boundaries() {
+    // 妥当な Decimal は未知値として受理される
+    for input in [
+        b"u=100, x=1.5".as_slice(),
+        b"u=100, x=999999999999.999".as_slice(),
+    ] {
+        let init = WtInit::parse(input).expect("妥当な Decimal は受理されるはず");
+        assert_eq!(
+            init.u,
+            Some(100),
+            "入力: {}",
+            String::from_utf8_lossy(input)
+        );
+    }
+
+    // 整数部 13 桁、小数部 0 桁、小数部 4 桁は拒否される
+    for input in [
+        b"u=100, x=1234567890123.5".as_slice(),
+        b"u=100, x=1.".as_slice(),
+        b"u=100, x=1.2345".as_slice(),
+    ] {
+        assert!(
+            WtInit::parse(input).is_err(),
+            "不正な Decimal は拒否されるはず: {}",
+            String::from_utf8_lossy(input)
+        );
+    }
+}
+
+/// Date の境界値と、パラメータ・Inner List 内の不正 Date を検証すること
+///
+/// RFC 9651 Section 4.2.9 / Section 4.2.4 / Section 3.3.1。
+#[test]
+fn test_parse_date_boundaries() {
+    // 15 桁の最大値は受理される
+    let init = WtInit::parse(b"u=100, x=@999999999999999").expect("15 桁の Date は受理される");
+    assert_eq!(init.u, Some(100));
+    // 16 桁は拒否される
+    assert!(WtInit::parse(b"u=100, x=@1000000000000000").is_err());
+    // パラメータと Inner List 内の Decimal Date も拒否される
+    for input in [b"u=100;x=@1.5".as_slice(), b"u=100, x=(@1.5)".as_slice()] {
+        let err = WtInit::parse(input).expect_err("Decimal の Date は拒否されるはず");
+        assert!(
+            format!("{err}").contains("date"),
+            "Date のエラーであること、実際: {err}"
+        );
+    }
+}
+
+/// Display String の前置が `%"` でない入力を拒否すること
+///
+/// RFC 9651 Section 4.2.10 step 1。
+#[test]
+fn test_parse_rejects_display_string_without_percent_dquote() {
+    for input in [b"u=100, x=%a".as_slice(), b"u=100, x=%".as_slice()] {
+        let err = WtInit::parse(input).expect_err("%\" で始まらない入力は拒否されるはず");
+        assert!(
+            format!("{err}").contains("percent-DQUOTE"),
+            "percent-DQUOTE を要求するメッセージを含むこと、実際: {err}"
+        );
+    }
 }
 
 /// `WtConfig::apply_init_as_peer` が `u`/`bl`/`br` の Some 値で max マージすること

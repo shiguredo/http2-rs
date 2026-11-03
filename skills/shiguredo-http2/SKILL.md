@@ -213,6 +213,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 |---------|------|
 | `peer_default()` | ピア用 `WtConfig` を仕様の Initial Value (全て 0) で生成。ピア広告値の適用前に使う (Section 11.2) |
 | `apply_init_as_peer(&WtInit)` | ピア側設定として `WebTransport-Init` を反映 |
+| `WtInit::parse(&[u8])` | `WebTransport-Init` を RFC 9651 の Dictionary としてパース。既知キーは非負 Integer のみ受理し、Date / Display String を含む未知値は構文検証したうえで読み飛ばす (整数型違反や Date / Display String の構文不正は拒否) |
 | `overlay_settings(&Settings)` | HTTP/2 SETTINGS の `SETTINGS_WT_INITIAL_MAX_*` を上書き適用 (ピア設定の構築用。`None` は既存値を維持) |
 | `apply_advertised_settings(&Settings)` | ローカル側設定として SETTINGS の広告値を反映。未広告の WT 初期値は 0 にリセットする |
 
