@@ -3,7 +3,7 @@
 - Created: 2026-11-03
 - Completed: {YYYY-MM-DD}
 - Branch: feature/change-wt-max-data-strict-increase
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-11-03
 
 ## 目的
 
@@ -29,6 +29,7 @@ Section 4.4 の中継時の説明にも、送出する capsule がその接続�
 - `send_max_data` はローカルが広告済みの初期値・更新値を基準に、同値・減少を出力前に拒否する。成功時には広告値と受信可能量を一致させる。
 - `grow_recv_window` と直接の `send_max_data` で更新経路を揃え、検証前の状態更新や二重加算を避ける。増分 0 や varint 上限到達後の非増加更新で capsule を生成しない。
 - `crates/tokio-http2/src/webtransport.rs` の `DriverState::maybe_grow_session_window` からの正の自動拡張が継続することを確認する。
+- `crates/tokio-http2/tests/test_webtransport.rs` の `test_wt_init_header_value_below_default_applied` は、クライアントが `SETTINGS_WT_INITIAL_MAX_DATA` を広告しておらず、セッションデータ上限の初期値は 0 である。クライアント側 `WtSession` の `initial_max_data` も 0 に揃え、`send_max_data(1 << 20)` で初めて上限を増加させる構成に変更する。これにより、既存の正常系が同値広告として拒否されるのを避ける。
 - Sans I/O の受信エラーは `WtSession::process` から返す。既存の tokio ドライバの `abort_session_with_wt_error` により CONNECT ストリームを終了する経路を利用する。
 
 ## 完了条件
