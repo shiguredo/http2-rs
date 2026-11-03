@@ -9,6 +9,8 @@
 //!
 //! 本モジュールは draft-ietf-webtrans-http2-15 に基づく実装であり、
 //! draft の改訂や RFC 化に伴い仕様が変更される可能性がある。
+//! `WT_MAX_DATA` の厳密増加規則 (`send_max_data` / `grow_recv_window`) だけは
+//! draft-ietf-webtrans-http2-16 Section 6.5 に従う。
 //!
 //! # 参照仕様
 //!
@@ -125,6 +127,9 @@ pub enum WtEvent {
 #[derive(Debug, Clone)]
 pub struct WtConfig {
     /// セッションレベルの初期最大データ量
+    ///
+    /// varint 上限 (2^62-1) 以下でなければならない。SETTINGS_WT_INITIAL_MAX_DATA で
+    /// 広告する値と一致させること (draft-ietf-webtrans-http2-16 Section 4.3 / Section 11.2)。
     pub initial_max_data: u64,
     /// 双方向ストリームの初期最大データ量 (自身が開始したストリーム)
     ///
@@ -804,19 +809,17 @@ impl WtSession {
 
     /// セッションレベルのフロー制御上限を増やす `WT_MAX_DATA` を送信する
     ///
-    /// draft-ietf-webtrans-http2-15 Section 6.5: 受信側が受信可能なバイト数を通知する。
-    /// 単調増加でなければならない (現在値より小さい値を指定すると `flow_control_error`)。
+    /// draft-ietf-webtrans-http2-16 Section 6.5: 受信側が受信可能なバイト数を通知する。
+    /// ローカルが広告した初期値 (`WtConfig::initial_max_data`、SETTINGS_WT_INITIAL_MAX_DATA
+    /// と一致させる) または最後に広告した値 (`WtFlowControl::recv_max`) を増加させない値は、
+    /// ピアが `WT_FLOW_CONTROL_ERROR` でセッションを閉じるため `flow_control_error` を返す。
+    /// 成功時は広告値とローカルの受信上限 (`WtFlowControl::recv_max`) を一致させる。
     ///
-    /// `maximum` が varint 上限 (2^62-1) を超える場合は `flow_control_error` を返す
+    /// `maximum` が varint 上限 (2^62-1) を超える場合も `flow_control_error` を返す
     /// (RFC 9000 Section 16)。
     pub fn send_max_data(&mut self, maximum: u64) -> WtResult<()> {
-        // RFC 9000 Section 16: Maximum は varint でエンコードされるため、上限 (2^62-1) を
-        // 超える値は CapsuleEncoder 内で panic する。事前に拒否する。
-        if maximum > MAX_VALUE {
-            return Err(WtError::flow_control_error(format!(
-                "WT_MAX_DATA value {maximum} exceeds varint maximum {MAX_VALUE}"
-            )));
-        }
+        // 検証と受信上限の更新は WtFlowControl::update_recv_max に集約する
+        self.flow_control.update_recv_max(maximum)?;
         let capsule = Capsule::WtMaxData { maximum };
         self.capsule_encoder.encode(&capsule);
         self.output_buffer.extend(self.capsule_encoder.take());
@@ -939,9 +942,20 @@ impl WtSession {
     }
 
     /// セッション受信ウィンドウを拡張し、`WT_MAX_DATA` を自動送信する
+    ///
+    /// 現在の受信上限 (`WtFlowControl::recv_max`) に `increment` を加えた値を広告する。
+    /// 増分 0 など広告値が増加しない場合、および加算結果が varint 上限 (2^62-1) を
+    /// 超える場合は `flow_control_error` を返し、受信上限と出力を変更しない
+    /// (draft-ietf-webtrans-http2-16 Section 6.5 / RFC 9000 Section 16)。
     pub fn grow_recv_window(&mut self, increment: u64) -> WtResult<()> {
-        self.flow_control.add_recv_max(increment)?;
-        let new_max = self.flow_control.recv_max();
+        let current = self.flow_control.recv_max();
+        // u64 の範囲を超える加算は varint 上限を確実に超えるため、事前に拒否する。
+        // saturating_add では飽和してオーバーフローと varint 超過を区別できない
+        let new_max = current.checked_add(increment).ok_or_else(|| {
+            WtError::flow_control_error(format!(
+                "WT_MAX_DATA increment {increment} from {current} exceeds varint maximum {MAX_VALUE}"
+            ))
+        })?;
         self.send_max_data(new_max)
     }
 
@@ -1154,6 +1168,8 @@ impl WtSession {
                 });
             }
             Capsule::WtMaxData { maximum } => {
+                // draft-ietf-webtrans-http2-16 Section 6.5:
+                // 初期値または最後に受理した上限を増加させない値は WT_FLOW_CONTROL_ERROR
                 self.flow_control.update_send_max(maximum)?;
             }
             Capsule::WtMaxStreamData { stream_id, maximum } => {

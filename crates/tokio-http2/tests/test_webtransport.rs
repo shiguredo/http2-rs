@@ -8,7 +8,8 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 use shiguredo_http2::WindowSize;
 use shiguredo_http2::webtransport::{
-    WtConfig, WtErrorKind, WtEvent, WtSession, stream::stream_id as wt_stream_id,
+    Capsule, CapsuleEncoder, WtConfig, WtErrorKind, WtEvent, WtSession,
+    stream::stream_id as wt_stream_id,
 };
 
 use tokio_http2::{
@@ -2356,15 +2357,16 @@ async fn test_wt_init_header_value_below_default_applied() {
         }
     }
 
-    // クライアントのローカル設定はヘッダー / WT_MAX_DATA で通知する値と一致させる
+    // SETTINGS_WT_INITIAL_MAX_DATA を広告しないため initial_max_data は 0 にし、
+    // ストリームの初期上限だけをヘッダー (bl) で通知する
     let client_config = WtConfig {
-        initial_max_data: 1 << 20,
+        initial_max_data: 0,
         initial_max_stream_data_bidi_local: 131_072,
         ..WtConfig::default()
     };
     let mut wt_client = WtSession::client(client_config, WtConfig::default());
     wt_client.initiate().expect("セッション開始に失敗した");
-    // セッションレベルの送信上限を WT_MAX_DATA で通知する
+    // セッションレベルの受信上限 (ピアの送信上限) を初期値 0 から WT_MAX_DATA で 1 MiB に増加させる
     wt_client
         .send_max_data(1 << 20)
         .expect("WT_MAX_DATA の送信に失敗した");
@@ -2829,4 +2831,210 @@ async fn test_wt_close_errors_when_output_cannot_be_sent() {
     let _connect_stream = perform_connect(&mut client).await;
     // WINDOW_UPDATE を送らないままサーバーの処理完了を待つ
     server_task.await.expect("サーバータスクの終了に失敗した");
+}
+
+/// WT_MAX_DATA が送信上限を増加させない場合、tokio ドライバが CONNECT ストリームに
+/// RST_STREAM(WT_FLOW_CONTROL_ERROR) を送ってセッションを終了することを確認する
+///
+/// draft-ietf-webtrans-http2-16 Section 6.5: 初期値または最後に受理した上限を
+/// 増加させない値は WT_FLOW_CONTROL_ERROR のセッションエラーになる。
+#[tokio::test]
+async fn test_wt_max_data_non_increase_aborts_session() {
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("アドレスのパースに失敗した"),
+        tls,
+        server_limits(),
+    )
+    .await
+    .expect("サーバーのバインドに失敗した");
+    let addr = server.local_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続の受け入れに失敗した");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let session = req
+            .accept(WtConfig::default(), None, None)
+            .await
+            .expect("WebTransport セッションの受け入れに失敗した");
+        // セッションエラーで driver が終了するまで待つ (sleep に依存しない)
+        let parts = session.into_parts();
+        let result = parts.driver.await.expect("driver タスクの終了に失敗した");
+        assert!(
+            result.is_err(),
+            "非増加の WT_MAX_DATA で driver がエラー終了するはず"
+        );
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗した");
+    let connect_stream = perform_connect(&mut client).await;
+
+    // クライアントは SETTINGS_WT_INITIAL_MAX_DATA を広告しないため、ピアの初期上限は 0。
+    // その初期値と同値の WT_MAX_DATA を送信する
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxData { maximum: 0 });
+    client
+        .send_data(connect_stream, encoder.take(), false)
+        .await
+        .expect("WT_MAX_DATA の送信に失敗した");
+
+    // CONNECT ストリームの RST_STREAM(WT_FLOW_CONTROL_ERROR) を待つ
+    let mut got_error_code = None;
+    let recv = async {
+        loop {
+            let ev = client
+                .next_event()
+                .await
+                .expect("クライアントイベント取得に失敗した");
+            if let Event::StreamReset {
+                stream_id,
+                error_code,
+                ..
+            } = ev
+                && stream_id == connect_stream
+            {
+                got_error_code = Some(error_code);
+                break;
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), recv)
+        .await
+        .expect("RST_STREAM の受信がタイムアウトした");
+    server_task.await.expect("サーバータスクの join に失敗した");
+
+    assert_eq!(
+        got_error_code,
+        Some(ErrorCode::WtFlowControlError),
+        "期待される error_code は WT_FLOW_CONTROL_ERROR"
+    );
+}
+
+/// セッション受信ウィンドウが半分を切ったとき、tokio ドライバが WT_MAX_DATA で
+/// 自動拡張し、クライアントが新しい送信上限を認識することを確認する
+///
+/// draft-ietf-webtrans-http2-16 Section 6.5: driver の `maybe_grow_session_window` は
+/// `grow_recv_window` を呼び、成功時に広告値と受信上限を一致させる。
+#[tokio::test]
+async fn test_wt_max_data_auto_grows_session_window() {
+    // セッション初期上限を小さくして自動拡張を発火させる
+    let small_limits = Limits::builder()
+        .enable_connect_protocol(true)
+        .wt_enabled(true)
+        .webtransport(
+            Some(4096),      // initial_max_data: 自動拡張を発火させるため小さくする
+            Some(64 * 1024), // initial_max_stream_data_uni
+            Some(64 * 1024), // initial_max_stream_data_bidi_local
+            Some(10),        // initial_max_streams_uni
+            Some(10),        // initial_max_streams_bidi
+            Some(64 * 1024), // initial_max_stream_data_bidi_remote
+        )
+        .build()
+        .expect("サーバーの Limits を構築できなければならない");
+    let tls = test_tls();
+    let server = Server::bind(
+        "127.0.0.1:0".parse().expect("アドレスのパースに失敗した"),
+        tls,
+        small_limits,
+    )
+    .await
+    .expect("サーバーのバインドに失敗した");
+    let addr = server.local_addr();
+
+    // クライアントの確認が終わるまでサーバー側セッションを保持する
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+    let server_task = tokio::spawn(async move {
+        let mut conn = server.accept().await.expect("接続の受け入れに失敗した");
+        let (stream_id, headers) = await_connect_headers(&mut conn).await;
+        let req = WtServerRequest::from_connection(conn, stream_id, headers);
+        let _session = req
+            .accept(WtConfig::default(), None, None)
+            .await
+            .expect("WebTransport セッションの受け入れに失敗した");
+        let _ = done_rx.await;
+    });
+
+    let mut client = Client::connect_insecure(addr, "localhost", Limits::default())
+        .await
+        .expect("接続に失敗した");
+    let connect_stream = perform_connect(&mut client).await;
+
+    // サーバーが広告する SETTINGS に合わせたピア設定で WtSession を構築する
+    let peer_config = WtConfig {
+        initial_max_data: 4096,
+        // ローカル開始 bidi の送信上限はピアの BIDI_REMOTE
+        initial_max_stream_data_bidi_remote: 64 * 1024,
+        initial_max_streams_bidi: 10,
+        ..WtConfig::peer_default()
+    };
+    let mut wt_client = WtSession::client(WtConfig::default(), peer_config);
+    wt_client
+        .initiate()
+        .expect("セッションを開始できなければならない");
+
+    // セッション受信ウィンドウを使い切るたびに自動拡張されることを 3 サイクル確認する
+    let bidi_id = wt_client
+        .open_bidi_stream()
+        .expect("bidi ストリームを開けなければならない");
+    let mut total_sent = 0u64;
+    for cycle in 0..3 {
+        let available = wt_client.flow_control().send_available();
+        assert_eq!(
+            available, 4096,
+            "サイクル {cycle}: 送信可能量が広告増分と一致するはず"
+        );
+        wt_client
+            .send_stream_data(bidi_id, &vec![0u8; available as usize], false)
+            .expect("受信ウィンドウ内の送信は成功しなければならない");
+        total_sent += available;
+        while let Some(out) = wt_client.poll_output() {
+            client
+                .send_data(connect_stream, out, false)
+                .await
+                .expect("WT_STREAM の送信に失敗した");
+        }
+
+        // サーバーからの WT_MAX_DATA を処理し、送信上限が増えるまで待つ
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let ev = client
+                    .next_event()
+                    .await
+                    .expect("クライアントイベント取得に失敗した");
+                match ev {
+                    Event::DataReceived {
+                        stream_id, data, ..
+                    } if stream_id == connect_stream => {
+                        wt_client.feed(&data).expect("受信データの feed に失敗した");
+                        wt_client.process().expect("受信データの処理に失敗した");
+                        if wt_client.flow_control().send_available() > 0 {
+                            break;
+                        }
+                    }
+                    Event::StreamReset { stream_id, .. } if stream_id == connect_stream => {
+                        panic!("自動拡張の途中でセッションがリセットされた");
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("自動拡張の WT_MAX_DATA の受信がタイムアウトした");
+        assert_eq!(
+            wt_client.flow_control().send_available(),
+            4096,
+            "サイクル {cycle}: 自動拡張後の送信可能量が広告値の増分と一致するはず"
+        );
+    }
+    assert_eq!(
+        total_sent,
+        4096 * 3,
+        "3 サイクル分のデータを送信できなければならない"
+    );
+
+    let _ = done_tx.send(());
+    server_task.await.expect("サーバータスクの join に失敗した");
 }

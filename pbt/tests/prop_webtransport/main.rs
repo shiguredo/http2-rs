@@ -7,6 +7,8 @@ use shiguredo_http2::webtransport::{
     WtStream, encoded_len, varint_decode, varint_encode,
 };
 
+mod flow_control;
+
 /// 各 PBT 共通のシード取得用環境変数名
 const SEED_ENV: &str = "HTTP2_PBT_SEED";
 

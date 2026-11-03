@@ -9,7 +9,7 @@ enum WtFlowAction {
     ConsumeSend(u64),
     ConsumeRecv(u64),
     UpdateSendMax(u64),
-    AddRecvMax(u64),
+    UpdateRecvMax(u64),
     UpdateMaxStreams {
         maximum: u64,
         bidirectional: bool,
@@ -32,7 +32,7 @@ struct FuzzInput {
 }
 
 fuzz_target!(|input: FuzzInput| {
-    // WtFlowControl に対して全ての公開メソッドを任意順序で呼び出し、
+    // WtFlowControl の状態を変化させる公開メソッドを任意順序で呼び出し、
     // パニック安全性を検証する。
     let mut fc = WtFlowControl::new(
         input.initial_max_data,
@@ -53,8 +53,8 @@ fuzz_target!(|input: FuzzInput| {
             WtFlowAction::UpdateSendMax(v) => {
                 let _ = fc.update_send_max(*v);
             }
-            WtFlowAction::AddRecvMax(v) => {
-                let _ = fc.add_recv_max(*v);
+            WtFlowAction::UpdateRecvMax(v) => {
+                let _ = fc.update_recv_max(*v);
             }
             WtFlowAction::UpdateMaxStreams {
                 maximum,

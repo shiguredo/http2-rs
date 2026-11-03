@@ -54,11 +54,41 @@ fn test_update_send_max() {
 }
 
 #[test]
-fn test_update_send_max_decrease_error() {
+fn test_update_send_max_equal_and_decrease_error() {
     let mut fc = WtFlowControl::new(65536, 65536, 100, 100, 50, 50);
 
-    // draft-ietf-webtrans-http2-15 Section 6.5: 減少はエラー
-    assert!(fc.update_send_max(32768).is_err());
+    // draft-ietf-webtrans-http2-16 Section 6.5: 同値と減少はエラー
+    assert!(fc.update_send_max(65536).is_err(), "同値は拒否されるはず");
+    assert!(fc.update_send_max(32768).is_err(), "減少は拒否されるはず");
+    assert_eq!(
+        fc.send_available(),
+        65536,
+        "拒否時に送信上限が変わってはいけない"
+    );
+
+    // 初期値 0 に対する最初の値 0 も拒否する
+    let mut fc = WtFlowControl::new(0, 0, 0, 0, 0, 0);
+    assert!(
+        fc.update_send_max(0).is_err(),
+        "初期値 0 と同値の最初の値も拒否されるはず"
+    );
+}
+
+/// update_send_max が varint 上限を超える値を拒否することを確認する
+/// (RFC 9000 Section 16)
+#[test]
+fn test_update_send_max_varint_overflow() {
+    use shiguredo_http2::webtransport::MAX_VALUE;
+
+    let mut fc = WtFlowControl::new(65536, 65536, 100, 100, 50, 50);
+
+    fc.update_send_max(MAX_VALUE)
+        .expect("varint 上限ちょうどは受理されるはず");
+    assert_eq!(fc.send_available(), MAX_VALUE);
+
+    // varint 上限を超える値は拒否され、送信上限は変わらない
+    assert!(fc.update_send_max(MAX_VALUE + 1).is_err());
+    assert_eq!(fc.send_available(), MAX_VALUE);
 }
 
 #[test]
@@ -145,26 +175,37 @@ fn test_should_send_max_data_odd_initial() {
     assert!(fc.should_send_max_data(3));
 }
 
-/// add_recv_max が varint MAX_VALUE を超えた場合にエラーを返すことを確認する
+/// update_recv_max が varint MAX_VALUE を超えた場合にエラーを返すことを確認する
 #[test]
-fn test_add_recv_max_varint_overflow() {
+fn test_update_recv_max_varint_overflow() {
     use shiguredo_http2::webtransport::MAX_VALUE;
 
-    // MAX_VALUE ちょうどまで増加 → 成功
     let mut fc = WtFlowControl::new(65536, 65536, 100, 100, 50, 50);
-    fc.add_recv_max(MAX_VALUE - 65536).expect("should succeed");
+    fc.update_recv_max(MAX_VALUE)
+        .expect("増加する上限は受理されなければならない");
     assert_eq!(fc.recv_max(), MAX_VALUE);
 
-    // これ以上増加 → エラー
-    assert!(fc.add_recv_max(1).is_err());
+    // varint 上限を超える値はエラー
+    assert!(fc.update_recv_max(MAX_VALUE + 1).is_err());
+    assert_eq!(
+        fc.recv_max(),
+        MAX_VALUE,
+        "拒否時に受信上限が変わってはいけない"
+    );
 }
 
-/// add_recv_max が saturating_add で u64::MAX に到達した場合もエラーを返すことを確認する
+/// update_recv_max が同値と減少を拒否することを確認する
+/// (draft-ietf-webtrans-http2-16 Section 6.5)
 #[test]
-fn test_add_recv_max_u64_max_overflow() {
-    let mut fc = WtFlowControl::new(u64::MAX, u64::MAX, 100, 100, 50, 50);
-    // u64::MAX + 1 は saturating_add で u64::MAX のまま → varint MAX_VALUE 超過でエラー
-    assert!(fc.add_recv_max(1).is_err());
+fn test_update_recv_max_requires_strict_increase() {
+    let mut fc = WtFlowControl::new(65536, 65536, 100, 100, 50, 50);
+
+    assert!(fc.update_recv_max(65536).is_err(), "同値は拒否されるはず");
+    assert!(fc.update_recv_max(1).is_err(), "減少は拒否されるはず");
+    assert_eq!(fc.recv_max(), 65536, "拒否時に受信上限が変わってはいけない");
+
+    fc.update_recv_max(65537).expect("増加は受理されるはず");
+    assert_eq!(fc.recv_max(), 65537);
 }
 
 /// update_max_streams で 2^60 を超える値はエラーになることを確認する

@@ -12,7 +12,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 - **依存なし**: 外部依存ゼロ (`std` のみ)
 - **Sans I/O**: I/O を完全に分離した設計 (Tokio, async-std, 同期 I/O など任意の環境で使用可能)
 - **RFC 準拠**: RFC 9113 (HTTP/2), RFC 7541 (HPACK), RFC 9218 (Extensible Priorities) に対応
-- **WebTransport over HTTP/2**: draft-ietf-webtrans-http2-16 の `SETTINGS_WT_ENABLED` (0x2b67) に対応し、それ以外の WebTransport 動作は draft-ietf-webtrans-http2-15 に基づく
+- **WebTransport over HTTP/2**: draft-ietf-webtrans-http2-16 の `SETTINGS_WT_ENABLED` (0x2b67) と `WT_MAX_DATA` の厳密増加規則に対応し、それ以外の WebTransport 動作は draft-ietf-webtrans-http2-15 に基づく
 - **HPACK**: 静的/動的テーブル、Huffman 符号化、サイズ更新対応
 - **フロー制御**: 接続レベル/ストリームレベル両対応
 - **DoS 対策**: `Limits` による各種上限設定
@@ -195,12 +195,12 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 | `send_datagram(&[u8])` | `WtResult<()>` | DATAGRAM Capsule (RFC 9297) を送信 |
 | `close(error_code: u32, reason: &str)` | `WtResult<()>` | WT_CLOSE_SESSION を送信してセッション終了。reason が 1024 バイト超過時は UTF-8 境界で切り詰める |
 | `drain()` | `WtResult<()>` | WT_DRAIN_SESSION を送信 |
-| `send_max_data(maximum: u64)` | `WtResult<()>` | WT_MAX_DATA を送信 |
+| `send_max_data(maximum: u64)` | `WtResult<()>` | WT_MAX_DATA を送信。初期値・最後に広告した値を増加させない値は `flow_control_error` |
 | `send_max_stream_data(WtStreamId, maximum: u64)` | `WtResult<()>` | WT_MAX_STREAM_DATA を送信 |
 | `send_max_streams(maximum: u64, bidirectional: bool)` | `WtResult<()>` | WT_MAX_STREAMS を送信 |
 | `flow_control()` / `flow_control_mut()` | `&WtFlowControl` / `&mut WtFlowControl` | フロー制御状態 |
 | `stream(WtStreamId)` | `Option<&WtStream>` | ストリーム参照取得 |
-| `grow_recv_window(increment: u64)` | `WtResult<()>` | 接続受信ウィンドウを拡張 |
+| `grow_recv_window(increment: u64)` | `WtResult<()>` | 接続受信ウィンドウを拡張し WT_MAX_DATA を送信。増分 0 や varint 上限超過は `flow_control_error` |
 | `grow_stream_recv_window(WtStreamId, increment: u64)` | `WtResult<()>` | ストリーム受信ウィンドウを拡張 |
 | `grow_max_streams(increment: u64, bidirectional: bool)` | `WtResult<()>` | 最大ストリーム数を拡張 |
 | `config()` | `&WtConfig` | 設定参照 |
@@ -541,7 +541,7 @@ RFC 9113 §7 の HTTP/2 エラーコードに加え、draft-ietf-webtrans-http2-
 | RFC 9297 | HTTP Datagrams and the Capsule Protocol | Capsule, DATAGRAM, PADDING |
 | draft-ietf-webtrans-http2-15 | WebTransport over HTTP/2 | WT_* Capsule, WebTransport SETTINGS, Extended CONNECT (`webtransport`), TLS 1.3 要件, Origin 検証 |
 
-`SETTINGS_WT_ENABLED` だけは draft-ietf-webtrans-http2-16 の識別子 `0x2b67` を使用する (それ以外の WebTransport 動作は draft-ietf-webtrans-http2-15 に基づく)。
+`SETTINGS_WT_ENABLED` (識別子 `0x2b67`) と `WT_MAX_DATA` の厳密増加規則だけは draft-ietf-webtrans-http2-16 に従う (それ以外の WebTransport 動作は draft-ietf-webtrans-http2-15 に基づく)。
 
 ## 既知の未対応 / 制限
 
