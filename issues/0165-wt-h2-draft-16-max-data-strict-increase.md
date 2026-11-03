@@ -1,7 +1,7 @@
 # WT_MAX_DATA を初期値から厳密に増加する更新だけに制限する
 
 - Created: 2026-11-03
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-11-03
 - Branch: feature/change-wt-max-data-strict-increase
 - Polished: 2026-11-03
 
@@ -39,3 +39,17 @@ Section 4.4 の中継時の説明にも、送出する capsule がその接続�
 - `tests/test_webtransport/flow_control.rs`、`tests/test_webtransport/integration.rs` と関連 PBT で境界値と更新列を検証すること。
 - 実際の capsule を入力した受信エラーと、tokio ドライバが `RST_STREAM(WT_FLOW_CONTROL_ERROR)` でセッションを終了する経路を検証すること。
 - `cargo test -p shiguredo_http2`、`cargo test -p pbt` と関連する tokio の WebTransport テストが通ること。
+
+## 解決方法
+
+- `WtFlowControl::update_send_max` を、ピアの初期値または最後に受理した上限を増加させない値と varint 上限超過で `flow_control_error` を返すように変更した
+- `WtFlowControl::add_recv_max` を削除し、広告値を絶対値で更新する `WtFlowControl::update_recv_max` を追加した (varint 上限超過・非増加を拒否し、旧 API からの移行方法を rustdoc に記載)
+- `WtSession::send_max_data` は `update_recv_max` に検証と受信上限の更新を委譲し、成功時に広告値と受信上限を一致させるようにした
+- `WtSession::grow_recv_window` は事前の状態更新をやめ、現在の受信上限に増分を加えた値を `send_max_data` へ委譲するようにした。増分 0 と varint 上限超過は拒否する
+- `tests/test_webtransport/flow_control.rs` に送信上限・受信上限の同値/減少/varint 上限の検証を追加・更新した
+- `tests/test_webtransport/integration.rs` に送信拒否時の状態/出力不変、広告後の上限までのデータ受信と超過拒否、`grow_recv_window` の増分 0・varint 境界 (MAX_VALUE - 1 からの到達と超過)・直接広告後の拡張、capsule 受信の同値/減少エラーを追加した
+- `pbt/tests/prop_webtransport/flow_control.rs` を新設し、`WT_MAX_DATA` の更新列・広告列・`grow_recv_window` の増分列の PBT を追加した
+- `crates/tokio-http2/tests/test_webtransport.rs` に tokio ドライバの自動拡張 (3 サイクルの継続) と、非増加の `WT_MAX_DATA` で `RST_STREAM(WT_FLOW_CONTROL_ERROR)` を返す E2E テストを追加した
+- `fuzz/fuzz_targets/fuzz_wt_flow_control.rs` を削除した `add_recv_max` から `update_recv_max` に追従させ、CI の fuzz クレートチェックを通るようにした
+- `skills/shiguredo-http2/SKILL.md` の `send_max_data` / `grow_recv_window` の説明を新しい契約に更新した
+- `CODEBASE.md` の指示に従い `CHANGES.md` は変更していない。`WT_MAX_DATA` 以外の draft 15 の仕様参照は別途行う仕様参照の同期で更新する
