@@ -1,9 +1,10 @@
 //! SETTINGS 関連の PBT
 //!
-//! SETTINGS フレームの検証、無効値チェック、変更禁止設定の検出を含む。
+//! SETTINGS フレームの検証、無効値チェック、変更禁止設定の検出に加え、
+//! 未知の識別子の無視、SETTINGS ACK、接続プリフェイスの検出を含む。
 
 use shiguredo_http2::{
-    Connection, ErrorCode, Limits, WindowSize,
+    Connection, ErrorCode, Event, Limits, WindowSize,
     frame::{Frame, FrameDecoder, SettingsFrame, StreamId},
     settings::{DEFAULT_INITIAL_WINDOW_SIZE, MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE, Setting},
 };
@@ -15,6 +16,90 @@ const SEED_ENV: &str = "HTTP2_PBT_SEED";
 
 /// デフォルトのケースバジェット
 const CASES: usize = 256;
+
+/// 蓄積されたイベントをすべて取り出す
+fn drain_events(client: &mut Connection) -> Vec<Event> {
+    let mut events = Vec::new();
+    while let Some(event) = client.poll_event() {
+        events.push(event);
+    }
+    events
+}
+
+/// 型検査を通さずに任意の識別子と値を載せた SETTINGS フレームをエンコードする
+///
+/// 識別子そのものの扱いを検証するため、`Setting::Unknown` を使って `from_wire` を
+/// 経由せずに wire 値を直接指定する。
+fn encode_raw_setting_frame(id: u16, value: u32) -> Vec<u8> {
+    let bytes = encode_frame(&Frame::Settings(SettingsFrame::from_settings([
+        Setting::Unknown { id, value },
+    ])));
+    // エンコーダーが未知の識別子を落としたり書き換えたりする退行を検出する。
+    // フレームヘッダーは 9 バイト、SETTINGS のペイロードは 6 バイト固定である。
+    assert_eq!(
+        &bytes[9..11],
+        &id.to_be_bytes(),
+        "SETTINGS フレームの識別子が指定値でない"
+    );
+    assert_eq!(
+        &bytes[11..15],
+        &value.to_be_bytes(),
+        "SETTINGS フレームの値が指定値でない"
+    );
+    bytes
+}
+
+/// 送信バイト列に SETTINGS ACK フレームが含まれるかを返す
+fn contains_settings_ack(bytes: &[u8]) -> bool {
+    let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+    decoder.feed(bytes);
+    while let Some(frame) = decoder
+        .decode()
+        .expect("送信されたフレームをデコードできなければならない")
+    {
+        if let Frame::Settings(settings) = frame
+            && settings.is_ack()
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// 最初の SETTINGS を受理した直後の状態を検証する
+///
+/// Active への遷移、ACK 対象の通知が 1 回だけであること、`ConnectionPreface` の通知、
+/// 実際の SETTINGS ACK の送信を確認する。
+fn assert_single_settings_ack_and_preface(client: &mut Connection) {
+    assert!(
+        client.is_active(),
+        "最初の SETTINGS の処理で接続が Active にならなければならない"
+    );
+
+    let events = drain_events(client);
+    let received_count = events
+        .iter()
+        .filter(|event| matches!(event, Event::SettingsReceived { ack: false }))
+        .count();
+    assert_eq!(
+        received_count, 1,
+        "最初の SETTINGS は 1 回だけ ACK の対象として通知されなければならない"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Event::ConnectionPreface)),
+        "最初の SETTINGS の処理で ConnectionPreface が通知されなければならない"
+    );
+
+    let output = client
+        .poll_output()
+        .expect("SETTINGS ACK が出力されなければならない");
+    assert!(
+        contains_settings_ack(&output),
+        "最初の SETTINGS にも SETTINGS ACK を送らなければならない"
+    );
+}
 
 /// NO_RFC7540_PRIORITIES の変更は PROTOCOL_ERROR
 ///
@@ -325,7 +410,7 @@ fn prop_send_settings_emits_connection_window_update() -> noprop::TestResult {
 
 /// SETTINGS_WT_ENABLED の 1→0 ダウングレードは許可される
 ///
-/// draft-ietf-webtrans-http2-15 Section 3.1: SETTINGS_WT_ENABLED は接続ライフタイム中に
+/// draft-ietf-webtrans-http2-16 Section 3.1: SETTINGS_WT_ENABLED は接続ライフタイム中に
 /// 更新可能。サーバーが WebTransport を無効化しても既存セッションには影響しない。
 /// ENABLE_CONNECT_PROTOCOL と異なり、1→0 のダウングレードは合法。
 #[test]
@@ -369,7 +454,7 @@ fn prop_wt_enabled_downgrade_allowed() -> noprop::TestResult {
 
 /// SETTINGS_WT_ENABLED の 1 より大きい値は PROTOCOL_ERROR
 ///
-/// draft-ietf-webtrans-http2-15 Section 3.1: クライアントは 1 より大きい値を
+/// draft-ietf-webtrans-http2-16 Section 3.1: クライアントは 1 より大きい値を
 /// 接続エラー PROTOCOL_ERROR として扱わなければならない (MUST)。
 #[test]
 fn prop_wt_enabled_greater_than_one_is_error() -> noprop::TestResult {
@@ -378,30 +463,25 @@ fn prop_wt_enabled_greater_than_one_is_error() -> noprop::TestResult {
     runner.run(CASES, |ctx| {
         let value = 2 + noprop::sample_u64_in(ctx, 0..(u32::MAX as u64 - 1)) as u32;
         let mut client = Connection::client(Limits::default());
-        client.initiate().expect("initiate must succeed");
+        client
+            .initiate()
+            .expect("接続の初期化に成功しなければならない");
 
         // 最初の SETTINGS を受信して接続を Active にする
-        let default_settings = SettingsFrame::new();
-        let default_bytes = encode_frame(&Frame::Settings(default_settings));
-        client.feed(&default_bytes).expect("feed must succeed");
-        client.process().expect("process must succeed");
+        let default_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
+        client
+            .feed(&default_bytes)
+            .expect("SETTINGS の受信に成功しなければならない");
+        client
+            .process()
+            .expect("SETTINGS の処理に成功しなければならない");
 
-        // SETTINGS_WT_ENABLED (0x2b60) に 1 より大きい値を raw バイトで構築
-        // SETTINGS フレーム: type=0x04, flags=0x00, stream_id=0, payload=6 bytes
-        let mut raw = Vec::new();
-        // ペイロード長 = 6 (setting 1 個分)
-        raw.extend_from_slice(&[0x00, 0x00, 0x06]);
-        // フレームタイプ = SETTINGS (0x04)
-        raw.push(0x04);
-        // フラグ = 0x00 (ACK なし)
-        raw.push(0x00);
-        // ストリーム ID = 0
-        raw.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
-        // ペイロード: ID=0x2b60, value
-        raw.extend_from_slice(&0x2b60u16.to_be_bytes());
-        raw.extend_from_slice(&value.to_be_bytes());
+        // SETTINGS_WT_ENABLED (0x2b67) に 1 より大きい値を設定する
+        let raw = encode_raw_setting_frame(0x2b67, value);
 
-        client.feed(&raw).expect("feed must succeed");
+        client
+            .feed(&raw)
+            .expect("SETTINGS の受信に成功しなければならない");
 
         let result = client.process();
         assert!(
@@ -411,6 +491,205 @@ fn prop_wt_enabled_greater_than_one_is_error() -> noprop::TestResult {
         if let Err(e) = result {
             assert!(e.is_connection_error());
             assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
+        }
+        Ok(())
+    })?;
+    Ok(())
+}
+
+/// SETTINGS_WT_ENABLED の旧識別子 (0x2b60) は未知の SETTINGS として無視される
+///
+/// draft-ietf-webtrans-http2-16 Section 9.1: 非互換な変更では SETTINGS_WT_ENABLED の
+/// 識別子を変更する。draft-ietf-webtrans-http2-15 の 0x2b60 は未知の SETTINGS として
+/// 無視し (RFC 9113 Section 6.5.2)、WebTransport サポートの有効化にも値域違反にもしない。
+/// 無効状態から有効化されないことに加え、有効状態から無効化されないことも検証する。
+#[test]
+fn prop_old_wt_enabled_id_ignored() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        // 旧識別子を適用する前に新しい識別子で有効化しておくかを決める
+        let enabled_first = noprop::sample_bool(ctx);
+        // 値域違反になり得る境界値と任意値を混ぜて旧識別子の値を生成する
+        let value = noprop::sample_with_boundaries(
+            ctx,
+            &[0u32, 1, 2, u32::MAX],
+            noprop::Ratio::one_nth(4),
+            noprop::sample_u32,
+        );
+        let mut client = Connection::client(Limits::default());
+        client
+            .initiate()
+            .expect("接続の初期化に成功しなければならない");
+
+        // 最初の SETTINGS を受信して接続を Active にする
+        let default_bytes = encode_frame(&Frame::Settings(SettingsFrame::new()));
+        client
+            .feed(&default_bytes)
+            .expect("SETTINGS の受信に成功しなければならない");
+        client
+            .process()
+            .expect("SETTINGS の処理に成功しなければならない");
+
+        // 新しい識別子 (0x2b67) で WebTransport サポートを有効化する
+        if enabled_first {
+            let enable = encode_raw_setting_frame(0x2b67, 1);
+            client
+                .feed(&enable)
+                .expect("SETTINGS の受信に成功しなければならない");
+            client
+                .process()
+                .expect("SETTINGS の処理に成功しなければならない");
+        }
+        let before = client.remote_settings().wt_enabled();
+        assert_eq!(
+            before, enabled_first,
+            "新しい識別子 (0x2b67) の適用結果が期待と異なる (enabled_first={enabled_first})"
+        );
+
+        // これまでの SETTINGS 処理で溜まったイベントと送信出力を破棄し、
+        // 旧識別子のフレームだけを評価できるようにする
+        let _ = drain_events(&mut client);
+        let _ = client.poll_output();
+
+        // SETTINGS_WT_ENABLED の旧識別子 (0x2b60) を送信する
+        let raw = encode_raw_setting_frame(0x2b60, value);
+        client
+            .feed(&raw)
+            .expect("SETTINGS の受信に成功しなければならない");
+        client
+            .process()
+            .expect("旧識別子は未知の SETTINGS として無視されなければならない");
+
+        // RFC 9113 Section 6.5.3: 未知の SETTINGS を無視した場合も ACK を送らなければならない
+        let events = drain_events(&mut client);
+        let received_count = events
+            .iter()
+            .filter(|event| matches!(event, Event::SettingsReceived { ack: false }))
+            .count();
+        assert_eq!(
+            received_count, 1,
+            "旧識別子のみの SETTINGS も 1 回だけ ACK の対象として通知されなければならない"
+        );
+
+        // ACK フレームそのものが送信されていることも確認する
+        let output = client
+            .poll_output()
+            .expect("旧識別子の SETTINGS に対する ACK が出力されなければならない");
+        assert!(
+            contains_settings_ack(&output),
+            "未知の SETTINGS のみのフレームにも SETTINGS ACK を送らなければならない"
+        );
+
+        // 旧識別子は WebTransport サポートの状態を変更しない
+        assert_eq!(
+            client.remote_settings().wt_enabled(),
+            before,
+            "旧識別子 0x2b60 (value={value}) で WebTransport サポートの状態が変化してはならない"
+        );
+        Ok(())
+    })?;
+    Ok(())
+}
+
+/// 最初の SETTINGS フレームでの SETTINGS_WT_ENABLED の新旧識別子の扱いを検証する
+///
+/// draft-ietf-webtrans-http2-16 Section 3.1: 新しい識別子の値が 1 より大きい場合は
+/// 接続エラー PROTOCOL_ERROR とする。接続エラー時は SETTINGS ACK を送らない
+/// (RFC 9113 Section 6.5.3 の ACK 規則に基づく実装判断)。
+/// draft-ietf-webtrans-http2-15 の旧識別子は未知の SETTINGS として無視し、
+/// 接続を Active にして ACK を送る (RFC 9113 Section 6.5.2 / Section 6.5.3)。
+#[test]
+fn prop_initial_settings_wt_enabled_identifier_handling() -> noprop::TestResult {
+    let seed = noprop::seed_from_env_or_time(SEED_ENV)?;
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(CASES, |ctx| {
+        // 最初の SETTINGS に載せる内容を選ぶ
+        // 0 = 旧識別子 (未知の SETTINGS として無視) / 1 = 新しい識別子の有効値 1 /
+        // 2 = 新しい識別子の値域違反 (2 以上)
+        let scenario = noprop::sample_weighted_index(ctx, &[1, 1, 1]);
+        let mut client = Connection::client(Limits::default());
+        client
+            .initiate()
+            .expect("接続の初期化に成功しなければならない");
+        // 接続前の出力 (preface と自分の SETTINGS) を捨てる
+        let _ = client.poll_output();
+
+        match scenario {
+            0 => {
+                // 最初の SETTINGS に旧識別子を載せても未知の SETTINGS として無視される。
+                // 値域違反になり得る境界値と任意値を混ぜる
+                let old_value = noprop::sample_with_boundaries(
+                    ctx,
+                    &[0u32, 1, 2, u32::MAX],
+                    noprop::Ratio::one_nth(4),
+                    noprop::sample_u32,
+                );
+                let raw = encode_raw_setting_frame(0x2b60, old_value);
+                client
+                    .feed(&raw)
+                    .expect("SETTINGS の受信に成功しなければならない");
+                client
+                    .process()
+                    .expect("旧識別子は未知の SETTINGS として無視されなければならない");
+
+                assert!(
+                    !client.remote_settings().wt_enabled(),
+                    "旧識別子 0x2b60 (value={old_value}) で有効化されてはならない"
+                );
+                assert_single_settings_ack_and_preface(&mut client);
+            }
+            1 => {
+                // 最初の SETTINGS に新しい識別子の有効値 1 を載せると有効化される
+                let raw = encode_raw_setting_frame(0x2b67, 1);
+                client
+                    .feed(&raw)
+                    .expect("SETTINGS の受信に成功しなければならない");
+                client
+                    .process()
+                    .expect("新しい識別子の有効値は受理されなければならない");
+
+                assert!(
+                    client.remote_settings().wt_enabled(),
+                    "新しい識別子 0x2b67=1 で有効化されなければならない"
+                );
+                assert_single_settings_ack_and_preface(&mut client);
+            }
+            _ => {
+                // 最初の SETTINGS に新しい識別子の値域違反を載せると接続エラーになる
+                let invalid_value = 2 + noprop::sample_u64_in(ctx, 0..(u32::MAX as u64 - 1)) as u32;
+                let raw = encode_raw_setting_frame(0x2b67, invalid_value);
+                client
+                    .feed(&raw)
+                    .expect("SETTINGS の受信に成功しなければならない");
+                let result = client.process();
+                assert!(
+                    result.is_err(),
+                    "WT_ENABLED={invalid_value} は最初の SETTINGS でも接続エラーでなければならない"
+                );
+                if let Err(e) = result {
+                    assert!(e.is_connection_error());
+                    assert_eq!(e.error_code(), Some(ErrorCode::ProtocolError));
+                }
+                assert!(
+                    !client.is_active(),
+                    "接続エラー時は接続が Active になってはならない"
+                );
+
+                let events = drain_events(&mut client);
+                assert!(
+                    !events
+                        .iter()
+                        .any(|event| matches!(event, Event::ConnectionPreface)),
+                    "接続エラー時は ConnectionPreface を通知してはならない"
+                );
+                if let Some(output) = client.poll_output() {
+                    assert!(
+                        !contains_settings_ack(&output),
+                        "接続エラー時は SETTINGS ACK を送ってはならない"
+                    );
+                }
+            }
         }
         Ok(())
     })?;

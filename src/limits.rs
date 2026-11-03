@@ -97,7 +97,7 @@ impl Limits {
         self.no_rfc7540_priorities
     }
 
-    /// SETTINGS_WT_ENABLED (0x2b60) (draft-ietf-webtrans-http2-15 Section 3.1)
+    /// SETTINGS_WT_ENABLED (0x2b67) (draft-ietf-webtrans-http2-16 Section 3.1)
     ///
     /// サーバーの WebTransport サポート合図。
     #[must_use]
@@ -236,10 +236,12 @@ impl LimitsBuilder {
         self
     }
 
-    /// SETTINGS_WT_ENABLED (0x2b60) を設定する (draft-ietf-webtrans-http2-15 Section 3.1)
+    /// SETTINGS_WT_ENABLED (0x2b67) を設定する (draft-ietf-webtrans-http2-16 Section 3.1)
     ///
     /// サーバーの WebTransport サポート合図。`enable_connect_protocol(true)` と
-    /// 同様に呼び出し側が明示的に設定する。
+    /// 同様に呼び出し側が明示的に設定する。本ライブラリのサーバーが `0x2b67` を
+    /// 広告しても、draft-ietf-webtrans-http2-15 のクライアントはこれを認識できない
+    /// (サーバーの SETTINGS を確認せずに接続する非準拠クライアント実装では接続し得る)。
     #[must_use]
     pub const fn wt_enabled(mut self, enable: bool) -> Self {
         self.wt_enabled = enable;

@@ -1,6 +1,7 @@
 //! HTTP/2 接続の単体テスト
 //!
-//! PBT では到達しない意図的なエラーパスとデフォルト値境界のテスト。
+//! PBT では到達しない意図的なエラーパス、デフォルト値境界、送信する SETTINGS の
+//! 識別子の固定を検証する。
 
 use shiguredo_http2::{
     Connection, ErrorCode, Event, HeaderField, HpackEncoder, LastStreamId, Limits, NonZeroStreamId,
@@ -95,6 +96,134 @@ fn test_send_settings_does_not_emit_window_update_when_default() {
         !saw_window_update,
         "WINDOW_UPDATE は connection_window_size がデフォルトのとき送信されてはならない"
     );
+}
+
+/// SETTINGS_WT_ENABLED の送信経路が draft 16 の識別子 (0x2b67) を使う
+///
+/// draft-ietf-webtrans-http2-16 Section 11.2: SETTINGS_WT_ENABLED の識別子は 0x2b67。
+/// 実際に送信される SETTINGS フレームをデコードし、新識別子として解釈されることと、
+/// 旧識別子 (0x2b60) が未知の SETTINGS として現れないことを確認する。
+#[test]
+fn test_send_settings_wt_enabled_uses_draft16_id() {
+    let limits = Limits::builder()
+        .enable_connect_protocol(true)
+        .wt_enabled(true)
+        .build()
+        .expect("Limits の構築に成功しなければならない");
+    let mut server = Connection::server(limits);
+    server.mark_preface_received();
+    server
+        .send_settings()
+        .expect("SETTINGS の送信に成功しなければならない");
+
+    // 送信される識別子そのものを固定する (エンコーダーとデコーダーの両方が同時に
+    // 旧識別子へ退行した場合でも、この表明で検出できる)
+    assert_eq!(Setting::WtEnabled(true).as_wire(), (0x2b67, 1));
+
+    let output = server.poll_output().expect("出力が存在しなければならない");
+    let mut decoder = FrameDecoder::new(MAX_MAX_FRAME_SIZE);
+    decoder.feed(&output);
+    let frame = decoder
+        .decode()
+        .expect("送信されたフレームをデコードできなければならない")
+        .expect("SETTINGS フレームが存在しなければならない");
+    let Frame::Settings(settings) = frame else {
+        panic!("先頭フレームは SETTINGS でなければならない");
+    };
+
+    // エンコーダーだけが旧識別子へ退行した場合はデコーダーが Unknown を返すため、
+    // この判定で検出できる (両方同時の退行は上の as_wire 表明が検出する)
+    assert!(
+        settings.settings().contains(&Setting::WtEnabled(true)),
+        "SETTINGS_WT_ENABLED (0x2b67) が SETTINGS に含まれなければならない"
+    );
+    assert!(
+        !settings
+            .settings()
+            .iter()
+            .any(|setting| matches!(setting, Setting::Unknown { id: 0x2b60, .. })),
+        "旧識別子 0x2b60 を送信してはならない"
+    );
+}
+
+/// クライアントは SETTINGS_WT_ENABLED を受信するまで :protocol=webtransport を送れない
+///
+/// draft-ietf-webtrans-http2-16 Section 3.1: クライアントは WebTransport サポートを
+/// 示す SETTINGS を受信するまで "webtransport" トークンの CONNECT を開始してはならない。
+/// draft-ietf-webtrans-http2-15 の旧識別子 0x2b60 は未知の SETTINGS として無視されるため、
+/// 旧識別子を受信してもゲートは開かない。
+#[test]
+fn test_client_webtransport_gate_accepts_only_new_wt_enabled_settings() {
+    // :protocol=webtransport 付き Extended CONNECT のリクエストヘッダーを作る
+    let webtransport_headers = || {
+        vec![
+            HeaderField::new(":method", "CONNECT")
+                .expect("有効なヘッダーフィールドでなければならない"),
+            HeaderField::new(":scheme", "https")
+                .expect("有効なヘッダーフィールドでなければならない"),
+            HeaderField::new(":path", "/").expect("有効なヘッダーフィールドでなければならない"),
+            HeaderField::new(":protocol", "webtransport")
+                .expect("有効なヘッダーフィールドでなければならない"),
+            HeaderField::new(":authority", "example.com")
+                .expect("有効なヘッダーフィールドでなければならない"),
+        ]
+    };
+
+    let mut client = Connection::client(Limits::default());
+    client
+        .initiate()
+        .expect("接続の初期化に成功しなければならない");
+    let _ = client.poll_output();
+
+    // SETTINGS_ENABLE_CONNECT_PROTOCOL=1 だけを受信した状態では WT 用ゲートは閉じている
+    let mut settings = SettingsFrame::new();
+    settings.add(Setting::EnableConnectProtocol(true));
+    client
+        .feed(&encode_frame(&Frame::Settings(settings)))
+        .expect("SETTINGS の受信に成功しなければならない");
+    client
+        .process()
+        .expect("SETTINGS の処理に成功しなければならない");
+    let err = client
+        .start_stream(webtransport_headers(), true)
+        .expect_err("SETTINGS_WT_ENABLED 未受信では送信できない");
+    assert_eq!(err.error_code(), Some(ErrorCode::ProtocolError));
+
+    // 旧識別子 0x2b60=1 を受信しても未知の SETTINGS として無視され、ゲートは開かない
+    let old_wt_enabled = encode_frame(&Frame::Settings(SettingsFrame::from_settings([
+        Setting::Unknown {
+            id: 0x2b60,
+            value: 1,
+        },
+    ])));
+    client
+        .feed(&old_wt_enabled)
+        .expect("SETTINGS の受信に成功しなければならない");
+    client
+        .process()
+        .expect("SETTINGS の処理に成功しなければならない");
+    assert!(
+        !client.remote_settings().wt_enabled(),
+        "旧識別子 0x2b60 で WT サポートが有効化されてはならない"
+    );
+    let err = client
+        .start_stream(webtransport_headers(), true)
+        .expect_err("旧識別子の受信では送信できない");
+    assert_eq!(err.error_code(), Some(ErrorCode::ProtocolError));
+
+    // 新識別子 0x2b67=1 を受信するとゲートが開く
+    let new_wt_enabled = encode_frame(&Frame::Settings(SettingsFrame::from_settings([
+        Setting::WtEnabled(true),
+    ])));
+    client
+        .feed(&new_wt_enabled)
+        .expect("SETTINGS の受信に成功しなければならない");
+    client
+        .process()
+        .expect("SETTINGS の処理に成功しなければならない");
+    client
+        .start_stream(webtransport_headers(), true)
+        .expect("新識別子の受信後は :protocol=webtransport を送信できる");
 }
 
 /// HEADERS なしで CONTINUATION を送信するとエラー
