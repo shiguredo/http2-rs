@@ -243,6 +243,9 @@ impl WtStream {
     /// 新しいストリームを生成する
     ///
     /// `send_max` にはピアが広告した送信上限、`recv_max` にはローカルが広告した受信上限を渡す。
+    /// `send_max` と `recv_max` は varint 上限 (2^62-1) 以下でなければならない
+    /// (呼び出し側の事前条件。`WtConfig` の初期値は SETTINGS / `WebTransport-Init` の
+    /// 広告値から決まるため通常は満たされる)。
     #[must_use]
     pub fn new(
         id: WtStreamId,
@@ -329,6 +332,12 @@ impl WtStream {
     #[must_use]
     pub const fn send_offset(&self) -> u64 {
         self.send_offset
+    }
+
+    /// 送信上限 (ピアが広告した値) を取得する
+    #[must_use]
+    pub const fn send_max(&self) -> u64 {
+        self.send_max
     }
 
     /// 受信済みバイト数を取得する
@@ -439,25 +448,41 @@ impl WtStream {
 
     /// 送信上限を更新する
     ///
-    /// draft-ietf-webtrans-http2-15 Section 6.6:
-    /// 値が減少した場合は WT_FLOW_CONTROL_ERROR セッションエラーを返す。
+    /// draft-ietf-webtrans-http2-16 Section 6.6:
+    /// そのストリームの初期値または最後に受理した上限を増加させない値は
+    /// WT_FLOW_CONTROL_ERROR セッションエラーを返す。
+    /// varint で表現できない値も拒否する (RFC 9000 Section 16)。
     ///
-    /// 注: draft-ietf-webtrans-http2-15 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
+    /// 注: 以前の実装は同値を受理していたが、draft-16 では同値も拒否する
+    /// (後方互換のない仕様変更)。
+    ///
+    /// 注: draft-ietf-webtrans-http2-16 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
     pub fn update_send_max(&mut self, maximum: u64) -> WtResult<()> {
-        if maximum < self.send_max {
-            return Err(WtError::flow_control_error(
-                "WT_MAX_STREAM_DATA value decreased",
-            ));
+        if maximum > super::varint::MAX_VALUE {
+            return Err(WtError::flow_control_error(format!(
+                "WT_MAX_STREAM_DATA value {maximum} exceeds varint maximum {}",
+                super::varint::MAX_VALUE
+            )));
+        }
+        if maximum <= self.send_max {
+            return Err(WtError::flow_control_error(format!(
+                "WT_MAX_STREAM_DATA value {maximum} does not increase the current maximum {}",
+                self.send_max
+            )));
         }
         self.send_max = maximum;
         Ok(())
     }
 
-    /// 受信上限を更新する
+    /// 受信上限を更新する (wire 広告を行わない補助 API)
     ///
     /// varint の最大値 (2^62 - 1) を超えた場合はエラーを返す (RFC 9000 Section 16)。
     /// 現在値より大きい場合のみ反映し、同値と減少は無視する
     /// (RFC 9000 Section 4.1: 小さい上限の広告はエラーではなく効果が無い)。
+    ///
+    /// `WT_MAX_STREAM_DATA` の広告は [`crate::webtransport::WtSession::send_max_stream_data`]
+    /// が行い、その境界で初期値・最後に広告した上限からの厳密増加を検証する。
+    /// 本メソッドの同値・減少の無視は、広告境界の検証とは独立した既存契約である。
     pub fn update_recv_max(&mut self, maximum: u64) -> WtResult<()> {
         if maximum > super::varint::MAX_VALUE {
             return Err(WtError::flow_control_error(

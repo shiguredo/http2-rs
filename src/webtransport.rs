@@ -9,8 +9,10 @@
 //!
 //! 本モジュールは draft-ietf-webtrans-http2-15 に基づく実装であり、
 //! draft の改訂や RFC 化に伴い仕様が変更される可能性がある。
-//! `WT_MAX_DATA` の厳密増加規則 (`send_max_data` / `grow_recv_window`) だけは
-//! draft-ietf-webtrans-http2-16 Section 6.5 に従う。
+//! `WT_MAX_DATA` の厳密増加規則 (`send_max_data` / `grow_recv_window`) は
+//! draft-ietf-webtrans-http2-16 Section 6.5 に、`WT_MAX_STREAM_DATA` の厳密増加規則は
+//! 同 Section 6.6 に従う。送信は `send_max_stream_data` / `grow_stream_recv_window`、
+//! 受信は `WtSession::process` の初期値・削除済み判定と `WtStream::update_send_max` が担う。
 //!
 //! # 参照仕様
 //!
@@ -32,6 +34,7 @@ pub mod varint;
 
 use std::collections::{HashMap, VecDeque};
 
+use crate::bounded_map::BoundedMap;
 use crate::bounded_set::BoundedSet;
 use crate::connection::Role;
 use crate::webtransport::capsule::{MAX_APPLICATION_ERROR_CODE, MAX_CLOSE_REASON_LEN};
@@ -129,19 +132,24 @@ pub struct WtConfig {
     /// セッションレベルの初期最大データ量
     ///
     /// varint 上限 (2^62-1) 以下でなければならない。SETTINGS_WT_INITIAL_MAX_DATA で
-    /// 広告する値と一致させること (draft-ietf-webtrans-http2-16 Section 4.3 / Section 11.2)。
+    /// 広告する値と一致させること (draft-ietf-webtrans-http2-15 Section 4.3 / Section 11.2)。
     pub initial_max_data: u64,
     /// 双方向ストリームの初期最大データ量 (自身が開始したストリーム)
     ///
-    /// draft-ietf-webtrans-http2-15 Section 4.3.1:
     /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL に対応する。
+    /// ローカル値は SETTINGS と `WebTransport-Init` の `bl` の大きい方にする
+    /// (draft-ietf-webtrans-http2-15 Section 4.3)。
     pub initial_max_stream_data_bidi_local: u64,
     /// 双方向ストリームの初期最大データ量 (ピアが開始したストリーム)
     ///
-    /// draft-ietf-webtrans-http2-15 Section 4.3.1:
     /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE に対応する。
+    /// ローカル値は SETTINGS と `WebTransport-Init` の `br` の大きい方にする
+    /// (draft-ietf-webtrans-http2-15 Section 4.3)。
     pub initial_max_stream_data_bidi_remote: u64,
     /// 単方向ストリームの初期最大データ量
+    ///
+    /// ローカル値は SETTINGS と `WebTransport-Init` の `u` の大きい方にする
+    /// (draft-ietf-webtrans-http2-15 Section 4.3)。
     pub initial_max_stream_data_uni: u64,
     /// 双方向ストリームの初期最大数
     pub initial_max_streams_bidi: u64,
@@ -190,7 +198,7 @@ impl WtConfig {
     /// - `bl` → `initial_max_stream_data_bidi_local` (ピア自身が開始するストリームの送信上限)
     /// - `br` → `initial_max_stream_data_bidi_remote` (ピア視点で remote = ローカル開始の送信上限)
     ///
-    /// draft-ietf-webtrans-http2-15 Section 4.3 (L524-L528) の MUST 規則に従い、
+    /// draft-ietf-webtrans-http2-15 Section 4.3 の MUST 規則に従い、
     /// SETTINGS 値と Init 値の大きい方を採用する。
     pub fn apply_init_as_peer(&mut self, init: &WtInit) {
         if let Some(u) = init.u {
@@ -234,14 +242,14 @@ impl WtConfig {
     }
 }
 
-/// WebTransport ストリーム ID を記録する上限付き集合の上限
+/// WebTransport ストリーム ID を記録する上限付き集合・連想配列の上限
 ///
-/// `closed_streams` / `stop_sending_received_ids` で共用する。
-/// 各集合は独立に上限を管理し、超えた場合は最も小さい ID を追い出す。追い出された ID は
+/// `closed_stream_send_max` / `stop_sending_received_ids` で共用する。
+/// 各記録は独立に上限を管理し、超えた場合は最も小さい ID を追い出す。追い出された ID は
 /// 再作成・再処理を許す既知の制限がある。STOP_SENDING の重複・順序検証は
 /// `stop_sending_received_ids` と `WtStream::stop_sending_received` の OR で判定するため、
 /// `stop_sending_received_ids` から追い出された ID は、ストリームが生存していればフラグで
-/// 検証できるが、削除済みであれば検証できない (`closed_streams` は判定に使わない)。
+/// 検証できるが、削除済みであれば検証できない (`closed_stream_send_max` は判定に使わない)。
 const STREAM_ID_RECORD_MAX_SIZE: usize = 10000;
 
 /// WebTransport セッション (Sans I/O)
@@ -259,12 +267,17 @@ pub struct WtSession {
     state: WtSessionState,
     /// ストリーム一覧
     streams: HashMap<WtStreamId, WtStream>,
-    /// クローズ済みストリーム ID の集合
+    /// クローズ済みストリーム ID と初期値または最後に受理した送信上限の対応
     ///
     /// draft-ietf-webtrans-http2-15 Section 6.4: クローズ済みストリームへの
     /// WT_STREAM 受信、およびピア開始 bidi の未知 ID への
     /// WT_STOP_SENDING / WT_MAX_STREAM_DATA 受信による再作成を拒否するために使用する。
-    closed_streams: BoundedSet<WtStreamId>,
+    /// draft-ietf-webtrans-http2-16 Section 6.6: ストリーム削除後も非増加の
+    /// WT_MAX_STREAM_DATA を検出できるよう、初期値または最後に受理した送信上限を保持する。
+    /// 削除後に増加を受理した場合は記録を更新する。記録から追い出された ID は
+    /// 非増加の検出を行わない (既知の制限。削除済みローカル開始ストリームでは
+    /// 初期値との比較も失われる)。
+    closed_stream_send_max: BoundedMap<WtStreamId, u64>,
     /// WT_STOP_SENDING を受信したストリーム ID の集合
     ///
     /// draft-ietf-webtrans-http2-15 Section 6.3 / Section 6.6: 2 回目の
@@ -332,7 +345,7 @@ impl WtSession {
             peer_config,
             state: WtSessionState::Initial,
             streams: HashMap::new(),
-            closed_streams: BoundedSet::new(STREAM_ID_RECORD_MAX_SIZE),
+            closed_stream_send_max: BoundedMap::new(STREAM_ID_RECORD_MAX_SIZE),
             stop_sending_received_ids: BoundedSet::new(STREAM_ID_RECORD_MAX_SIZE),
             flow_control,
             capsule_decoder: CapsuleDecoder::new(),
@@ -828,27 +841,30 @@ impl WtSession {
 
     /// ストリームレベルのフロー制御上限を増やす `WT_MAX_STREAM_DATA` を送信する
     ///
-    /// draft-ietf-webtrans-http2-15 Section 6.6: 指定ストリームの受信可能バイト数を通知し、
+    /// draft-ietf-webtrans-http2-16 Section 6.6: 指定ストリームの受信可能バイト数を通知し、
     /// 広告した上限を `WtStream::recv_max` にも反映する。`WtStream::recv_max` を
     /// 更新しないと、ピアが広告どおりに送ったデータを `WtStream::recv_data` が拒否する。
     ///
-    /// 同一ストリームに対して既に `WT_STOP_SENDING` を送信済みの場合は
-    /// `stream_state_error` を返す (Section 6.6 の MUST)。`maximum` が varint 上限
-    /// (2^62-1) を超える場合、および現在の受信上限より小さい場合は
-    /// `flow_control_error` を返す (RFC 9000 Section 16、減少を広告されたピアは
-    /// Section 6.6 の MUST でセッションを閉じる)。
+    /// 検証順は、`maximum` の varint 上限超過 (`flow_control_error`)、ストリームの
+    /// 存在 (`invalid_stream_id`)、状態 (`stream_state_error`)、
+    /// 初期値・最後に広告した上限からの非増加 (`flow_control_error`) の順である
+    /// (RFC 9000 Section 16、draft-ietf-webtrans-http2-16 Section 6.6)。
     /// 受信パートを持たない送信専用ストリーム (ローカル開始 uni) への
-    /// WT_MAX_STREAM_DATA の送信、および受信状態が `Recv` でないストリームへの
-    /// 送信は `stream_state_error` を返す
+    /// WT_MAX_STREAM_DATA の送信、`WT_STOP_SENDING` 送信済みのストリーム、および
+    /// 受信状態が `Recv` でないストリームへの送信は `stream_state_error` を返す
     /// (draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.6 /
     /// RFC 9000 Section 3.3 / Section 19.10)。
     ///
-    /// 減少の判定は `WtStream::recv_max` を基準にするため、`WtConfig` には
-    /// SETTINGS で広告した初期値を設定しておくこと (未広告の項目の初期値は
-    /// draft-ietf-webtrans-http2-15 Section 11.2 により 0 として扱われる)。
+    /// 注: 以前の実装は現在値と同値の広告を送信していたが、draft-16 では同値も
+    /// 拒否する (後方互換のない仕様変更)。
+    ///
+    /// 増加の判定は `WtStream::recv_max` を基準にするため、`WtConfig` には
+    /// 自分が広告した初期値 (SETTINGS と `WebTransport-Init` の両方を送る場合は
+    /// draft-ietf-webtrans-http2-15 Section 4.3 の MUST に従い大きい方) を
+    /// 設定しておくこと (未広告の項目の初期値は Section 11.2 により 0 として扱われる)。
     pub fn send_max_stream_data(&mut self, stream_id: WtStreamId, maximum: u64) -> WtResult<()> {
         // RFC 9000 Section 16: Maximum は varint でエンコードされるため、上限 (2^62-1) を
-        // 超える値は CapsuleEncoder 内で panic する。事前に拒否する。
+        // 超える値は CapsuleEncoder 内で panic する。事前に拒否する
         if maximum > MAX_VALUE {
             return Err(WtError::flow_control_error(format!(
                 "WT_MAX_STREAM_DATA value {maximum} exceeds varint maximum {MAX_VALUE}"
@@ -881,16 +897,15 @@ impl WtSession {
         // RFC 9000 Section 3.3 / Section 19.10: 受信状態が `Recv` でなければ送れない
         Self::check_max_stream_data_recv_state(stream)?;
 
-        // draft-ietf-webtrans-http2-15 Section 6.6:
-        // 以前に広告した値より小さい Maximum Stream Data を受信したピアは
-        // WT_FLOW_CONTROL_ERROR でセッションを閉じる (MUST) ため、減少は送信しない
-        // (RFC 9000 Section 4.1 は減少の広告を許容し送信側の無視を MUST とするが、
-        //  本 API は draft の MUST に従い送信前に拒否する。同値は draft が
-        //  禁じていないため従来どおり送信する)
-        if maximum < stream.recv_max() {
+        // draft-ietf-webtrans-http2-16 Section 6.6:
+        // そのストリームの初期値または以前に広告した上限を増加させない Maximum Stream Data を
+        // 受信したピアは WT_FLOW_CONTROL_ERROR でセッションを閉じる (MUST) ため、
+        // 同値・減少は送信しない (RFC 9000 Section 4.1 の非増加の広告の扱いより
+        // draft の MUST を優先する)
+        let advertised = stream.recv_max();
+        if maximum <= advertised {
             return Err(WtError::flow_control_error(format!(
-                "WT_MAX_STREAM_DATA value {maximum} is less than the advertised maximum {}",
-                stream.recv_max()
+                "WT_MAX_STREAM_DATA value {maximum} does not increase the advertised maximum {advertised}"
             )));
         }
         // 広告した上限をローカルの受信上限にも反映する。反映しないと、ピアが
@@ -953,7 +968,7 @@ impl WtSession {
         // saturating_add では飽和してオーバーフローと varint 超過を区別できない
         let new_max = current.checked_add(increment).ok_or_else(|| {
             WtError::flow_control_error(format!(
-                "WT_MAX_DATA increment {increment} from {current} exceeds varint maximum {MAX_VALUE}"
+                "WT_MAX_DATA increment {increment} from {current} overflows u64"
             ))
         })?;
         self.send_max_data(new_max)
@@ -961,45 +976,36 @@ impl WtSession {
 
     /// ストリーム受信ウィンドウを拡張し、`WT_MAX_STREAM_DATA` を自動送信する
     ///
-    /// `WtStream::recv_max` に `increment` を加えた値を広告する。更新と送信は
-    /// `WtSession::send_max_stream_data` が行う。
+    /// `WtStream::recv_max` に `increment` を加えた値を広告し、成功時は
+    /// `WtStream::recv_max` を広告値へ更新する。検証順は次のとおりである。
     ///
-    /// draft-ietf-webtrans-http2-15 Section 6.6:
-    /// `WT_STOP_SENDING` 送信済みのストリームでは `stream_state_error` を返す。
-    /// 受信パートを持たない送信専用ストリーム (ローカル開始 uni) と、
-    /// 受信状態が `Recv` でないストリームでは `stream_state_error` を返す
-    /// (draft-ietf-webtrans-http2-15 Section 5.2 /
-    /// Section 6.6 / RFC 9000 Section 3.3 / Section 19.10)。
+    /// 1. ストリームの存在確認 (`invalid_stream_id`)
+    /// 2. `increment` の加算結果が u64 の範囲を超える場合 (`flow_control_error`)
+    /// 3. 加算結果が varint 上限 (2^62-1) を超える場合 (`flow_control_error`)
+    /// 4. 送信できない状態 (送信専用ストリーム、`WT_STOP_SENDING` 送信済み、
+    ///    受信状態が `Recv` でない) の場合 (`stream_state_error`)
+    /// 5. 増分 0 など広告値が増加しない場合 (`flow_control_error`)
+    ///
+    /// 2〜5 の検出時は受信上限と出力を変更しない。また存在確認は本メソッドが行い、
+    /// 2〜5 の最終検証は [`Self::send_max_stream_data`] が行う
+    /// (draft-ietf-webtrans-http2-16 Section 6.6 / RFC 9000 Section 3.3 / Section 16 /
+    /// Section 19.10)。
     pub fn grow_stream_recv_window(
         &mut self,
         stream_id: WtStreamId,
         increment: u64,
     ) -> WtResult<()> {
-        let stream = self
-            .streams
-            .get(&stream_id)
-            .ok_or_else(|| WtError::invalid_stream_id("stream not found"))?;
-        // draft-ietf-webtrans-http2-15 Section 5.2 / Section 6.6 /
-        // RFC 9000 Section 3.3 / Section 19.10:
-        // 受信パートを持たないストリームの受信ウィンドウは拡張できない
-        if !stream.has_recv_part() {
-            return Err(WtError::stream_state_error(
-                "cannot grow stream recv window on a send-only stream",
-            ));
-        }
-        // draft-ietf-webtrans-http2-15 Section 6.6:
-        // WT_STOP_SENDING 送信後に WT_MAX_STREAM_DATA を送ってはならない (MUST NOT)
-        if stream.stop_sending_sent() {
-            return Err(WtError::stream_state_error(
-                "cannot grow stream recv window: WT_STOP_SENDING already sent",
-            ));
-        }
-        // ここまでの検証はいずれも `recv_max` を更新する前に拒否し、
-        // ローカル状態の不整合を避ける
-        Self::check_max_stream_data_recv_state(stream)?;
-
-        // `recv_max` の更新と WT_MAX_STREAM_DATA の送信は send_max_stream_data が行う
-        let new_max = stream.recv_max().saturating_add(increment);
+        let current = self
+            .stream(stream_id)
+            .ok_or_else(|| WtError::invalid_stream_id("stream not found"))?
+            .recv_max();
+        // u64 の範囲を超える加算は varint 上限を確実に超えるため、事前に拒否する。
+        // saturating_add では飽和してオーバーフローと varint 超過を区別できない
+        let new_max = current.checked_add(increment).ok_or_else(|| {
+            WtError::flow_control_error(format!(
+                "WT_MAX_STREAM_DATA increment {increment} from {current} overflows u64"
+            ))
+        })?;
         self.send_max_stream_data(stream_id, new_max)
     }
 
@@ -1205,9 +1211,39 @@ impl WtSession {
                     ));
                 }
 
+                // draft-ietf-webtrans-http2-16 Section 6.6:
+                // ストリームの初期値または最後に受理した上限を増加させない
+                // WT_MAX_STREAM_DATA は拒否する。初期値は SETTINGS と
+                // WebTransport-Init を反映したピア設定から決まる。暗黙生成の前に
+                // 比較し、拒否時にストリームと WtEvent::StreamOpened を残さない
+                if self.will_create_implicit_peer_bidi_stream(stream_id) {
+                    let initial_send_max = self.initial_send_max_for_peer_stream(true);
+                    if maximum <= initial_send_max {
+                        return Err(WtError::flow_control_error(format!(
+                            "WT_MAX_STREAM_DATA value {maximum} does not increase the initial maximum {initial_send_max}"
+                        )));
+                    }
+                }
+
+                // draft-ietf-webtrans-http2-16 Section 6.6:
+                // 削除済みストリームは初期値または最後に受理した送信上限を保持しているため、
+                // 非増加を検出する。増加は適用先の状態がないため記録だけ更新して無視する
+                if !self.streams.contains_key(&stream_id)
+                    && let Some(last) = self.closed_stream_send_max.get(&stream_id)
+                {
+                    if maximum <= *last {
+                        return Err(WtError::flow_control_error(format!(
+                            "WT_MAX_STREAM_DATA value {maximum} does not increase the last received maximum {last}"
+                        )));
+                    }
+                    self.closed_stream_send_max.insert(stream_id, maximum);
+                    return Ok(());
+                }
+
                 // draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 3.2:
-                // ピア開始 bidi の未知 ID への WT_MAX_STREAM_DATA はそのストリームを開く。
-                // 生成されなかった場合 (削除済み ID) は下の更新が行われない
+                // ピア開始 bidi の未知 ID への WT_MAX_STREAM_DATA はそのストリームを開く
+                // (draft-16 Section 4.3.2 はストリームが存在してから送る前提のため、
+                //  この暗黙生成は draft-15 互換の経路である)
                 self.create_implicit_peer_bidi_stream(stream_id)?;
 
                 if let Some(stream) = self.streams.get_mut(&stream_id) {
@@ -1290,7 +1326,7 @@ impl WtSession {
         // draft-ietf-webtrans-http2-15 Section 6.4: クローズ済みまたはリセット済みの
         // ストリームへの WT_STREAM は WT_STREAM_STATE_ERROR のストリームエラーとする。
         // 記録から追い出された ID は対象外 (既知の制限)。
-        if self.closed_streams.contains(&stream_id) {
+        if self.closed_stream_send_max.contains(&stream_id) {
             return Err(WtError::stream_state_error(format!(
                 "WT_STREAM received for closed stream {stream_id}"
             )));
@@ -1368,6 +1404,30 @@ impl WtSession {
         Ok(())
     }
 
+    /// ピア開始ストリームに適用する初期送信上限を返す
+    ///
+    /// draft-ietf-webtrans-http2-16 Section 11.2 / Section 4.3.1:
+    /// ピア開始ストリームの `send_max` はピアの広告値 (ピア視点で local)。
+    /// 暗黙生成の事前検証と生成で同じ値を使うため、単一の経路に集約する。
+    fn initial_send_max_for_peer_stream(&self, bidirectional: bool) -> u64 {
+        if bidirectional {
+            self.peer_config.initial_max_stream_data_bidi_local
+        } else {
+            self.peer_config.initial_max_stream_data_uni
+        }
+    }
+
+    /// ピア開始 bidi ストリームを暗黙に生成する対象かどうかを返す
+    ///
+    /// 判定条件は [`Self::create_implicit_peer_bidi_stream`] と共有し、
+    /// 事前検証と生成の対象がずれないようにする。
+    fn will_create_implicit_peer_bidi_stream(&self, stream_id: WtStreamId) -> bool {
+        self.is_peer_initiated(stream_id)
+            && stream::stream_id::is_bidirectional(stream_id)
+            && !self.streams.contains_key(&stream_id)
+            && !self.closed_stream_send_max.contains(&stream_id)
+    }
+
     /// ピア開始ストリームを生成して登録する
     ///
     /// 呼び出し元が受信ストリーム数の上限を検証済みであることを前提とする
@@ -1378,16 +1438,11 @@ impl WtSession {
     /// `recv_max` はローカルの BIDI_REMOTE / UNI (ローカル視点で remote = ピア開始) を使う。
     /// ピア開始 uni は受信専用のため `send_max` は使われない。
     fn create_peer_stream(&mut self, stream_id: WtStreamId, bidirectional: bool) {
-        let (send_max, recv_max) = if bidirectional {
-            (
-                self.peer_config.initial_max_stream_data_bidi_local,
-                self.config.initial_max_stream_data_bidi_remote,
-            )
+        let send_max = self.initial_send_max_for_peer_stream(bidirectional);
+        let recv_max = if bidirectional {
+            self.config.initial_max_stream_data_bidi_remote
         } else {
-            (
-                self.peer_config.initial_max_stream_data_uni,
-                self.config.initial_max_stream_data_uni,
-            )
+            self.config.initial_max_stream_data_uni
         };
 
         let stream = WtStream::new(stream_id, send_max, recv_max, bidirectional, false);
@@ -1415,11 +1470,11 @@ impl WtSession {
     /// 指定 ID が受信ストリーム数の上限を超える場合は、下位 ID も含めて 1 件も作成せず
     /// `flow_control_error` を返す。
     ///
-    /// 既に `streams` にある ID と、削除済みで `closed_streams` に記録済みの ID は
+    /// 既に `streams` にある ID と、削除済みで `closed_stream_send_max` に記録済みの ID は
     /// 作成しない。後者は既に作成済みのストリームが閉じたものであり、
     /// 再作成すると `WtEvent::StreamOpened` が再送出されて
     /// クローズ済みストリームを再作成しない方針 (draft-ietf-webtrans-http2-15 Section 6.4)
-    /// に反する。`closed_streams` は上限付きのため、記録から追い出された ID は
+    /// に反する。`closed_stream_send_max` は上限付きのため、記録から追い出された ID は
     /// 再作成され得る (既知の制限)。
     fn create_peer_streams_up_to(
         &mut self,
@@ -1441,7 +1496,7 @@ impl WtSession {
         let first = stream_id & 0x03;
         let mut id = first;
         while id <= stream_id {
-            if !self.streams.contains_key(&id) && !self.closed_streams.contains(&id) {
+            if !self.streams.contains_key(&id) && !self.closed_stream_send_max.contains(&id) {
                 self.create_peer_stream(id, bidirectional);
             }
             id = stream::stream_id::next(id);
@@ -1456,8 +1511,9 @@ impl WtSession {
     /// MAX_STREAM_DATA / STOP_SENDING の受信でそのストリームが開かれると定める。
     /// 生成されるのは双方向ストリームであり、送信パートは `Ready` のままとなる。
     ///
-    /// 呼び出し元が受信専用 ID (ピア開始 uni) を拒否済みであることを前提とする。
-    /// 開始主体がローカル側の ID と、`closed_streams` に記録済みの削除済み ID は
+    /// 受信専用 ID (ピア開始 uni) は `will_create_implicit_peer_bidi_stream` の
+    /// 方向判定で除外する。開始主体がローカル側の ID と、`closed_stream_send_max` に
+    /// 記録済みの削除済み ID は
     /// 生成しない。後者を再作成すると閉じたストリームの `WtEvent::StreamOpened` が
     /// 再送出されるため生成しない。生成しなかった場合、呼び出し元の後続処理は
     /// ストリーム不在として扱う (RFC 9000 Section 19.10 がエラーとするのは未作成の
@@ -1469,16 +1525,7 @@ impl WtSession {
     /// 有効でない状態のストリームへの受信を WT_STREAM_STATE_ERROR とするため、
     /// 本メソッドは WT_STOP_SENDING / WT_MAX_STREAM_DATA のみを対象とする。
     fn create_implicit_peer_bidi_stream(&mut self, stream_id: WtStreamId) -> WtResult<()> {
-        if !self.is_peer_initiated(stream_id) {
-            return Ok(());
-        }
-        // 呼び出し元が受信専用 ID を拒否済みのため、ここに来る ID は双方向である。
-        // 契約が呼び出し元の検証順序に依存していることを明示する
-        debug_assert!(stream::stream_id::is_bidirectional(stream_id));
-        if self.streams.contains_key(&stream_id) {
-            return Ok(());
-        }
-        if self.closed_streams.contains(&stream_id) {
+        if !self.will_create_implicit_peer_bidi_stream(stream_id) {
             return Ok(());
         }
         self.create_peer_streams_up_to(stream_id, true)
@@ -1524,12 +1571,19 @@ impl WtSession {
     /// draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 の順序配送により
     /// ACK が不要なため、終端状態への遷移は即座に行われる。
     /// 閉じたストリームの状態オブジェクトを保持し続ける必要はない。
-    /// 削除した ID は `closed_streams` に記録し、後続 WT_STREAM を拒否できるようにする
-    /// (draft-ietf-webtrans-http2-15 Section 6.4)。
+    /// 削除した ID は `closed_stream_send_max` に削除時点の送信上限を値として記録し、
+    /// 後続 WT_STREAM の拒否と、削除後の非増加 WT_MAX_STREAM_DATA の検出に使う
+    /// (draft-ietf-webtrans-http2-15 Section 6.4 / draft-ietf-webtrans-http2-16 Section 6.6)。
+    /// 削除後に増加を受理した場合は記録を更新する。
     fn remove_if_closed(&mut self, stream_id: WtStreamId) {
-        if self.streams.get(&stream_id).is_some_and(|s| s.is_closed()) {
-            self.streams.remove(&stream_id);
-            self.closed_streams.insert(stream_id);
+        let Some(stream) = self.streams.get(&stream_id) else {
+            return;
+        };
+        if !stream.is_closed() {
+            return;
         }
+        let send_max = stream.send_max();
+        self.streams.remove(&stream_id);
+        self.closed_stream_send_max.insert(stream_id, send_max);
     }
 }
