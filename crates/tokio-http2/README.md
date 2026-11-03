@@ -6,7 +6,7 @@
 
 tokio-http2 は Sans I/O な HTTP/2 実装 (shiguredo_http2) の上に、Tokio ベースの非同期 I/O 層を提供します。TLS には [Rustls](https://github.com/rustls/rustls) を、暗号ライブラリには [aws-lc-rs](https://github.com/aws/aws-lc-rs) を使用しています。
 
-WebTransport over HTTP/2 (draft-ietf-webtrans-http2-15) のサーバー実装も `webtransport` モジュールで提供します。
+WebTransport over HTTP/2 (draft-ietf-webtrans-http2-16) のサーバー実装も `webtransport` モジュールで提供します。
 
 ## 依存ライブラリ
 
@@ -136,7 +136,7 @@ loop {
 
 ## WebTransport
 
-`webtransport` モジュールは draft-ietf-webtrans-http2-15 ベースの WebTransport over HTTP/2 サーバー実装を提供します。Extended CONNECT (`:protocol=webtransport`) で確立されたセッション上で、Capsule Protocol によって双方向 / 単方向ストリームと DATAGRAM を多重化します。
+`webtransport` モジュールは draft-ietf-webtrans-http2-16 ベースの WebTransport over HTTP/2 サーバー実装を提供します。Extended CONNECT (`:protocol=webtransport`) で確立されたセッション上で、Capsule Protocol によって双方向 / 単方向ストリームと DATAGRAM を多重化します。
 
 ```rust
 use shiguredo_http2::webtransport::WtConfig;
@@ -155,7 +155,7 @@ loop {
             });
             if is_webtransport {
                 let request = WtServerRequest::from_connection(conn, stream_id, headers);
-                // 第 2 引数は Origin 検証用 (draft-ietf-webtrans-http2-15 Section 3.2)。
+                // 第 2 引数は Origin 検証用 (draft-ietf-webtrans-http2-16 Section 3.2)。
                 // None で Origin 検証をスキップする。Web context では Some(b"https://...") を指定する。
                 // 第 3 引数は選択サブプロトコル (Section 3.3)。交渉しない場合は None。
                 let mut session = request.accept(WtConfig::default(), None, None).await?;
@@ -187,8 +187,8 @@ loop {
 
 - `from_connection()` - Extended CONNECT を受信済みの `ServerConnection` から要求を構築
 - `stream_id()` / `headers()` / `path()` / `authority()` / `scheme()` / `origin()` - 要求情報を参照
-- `webtransport_init()` - `WebTransport-Init` ヘッダー値 (RFC 8941 Dictionary) を取得
-- `accept(config)` - セッションを受諾して `WtServerSession` を返す
+- `webtransport_init()` - `WebTransport-Init` ヘッダー値 (RFC 9651 Dictionary) を取得
+- `accept(config, allowed_origin, selected_protocol)` - セッションを受諾して `WtServerSession` を返す
 - `reject(status)` - 指定ステータスで拒否
 
 ### `WtServerSession`

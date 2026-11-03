@@ -302,7 +302,7 @@ fn grow_stream_recv_window_unknown_stream_errors() {
 }
 
 /// `WT_STOP_SENDING` 送信後の `send_max_stream_data` / `grow_stream_recv_window` は
-/// `stream_state_error` になること (draft-ietf-webtrans-http2-15 Section 6.6)
+/// `stream_state_error` になること (draft-ietf-webtrans-http2-16 Section 6.6)
 #[test]
 fn send_max_stream_data_after_stop_sending_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
@@ -465,7 +465,7 @@ fn send_after_close_errors() {
     let bidi_id = session.open_bidi_stream().expect("initiate should succeed");
     session.close(0, "bye").expect("open stream should succeed");
 
-    // draft-ietf-webtrans-http2-15 Section 6.12: WT_CLOSE_SESSION 送信後は END_STREAM で half-close するため送信不可
+    // draft-ietf-webtrans-http2-16 Section 6.12: WT_CLOSE_SESSION 送信後は END_STREAM で half-close するため送信不可
     let err = session.send_stream_data(bidi_id, b"x", false).unwrap_err();
     assert_eq!(
         err.kind(),
@@ -480,7 +480,7 @@ fn send_after_close_errors() {
 }
 
 /// 存在しないストリーム ID への WT_STREAM_DATA_BLOCKED で WT_STREAM_STATE_ERROR が返ることを確認する
-/// (draft-ietf-webtrans-http2-15 Section 6.9)
+/// (draft-ietf-webtrans-http2-16 Section 6.9)
 #[test]
 fn wt_stream_data_blocked_unknown_stream_errors() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
@@ -503,7 +503,7 @@ fn wt_stream_data_blocked_unknown_stream_errors() {
 
 /// 受信側が終端状態のストリームに WT_STREAM_DATA_BLOCKED を受信した場合に
 /// WT_STREAM_STATE_ERROR が返ることを確認する
-/// (draft-ietf-webtrans-http2-15 Section 6.9)
+/// (draft-ietf-webtrans-http2-16 Section 6.9)
 #[test]
 fn wt_stream_data_blocked_recv_terminal_state_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
@@ -545,7 +545,7 @@ fn wt_stream_data_blocked_recv_terminal_state_errors() {
 }
 
 /// `open_bidi_stream` がローカルのストリーム上限で `flow_control_error`
-/// (draft-ietf-webtrans-http2-15 Section 6.7: 現在のストリーム上限を超えてストリームを開いてはならない (MUST NOT))
+/// (draft-ietf-webtrans-http2-16 Section 6.7: 現在のストリーム上限を超えてストリームを開いてはならない (MUST NOT))
 #[test]
 fn open_bidi_stream_over_limit_errors() {
     let config = WtConfig {
@@ -580,7 +580,7 @@ fn send_max_data_emits_capsule() {
     }
 }
 
-/// アプリケーションエラーコードの最大値 (draft-ietf-webtrans-http2-15 Section 6.2 / 6.3)
+/// アプリケーションエラーコードの最大値 (draft-ietf-webtrans-http2-16 Section 6.2 / 6.3)
 const MAX_APP_ERROR_CODE: u64 = 0xffff_ffff;
 
 /// `send_max_data` が varint 上限 (2^62-1) を超える値を拒否することを確認する
@@ -660,7 +660,7 @@ fn send_max_stream_data_rejects_varint_overflow() {
 
 /// `reset_stream` が 0xffffffff を超える error_code を拒否することを確認する
 ///
-/// draft-ietf-webtrans-http2-15 Section 6.2: error_code は 0xffffffff 以下でなければ
+/// draft-ietf-webtrans-http2-16 Section 6.2: error_code は 0xffffffff 以下でなければ
 /// ならない (MUST NOT)。0xffffffff 超は仕様違反であり、varint 上限 (2^62-1) 超では
 /// CapsuleEncoder 内で panic するため、事前に拒否する。
 #[test]
@@ -700,7 +700,7 @@ fn reset_stream_rejects_error_code_overflow() {
 
 /// `stop_sending` が 0xffffffff を超える error_code を拒否することを確認する
 ///
-/// draft-ietf-webtrans-http2-15 Section 6.3: error_code は 0xffffffff 以下でなければ
+/// draft-ietf-webtrans-http2-16 Section 6.3: error_code は 0xffffffff 以下でなければ
 /// ならない (MUST NOT)。0xffffffff 超は仕様違反であり、varint 上限 (2^62-1) 超では
 /// CapsuleEncoder 内で panic するため、事前に拒否する。
 #[test]
@@ -787,7 +787,7 @@ fn getters_return_expected_state() {
 
 /// Ready 状態のストリームに WT_STOP_SENDING を受信すると
 /// WT_RESET_STREAM が自動応答されることを確認する。
-/// (draft-ietf-webtrans-http2-15 Section 6.3: 受信者はストリームが Ready または Send 状態の場合、同一エラーコードの WT_RESET_STREAM で応答する)
+/// (draft-ietf-webtrans-http2-16 Section 6.3: 受信者はストリームが Ready または Send 状態の場合、同一エラーコードの WT_RESET_STREAM で応答する)
 #[test]
 fn stop_sending_triggers_auto_reset_ready_state() {
     // サーバー側のピア (client) が開いた bidi ストリーム (id=0) に対して
@@ -830,7 +830,7 @@ fn stop_sending_triggers_auto_reset_ready_state() {
 
 /// Send 状態のストリームに WT_STOP_SENDING を受信すると
 /// WT_RESET_STREAM が自動応答されることを確認する。
-/// (draft-ietf-webtrans-http2-15 Section 6.3: 受信者はストリームが Ready または Send 状態の場合、同一エラーコードの WT_RESET_STREAM で応答する)
+/// (draft-ietf-webtrans-http2-16 Section 6.3: 受信者はストリームが Ready または Send 状態の場合、同一エラーコードの WT_RESET_STREAM で応答する)
 #[test]
 fn stop_sending_triggers_auto_reset_send_state() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
@@ -873,7 +873,7 @@ fn stop_sending_triggers_auto_reset_send_state() {
 
 /// FIN 送信済み (DataRecvd) のストリームでは WT_STOP_SENDING 受信時に
 /// WT_RESET_STREAM が生成されないことを確認する。
-/// (draft-ietf-webtrans-http2-15 Section 6.3: 受信者はストリームが Ready または Send 状態の場合、同一エラーコードの WT_RESET_STREAM で応答する)
+/// (draft-ietf-webtrans-http2-16 Section 6.3: 受信者はストリームが Ready または Send 状態の場合、同一エラーコードの WT_RESET_STREAM で応答する)
 #[test]
 fn stop_sending_no_auto_reset_after_fin_sent() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
@@ -1195,7 +1195,7 @@ fn out_of_order_peer_stream_skips_existing_lower_id() {
 
 /// 暗黙作成したストリームへの WT_STOP_SENDING の自動応答は対象 ID のみで、
 /// 同時に開いた下位 ID には応答しないこと
-/// (RFC 9000 Section 3.5 / draft-ietf-webtrans-http2-15 Section 6.3)
+/// (RFC 9000 Section 3.5 / draft-ietf-webtrans-http2-16 Section 6.3)
 #[test]
 fn implicit_stream_reset_only_for_target_id() {
     // ピア広告値をローカル値と変えて、どちらの値を使うかを区別できるようにする
@@ -1685,7 +1685,7 @@ fn created_local_uni_id_is_not_treated_as_uncreated() {
 }
 
 /// 未作成のローカル開始 bidi ID への WT_STREAM が拒否されること
-/// (RFC 9000 Section 19.8 / draft-ietf-webtrans-http2-15 Section 5.2)
+/// (RFC 9000 Section 19.8 / draft-ietf-webtrans-http2-16 Section 5.2)
 #[test]
 fn wt_stream_uncreated_local_bidi_id_errors() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
@@ -1811,7 +1811,7 @@ fn wt_max_stream_data_unknown_receive_only_id_errors() {
 
 /// クローズ済みで記録に残っているピア開始 bidi ID への 2 回目の WT_STOP_SENDING は
 /// 重複として拒否され、ストリームが再作成されないこと
-/// (draft-ietf-webtrans-http2-15 Section 6.3 / Section 6.4)
+/// (draft-ietf-webtrans-http2-16 Section 6.3 / Section 6.4)
 #[test]
 fn wt_stop_sending_closed_peer_bidi_stream_duplicate_errors() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
@@ -1881,7 +1881,7 @@ fn wt_stop_sending_closed_peer_bidi_stream_duplicate_errors() {
 
 /// WT_STOP_SENDING を受信済みでクローズしたピア開始 bidi ID への
 /// WT_MAX_STREAM_DATA は stream_state_error になり、ストリームが再作成されないこと
-/// (draft-ietf-webtrans-http2-15 Section 6.6 / RFC 9000 Section 3.3)
+/// (draft-ietf-webtrans-http2-16 Section 6.6 / RFC 9000 Section 3.3)
 #[test]
 fn wt_max_stream_data_after_stop_sending_on_closed_peer_bidi_stream_errors() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
@@ -1950,7 +1950,7 @@ fn wt_max_stream_data_after_stop_sending_on_closed_peer_bidi_stream_errors() {
 
 /// 受信ストリーム数上限を超えるピア開始 bidi ID への WT_STOP_SENDING は
 /// flow_control_error になり、上限を超える ID のストリームが作成されないこと
-/// (RFC 9000 Section 4.6 / draft-ietf-webtrans-http2-15 Section 6.7)
+/// (RFC 9000 Section 4.6 / draft-ietf-webtrans-http2-16 Section 6.7)
 #[test]
 fn wt_stop_sending_unknown_peer_bidi_stream_over_limit_errors() {
     // initial_max_streams_bidi = 1 のとき、クライアント視点のサーバー開始 bidi は
@@ -2064,7 +2064,7 @@ fn wt_max_stream_data_unknown_peer_bidi_stream_at_limit_accepted() {
 
 /// 削除済みのローカル開始 bidi ID への 1 回目の WT_STOP_SENDING は受理され、
 /// 2 回目は重複として拒否されること
-/// (draft-ietf-webtrans-http2-15 Section 6.3)
+/// (draft-ietf-webtrans-http2-16 Section 6.3)
 #[test]
 fn duplicate_stop_sending_on_removed_local_bidi_stream_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
@@ -2123,7 +2123,7 @@ fn duplicate_stop_sending_on_removed_local_bidi_stream_errors() {
 
 /// ローカルから WT_STOP_SENDING を送った生存ストリームへ、ピアから届く
 /// WT_MAX_STREAM_DATA は受理されること (誤拒否の非回帰)
-/// (draft-ietf-webtrans-http2-15 Section 6.6 が禁じるのは、WT_STOP_SENDING を
+/// (draft-ietf-webtrans-http2-16 Section 6.6 が禁じるのは、WT_STOP_SENDING を
 ///  送った側が WT_MAX_STREAM_DATA を送ること。ピアが送る credit は正当)
 #[test]
 fn max_stream_data_on_live_stream_with_local_stop_sending_accepted() {
@@ -2174,7 +2174,7 @@ fn max_stream_data_on_live_stream_with_local_stop_sending_accepted() {
 
 /// ローカルから WT_STOP_SENDING を送っただけの削除済みストリームへの
 /// WT_MAX_STREAM_DATA は拒否されないこと
-/// (draft-ietf-webtrans-http2-15 Section 6.6 が禁じるのは、WT_STOP_SENDING を
+/// (draft-ietf-webtrans-http2-16 Section 6.6 が禁じるのは、WT_STOP_SENDING を
 ///  送った側が WT_MAX_STREAM_DATA を送ること。受信側の判定にローカルの送信は影響しない)
 #[test]
 fn max_stream_data_on_removed_stream_with_local_stop_sending_accepted() {
@@ -2224,7 +2224,7 @@ fn max_stream_data_on_removed_stream_with_local_stop_sending_accepted() {
 
 /// 削除済みのピア開始 bidi ID への 1 回目の WT_STOP_SENDING は受理され、
 /// WtEvent::StopSending が送出されること
-/// (draft-ietf-webtrans-http2-15 Section 6.3 が禁じるのは 2 回目)
+/// (draft-ietf-webtrans-http2-16 Section 6.3 が禁じるのは 2 回目)
 #[test]
 fn first_stop_sending_on_removed_peer_bidi_stream_accepted() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
@@ -2621,7 +2621,7 @@ fn wt_max_stream_data_removed_receive_only_stream_errors() {
 }
 
 /// 重複 WT_STOP_SENDING 受信は stream_state_error になることを確認する。
-/// (draft-ietf-webtrans-http2-15 Section 6.3: 2 回目の WT_STOP_SENDING 受信時は WT_STREAM_STATE_ERROR のストリームエラーを送らなければならない (MUST))
+/// (draft-ietf-webtrans-http2-16 Section 6.3: 2 回目の WT_STOP_SENDING 受信時は WT_STREAM_STATE_ERROR のセッションエラーを送らなければならない (MUST))
 #[test]
 fn stop_sending_duplicate_errors() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
@@ -2657,7 +2657,7 @@ fn stop_sending_duplicate_errors() {
 }
 
 /// 未登録ストリームへの WT_RESET_STREAM が stream_state_error を返すことを確認する。
-/// (draft-ietf-webtrans-http2-15 Section 6.2: 有効な状態にないストリームへの WT_RESET_STREAM 受信時は WT_STREAM_STATE_ERROR のストリームエラーを送らなければならない (MUST))
+/// (draft-ietf-webtrans-http2-16 Section 6.2: 有効な状態にないストリームへの WT_RESET_STREAM 受信時は WT_STREAM_STATE_ERROR のセッションエラーを送らなければならない (MUST))
 #[test]
 fn wt_reset_stream_unknown_stream_id_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
@@ -2679,7 +2679,7 @@ fn wt_reset_stream_unknown_stream_id_errors() {
     assert!(err.reason().contains("unknown stream"));
 }
 
-// draft-ietf-webtrans-http2-15 Section 6.2: Reliable Size は送信済み総量と
+// draft-ietf-webtrans-http2-16 Section 6.2: Reliable Size は送信済み総量と
 // 一致しなければならない (MUST equal)。過小・過大いずれもセッションエラー。
 
 /// reliable_size == recv_offset で WT_RESET_STREAM が正常に処理される
@@ -2821,7 +2821,7 @@ fn wt_reset_stream_reliable_size_too_small_errors() {
 
 /// 送信専用のローカル開始 uni ストリームへの WT_RESET_STREAM は
 /// WT_STREAM_STATE_ERROR になり、StreamReset イベントが送出されないこと。
-/// (draft-ietf-webtrans-http2-15 Section 6.2 / RFC 9000 Section 19.4)
+/// (draft-ietf-webtrans-http2-16 Section 6.2 / RFC 9000 Section 19.4)
 #[test]
 fn wt_reset_stream_local_uni_stream_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
@@ -2857,7 +2857,7 @@ fn wt_reset_stream_local_uni_stream_errors() {
 
 /// 送信専用のローカル開始 uni ストリームへの WT_STREAM_DATA_BLOCKED は
 /// WT_STREAM_STATE_ERROR になること。
-/// (draft-ietf-webtrans-http2-15 Section 6.9 / RFC 9000 Section 19.13)
+/// (draft-ietf-webtrans-http2-16 Section 6.9 / RFC 9000 Section 19.13)
 #[test]
 fn wt_stream_data_blocked_local_uni_stream_errors() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
@@ -3136,7 +3136,7 @@ fn open_peer_stream(session: &mut WtSession, peer_id: WtStreamId, data: &[u8]) {
 
 /// 受信専用ストリームへの send_stream_data は stream_state_error になり、
 /// ストリーム状態と出力が変化しないこと
-/// (draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1)
+/// (draft-ietf-webtrans-http2-16 Section 6.4 / RFC 9000 Section 2.1)
 #[test]
 fn send_stream_data_receive_only_stream_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
@@ -3171,7 +3171,7 @@ fn send_stream_data_receive_only_stream_errors() {
 
 /// 受信専用ストリームへの reset_stream は stream_state_error になり、
 /// ストリーム状態と出力が変化しないこと
-/// (draft-ietf-webtrans-http2-15 Section 6.2 / RFC 9000 Section 19.4)
+/// (draft-ietf-webtrans-http2-16 Section 6.2 / RFC 9000 Section 19.4)
 #[test]
 fn reset_stream_receive_only_stream_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
@@ -3445,7 +3445,7 @@ fn peer_bidi_stream_send_operations_accepted() {
 
 /// 送信専用ストリームへの stop_sending は stream_state_error になり、
 /// ストリーム状態と出力が変化しないこと
-/// (draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 19.5)
+/// (draft-ietf-webtrans-http2-16 Section 5.2 / RFC 9000 Section 19.5)
 #[test]
 fn stop_sending_send_only_stream_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
@@ -3479,7 +3479,7 @@ fn stop_sending_send_only_stream_errors() {
 
 /// 送信専用ストリームへの send_max_stream_data は stream_state_error になり、
 /// 出力が生成されないこと
-/// (draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 19.10)
+/// (draft-ietf-webtrans-http2-16 Section 5.2 / RFC 9000 Section 19.10)
 #[test]
 fn send_max_stream_data_send_only_stream_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
@@ -3506,7 +3506,7 @@ fn send_max_stream_data_send_only_stream_errors() {
 
 /// 送信専用ストリームへの grow_stream_recv_window は stream_state_error になり、
 /// 受信ウィンドウと出力が変化しないこと
-/// (draft-ietf-webtrans-http2-15 Section 5.2 / RFC 9000 Section 19.10)
+/// (draft-ietf-webtrans-http2-16 Section 5.2 / RFC 9000 Section 19.10)
 #[test]
 fn grow_stream_recv_window_send_only_stream_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
@@ -3631,7 +3631,7 @@ fn bidi_stream_recv_operations_accepted() {
 }
 
 /// ストリームレベルのフロー制御違反時に output_buffer が汚染されないことを確認する
-/// (draft-ietf-webtrans-http2-15 Section 6.6: ストリームレベルのフロー制御)
+/// (draft-ietf-webtrans-http2-16 Section 6.6: ストリームレベルのフロー制御)
 #[test]
 fn send_stream_data_stream_flow_control_violation_does_not_pollute_buffer() {
     // ピアのストリームレベル送信上限を 5 バイトに制限
@@ -3663,7 +3663,7 @@ fn send_stream_data_stream_flow_control_violation_does_not_pollute_buffer() {
 }
 
 /// セッションレベルのフロー制御違反時に output_buffer が汚染されないことを確認する
-/// (draft-ietf-webtrans-http2-15 Section 6.5: セッションレベルのフロー制御)
+/// (draft-ietf-webtrans-http2-16 Section 6.5: セッションレベルのフロー制御)
 #[test]
 fn send_stream_data_session_flow_control_violation_does_not_pollute_buffer() {
     // セッションレベルの送信上限を 5 バイトに制限 (ストリームレベルは十分大きく)
@@ -3731,7 +3731,7 @@ fn wt_reset_stream_send_uses_send_offset() {
 }
 
 /// 非対称なフロー制御値: 送信制限がピアの広告値に従うことを確認する
-/// (draft-ietf-webtrans-http2-15 Section 4.3.1: send_max はピアの SETTINGS 初期値)
+/// (draft-ietf-webtrans-http2-16 Section 4.3.1: send_max はピアの SETTINGS 初期値)
 #[test]
 fn asymmetric_flow_control_send_uses_peer_value() {
     // ローカルは大きな受信上限を広告、ピアは小さな送信上限 (10 バイト) を広告
@@ -3767,7 +3767,7 @@ fn asymmetric_flow_control_send_uses_peer_value() {
 }
 
 /// 非対称なフロー制御値: ストリームレベルの送信制限がピアの広告値に従うことを確認する
-/// (draft-ietf-webtrans-http2-15 Section 11.2: BIDI_REMOTE はピア視点で remote = ローカル開始)
+/// (draft-ietf-webtrans-http2-16 Section 11.2: BIDI_REMOTE はピア視点で remote = ローカル開始)
 #[test]
 fn asymmetric_flow_control_stream_send_uses_peer_value() {
     // ローカルは大きなストリーム受信上限を広告、ピアは小さなストリーム送信上限 (5 バイト) を広告
@@ -3861,7 +3861,7 @@ fn uni_send_stream_removed_after_fin() {
 
 /// クライアントロールのローカル開始 uni ストリーム (送信専用) への
 /// ピア WT_STREAM が `stream_state_error` になり、`StreamData` が生成されない
-/// ことを確認する (draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1 / Section 19.8)。
+/// ことを確認する (draft-ietf-webtrans-http2-16 Section 6.4 / RFC 9000 Section 2.1 / Section 19.8)。
 #[test]
 fn wt_stream_on_client_local_uni_stream_errors() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
@@ -3907,7 +3907,7 @@ fn wt_stream_on_client_local_uni_stream_errors() {
 
 /// サーバーロールでもローカル開始 uni ストリーム (送信専用) への
 /// ピア WT_STREAM が `stream_state_error` になり、`StreamData` が生成されないことを
-/// 確認する (draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1 / Section 19.8)。
+/// 確認する (draft-ietf-webtrans-http2-16 Section 6.4 / RFC 9000 Section 2.1 / Section 19.8)。
 #[test]
 fn wt_stream_on_server_local_uni_stream_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
@@ -3953,7 +3953,7 @@ fn wt_stream_on_server_local_uni_stream_errors() {
 
 /// ローカル開始 bidi ストリームへのピア WT_STREAM は受信可能であり、
 /// 従来どおり `StreamData` を生成することを確認する
-/// (draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1)。
+/// (draft-ietf-webtrans-http2-16 Section 6.4 / RFC 9000 Section 2.1)。
 #[test]
 fn wt_stream_on_local_bidi_stream_accepted() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
@@ -4051,7 +4051,7 @@ fn flow_control_cumulative_count_works_after_stream_removal() {
 
 /// FIN でクローズ済みのピア開始 uni ストリームへの後続 WT_STREAM が
 /// `stream_state_error` になることを確認する
-/// (draft-ietf-webtrans-http2-15 Section 6.4 の MUST)。
+/// (draft-ietf-webtrans-http2-16 Section 6.4 の MUST)。
 #[test]
 fn wt_stream_after_fin_closed_peer_uni_stream_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
@@ -4106,7 +4106,7 @@ fn wt_stream_after_fin_closed_peer_uni_stream_errors() {
 
 /// リセットでクローズ済みのピア開始 uni ストリームへの後続 WT_STREAM が
 /// `stream_state_error` になることを確認する
-/// (draft-ietf-webtrans-http2-15 Section 6.4 の MUST)。
+/// (draft-ietf-webtrans-http2-16 Section 6.4 の MUST)。
 #[test]
 fn wt_stream_after_reset_closed_peer_uni_stream_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
@@ -4242,7 +4242,7 @@ fn closed_session_ignores_subsequent_capsules() {
 
 /// 下位 ID が削除済みで記録に残っている場合、その ID は再作成せず、
 /// 記録にない下位 ID だけが開かれること
-/// (draft-ietf-webtrans-http2-15 Section 6.4 / RFC 9000 Section 2.1)
+/// (draft-ietf-webtrans-http2-16 Section 6.4 / RFC 9000 Section 2.1)
 #[test]
 fn out_of_order_peer_stream_does_not_recreate_closed_lower_id() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
@@ -4671,7 +4671,7 @@ fn stop_sending_data_read_accepted() {
 
 /// send_max_stream_data が広告した上限を `recv_max` に反映し、
 /// ピアが広告値まで送ってもストリーム上限で拒否されないこと
-/// (draft-ietf-webtrans-http2-15 Section 6.6)
+/// (draft-ietf-webtrans-http2-16 Section 6.6)
 #[test]
 fn send_max_stream_data_updates_recv_max() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());

@@ -1,16 +1,16 @@
 //! WebTransport Exporter Context のシリアライズ
 //!
-//! draft-ietf-webtrans-http2-15 Section 5.3 に定義されている
+//! draft-ietf-webtrans-http2-16 Section 5.3 に定義されている
 //! TLS Keying Material Exporter 用のコンテキスト構造体をバイト列化する。
 //!
-//! 本実装が参照する仕様は IETF draft (`-15`) であり、draft の改訂や RFC 化に
+//! 本実装が参照する仕様は IETF draft (`-16`) であり、draft の改訂や RFC 化に
 //! 伴って章番号・要求項目が変わりうる。
 
 use crate::webtransport::error::WtError;
 
 /// WebTransport Exporter Context をシリアライズする
 ///
-/// draft-ietf-webtrans-http2-15 Section 5.3:
+/// draft-ietf-webtrans-http2-16 Section 5.3:
 /// ```text
 /// WebTransport Exporter Context {
 ///   WebTransport Session ID (64),

@@ -169,7 +169,7 @@ fn prop_wt_without_connect_protocol_fails() -> noprop::TestResult {
 
 /// WebTransport 初期設定あり + wt_enabled=false + enable_connect_protocol=true で build は失敗する
 ///
-/// draft-ietf-webtrans-http2-15 Section 3.1: WT 初期設定は SETTINGS_WT_ENABLED=1 の
+/// draft-ietf-webtrans-http2-16 Section 3.1: WT 初期設定は SETTINGS_WT_ENABLED=1 の
 /// サポート表明があって意味を持つ。
 #[test]
 fn prop_wt_initial_settings_without_wt_enabled_fails() -> noprop::TestResult {

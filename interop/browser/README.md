@@ -129,7 +129,7 @@ WebKit 26.6 は仕様改訂後の `datagrams.createWritable()` を実装して�
 | `wt_initial_max_streams_uni` | 100 |
 | `wt_initial_max_streams_bidi` | 100 |
 
-`peer SETTINGS` は `Settings` の全フィールドを出力するため、ピアが送っていない項目は既定値のまま表示される。上表の値がすべて「ピアが送った値」とは限らない。`enable_connect_protocol` と `wt_enabled` は仕様上サーバーが送る設定であり、クライアントからは送られない (draft-ietf-webtrans-http2-15 Section 3.1)。
+`peer SETTINGS` は `Settings` の全フィールドを出力するため、ピアが送っていない項目は既定値のまま表示される。上表の値がすべて「ピアが送った値」とは限らない。`enable_connect_protocol` と `wt_enabled` は仕様上サーバーが送る設定であり、クライアントからは送られない (draft-ietf-webtrans-http2-16 Section 3.1)。
 
 ### CONNECT リクエスト
 

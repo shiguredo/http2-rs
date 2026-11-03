@@ -150,7 +150,7 @@ fn test_send_settings_wt_enabled_uses_draft16_id() {
 ///
 /// draft-ietf-webtrans-http2-16 Section 3.1: クライアントは WebTransport サポートを
 /// 示す SETTINGS を受信するまで "webtransport" トークンの CONNECT を開始してはならない。
-/// draft-ietf-webtrans-http2-15 の旧識別子 0x2b60 は未知の SETTINGS として無視されるため、
+/// 旧 draft (draft-15) の識別子 0x2b60 は未知の SETTINGS として無視されるため、
 /// 旧識別子を受信してもゲートは開かない。
 #[test]
 fn test_client_webtransport_gate_accepts_only_new_wt_enabled_settings() {

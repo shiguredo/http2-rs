@@ -12,7 +12,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 - **依存なし**: 外部依存ゼロ (`std` のみ)
 - **Sans I/O**: I/O を完全に分離した設計 (Tokio, async-std, 同期 I/O など任意の環境で使用可能)
 - **RFC 準拠**: RFC 9113 (HTTP/2), RFC 7541 (HPACK), RFC 9218 (Extensible Priorities) に対応
-- **WebTransport over HTTP/2**: draft-ietf-webtrans-http2-16 の `SETTINGS_WT_ENABLED` (0x2b67) と `WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` の厳密増加規則に対応し、それ以外の WebTransport 動作は draft-ietf-webtrans-http2-15 に基づく
+- **WebTransport over HTTP/2**: draft-ietf-webtrans-http2-16 に基づく。`SETTINGS_WT_ENABLED` は 0x2b67 を使い、`WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` は Section 6.5 / 6.6 / 6.7 の厳密増加規則に従う
 - **HPACK**: 静的/動的テーブル、Huffman 符号化、サイズ更新対応
 - **フロー制御**: 接続レベル/ストリームレベル両対応
 - **DoS 対策**: `Limits` による各種上限設定
@@ -174,7 +174,11 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 
 ## WebTransport over HTTP/2
 
-`webtransport` モジュール。Sans I/O の `WtSession` を中心に、Capsule Protocol (RFC 9297) と WebTransport Capsule を扱う。Capsule の定義は draft-ietf-webtrans-http2-15 に基づき、`WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` の厳密増加規則だけは draft-ietf-webtrans-http2-16 に従う。
+`webtransport` モジュール。Sans I/O の `WtSession` を中心に、Capsule Protocol (RFC 9297) と WebTransport Capsule を扱う。Capsule の定義は draft-ietf-webtrans-http2-16 に基づき、`WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` は Section 6.5 / 6.6 / 6.7 の厳密増加規則に従う。
+
+draft-ietf-webtrans-http2-16 は Section 6.2 / 6.3 / 6.4 / 6.6 / 6.9 の状態違反、Section 6.4 / 6.5 / 6.6 / 6.7 / 6.10 のフロー制御違反をセッションエラーと定め、Section 3.4 がセッションエラーの扱いを規定する。
+
+Sans I/O の `WtErrorKind::StreamStateError` / `FlowControlError` / `SessionStateError` が受信した capsule の検証で生じた場合に限り、tokio-http2 の driver は `WT_STREAM_STATE_ERROR` / `WT_FLOW_CONTROL_ERROR` / `WT_ERROR` として CONNECT ストリームを RST_STREAM で終了させる。ローカル API の検証エラーとして返る場合は呼び出し側へエラーを返すだけで、セッションは継続する。
 
 ### WtSession
 
@@ -221,7 +225,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 
 | `WtEvent` バリアント | 説明 |
 |--------------------|------|
-| `StreamOpened { stream_id, bidirectional }` | ストリームが開かれた。ピアが上位 ID を先に開いた場合は同一型・同方向の下位 ID も通知される (RFC 9000 Section 3.2 / draft-ietf-webtrans-http2-15 Section 6.7) |
+| `StreamOpened { stream_id, bidirectional }` | ストリームが開かれた。ピアが上位 ID を先に開いた場合は同一型・同方向の下位 ID も通知される (RFC 9000 Section 3.2 / draft-ietf-webtrans-http2-16 Section 6.7) |
 | `StreamData { stream_id, data, fin }` | ストリームに WT_STREAM Capsule が到着 |
 | `StreamReset { stream_id, error_code }` | WT_RESET_STREAM を受信 |
 | `StopSending { stream_id, error_code }` | WT_STOP_SENDING を受信 |
@@ -231,7 +235,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 
 フロー制御 Capsule (`WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` / `*_BLOCKED`) の受信は内部状態を更新するが、`WtEvent` としては公開しない。`WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` は初期値または最後に受理した上限を増加させない値を draft-ietf-webtrans-http2-16 の MUST に従い `flow_control_error` で拒否する (Section 6.5 / 6.6 / 6.7)。ただしピア開始 bidi の未知 ID への `WT_MAX_STREAM_DATA` は、初期値を増加させる場合に限りストリームを開いて `StreamOpened` を送出する (RFC 9000 Section 3.2)。増加させない場合は draft-ietf-webtrans-http2-16 Section 6.6 の MUST により `flow_control_error` となり、ストリームもイベントも生成されない。削除済みストリームでは初期値または最後に受理した送信上限を上限付きで保持して非増加を検出し、削除後の増加は記録のみ更新して無視する (記録から追い出された ID は非増加の検出を行わない既知の制限がある)。
 
-ピアが上位 ID を先に開いた場合、同一型・同方向の下位 ID も開かれたものとして `StreamOpened` が送出されるため、`accept_bidi` / `accept_uni` は受信した capsule に現れていない ID のストリームも返し得る (draft-ietf-webtrans-http2-15 Section 6.7)。
+ピアが上位 ID を先に開いた場合、同一型・同方向の下位 ID も開かれたものとして `StreamOpened` が送出されるため、`accept_bidi` / `accept_uni` は受信した capsule に現れていない ID のストリームも返し得る (draft-ietf-webtrans-http2-16 Section 6.7)。
 
 | `WtSessionState` | 説明 |
 |----------------|------|
@@ -241,11 +245,11 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 
 | 型 / 関数 | 説明 |
 |----------|------|
-| `WtAvailableProtocols` | `WT-Available-Protocols` ヘッダーのパース結果 (`parse(&[u8]) -> Result<Self, WtError>`、RFC 8941 List of String) |
-| `serialize_wt_protocol(&[u8])` | `WT-Protocol` 値を RFC 8941 sf-string としてシリアライズ |
-| `serialize_exporter_context(session_id, app_label, app_context)` | TLS Keying Material Exporter 用コンテキストをシリアライズ (draft-15 Section 5.3) |
+| `WtAvailableProtocols` | `WT-Available-Protocols` ヘッダーのパース結果 (`parse(&[u8]) -> Result<Self, WtError>`、RFC 9651 List of String)。パラメータ値の Date / Display String は未対応 |
+| `serialize_wt_protocol(&[u8])` | `WT-Protocol` 値を RFC 9651 sf-string としてシリアライズ |
+| `serialize_exporter_context(session_id, app_label, app_context)` | TLS Keying Material Exporter 用コンテキストをシリアライズ (draft-16 Section 5.3) |
 
-### Capsule (draft-ietf-webtrans-http2-15 Section 6)
+### Capsule (draft-ietf-webtrans-http2-16 Section 6)
 
 | Capsule | Type コード |
 |---------|------------|
@@ -264,7 +268,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 | `WT_CLOSE_SESSION` | `0x2843` |
 | `WT_DRAIN_SESSION` | `0x78AE` |
 
-draft-15 では WT_STREAM の LSB が FIN bit。`0x190B4D3C` (LSB=0) が非終端、`0x190B4D3B` (LSB=1) が終端。
+WT_STREAM の LSB は FIN bit。`0x190B4D3C` (LSB=0) が非終端、`0x190B4D3B` (LSB=1) が終端。
 
 ### WebTransport SETTINGS
 
@@ -278,7 +282,7 @@ draft-15 では WT_STREAM の LSB が FIN bit。`0x190B4D3C` (LSB=0) が非終�
 | `SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE` | `0x2b66` |
 | `SETTINGS_WT_ENABLED` | `0x2b67` |
 
-draft-ietf-webtrans-http2-16 では `SETTINGS_WT_ENABLED` の識別子が `0x2b67` に変更された。draft-ietf-webtrans-http2-15 の識別子 `0x2b60` は未知の SETTINGS として無視するため、draft-ietf-webtrans-http2-15 準拠のピアとの相互運用は想定していない。
+draft-ietf-webtrans-http2-16 では `SETTINGS_WT_ENABLED` の識別子が `0x2b67` に変更された。旧 draft (draft-15) の識別子 `0x2b60` は未知の SETTINGS として無視するため、draft-15 準拠のピアとの相互運用は想定していない。
 
 ## コード例
 
@@ -446,7 +450,7 @@ WebTransport 関連型: `WtServerRequest`, `WtServerSession`, `WtSessionHandle`,
 
 `accept(config, allowed_origin, selected_protocol)` の挙動:
 
-- TLS 1.3 必須 (draft-ietf-webtrans-http2-15 Section 7。rustls 0.23 が TLS 1.2 + extended master secret の状態を公開しないため仕様より厳しい)
+- TLS 1.3 必須 (draft-ietf-webtrans-http2-16 Section 7。rustls 0.23 が TLS 1.2 + extended master secret の状態を公開しないため仕様より厳しい)
 - `:scheme` が `https` でない場合は `RST_STREAM(PROTOCOL_ERROR)` で拒否 (Section 3.2)
 - `allowed_origin: Some(_)` のとき、Origin ヘッダーが存在する場合のみ検証する。欠落時は検証スキップ。不一致は 403
 - `selected_protocol: Some(_)` のとき、リクエストの `WT-Available-Protocols` に含まれることを検証し、レスポンスに `wt-protocol` を付与 (Section 3.3)
@@ -487,7 +491,7 @@ nghttp2 C ライブラリを使う系統。`shiguredo_nghttp2::Session` を中�
 
 ### `ErrorCode` (HTTP/2 エラーコード)
 
-RFC 9113 §7 の HTTP/2 エラーコードに加え、draft-ietf-webtrans-http2-15 Section 3.4 / Section 11.3 の WebTransport エラーコードを含む。`as_u32()` / `from_u32(u32)` で変換可能。
+RFC 9113 §7 の HTTP/2 エラーコードに加え、draft-ietf-webtrans-http2-16 Section 3.4 / Section 11.3 の WebTransport エラーコードを含む。`as_u32()` / `from_u32(u32)` で変換可能。
 
 | バリアント | コード |
 |----------|-------|
@@ -509,7 +513,7 @@ RFC 9113 §7 の HTTP/2 エラーコードに加え、draft-ietf-webtrans-http2-
 | `WtStreamStateError` | `0x101` (`WT_STREAM_STATE_ERROR`) |
 | `WtFlowControlError` | `0x102` (`WT_FLOW_CONTROL_ERROR`) |
 
-注: `ErrorCode::WtError` は HTTP/2 GOAWAY/RST_STREAM 用のエラーコードであり、`webtransport::WtError` 構造体とは別物。
+注: `ErrorCode::WtError` は HTTP/2 GOAWAY/RST_STREAM 用のエラーコードであり、`webtransport::WtError` 構造体とは別物。`WtError` / `WtStreamStateError` / `WtFlowControlError` の `0x100`-`0x102` は draft-ietf-webtrans-http2-16 Section 11.3 が 0xTBD のため本実装の暫定値。
 
 ### `tokio_http2::Error`
 
@@ -541,9 +545,8 @@ RFC 9113 §7 の HTTP/2 エラーコードに加え、draft-ietf-webtrans-http2-
 | RFC 9113 | HTTP/2 | フレーム、フロー制御、ストリーム状態遷移、CONNECT、エラー処理 |
 | RFC 9218 | Extensible Prioritization Scheme for HTTP | PRIORITY_UPDATE フレーム、`urgency` / `incremental` |
 | RFC 9297 | HTTP Datagrams and the Capsule Protocol | Capsule, DATAGRAM, PADDING |
-| draft-ietf-webtrans-http2-15 | WebTransport over HTTP/2 | WT_* Capsule, WebTransport SETTINGS, Extended CONNECT (`webtransport`), TLS 1.3 要件, Origin 検証 |
-
-`SETTINGS_WT_ENABLED` (識別子 `0x2b67`) と `WT_MAX_DATA` / `WT_MAX_STREAM_DATA` / `WT_MAX_STREAMS` の厳密増加規則だけは draft-ietf-webtrans-http2-16 に従う (それ以外の WebTransport 動作は draft-ietf-webtrans-http2-15 に基づく)。
+| RFC 9651 | Structured Field Values for HTTP | `WebTransport-Init` / `WT-Available-Protocols` / `WT-Protocol` のパースとシリアライズ |
+| draft-ietf-webtrans-http2-16 | WebTransport over HTTP/2 | WT_* Capsule, WebTransport SETTINGS, Extended CONNECT (`webtransport`), TLS 1.3 要件, Origin 検証 |
 
 ## 既知の未対応 / 制限
 
@@ -552,5 +555,5 @@ RFC 9113 §7 の HTTP/2 エラーコードに加え、draft-ietf-webtrans-http2-
 - **PRIORITY フレーム**: RFC 9113 で非推奨。受信は処理する (優先度情報は無視) が、送信はしない。
 - **HEADERS の優先度フィールド**: RFC 9113 で非推奨。
 - **tokio-nghttp2 と Extended CONNECT / WebTransport**: tokio-nghttp2 側は Extended CONNECT と WebTransport を提供しない (tokio-http2 のみ)。
-- **tokio-http2 の WebTransport accept は TLS 1.3 必須**: rustls 0.23 が TLS 1.2 + extended master secret のネゴシエーション状態を外部公開していないため、安全側に倒して TLS 1.3 のみを許可する (draft-ietf-webtrans-http2-15 Section 7 の要件より厳しい)。
+- **tokio-http2 の WebTransport accept は TLS 1.3 必須**: rustls 0.23 が TLS 1.2 + extended master secret のネゴシエーション状態を外部公開していないため、安全側に倒して TLS 1.3 のみを許可する (draft-ietf-webtrans-http2-16 Section 7 の要件より厳しい)。
 - **WebTransport の二重ゲート**: `:protocol=webtransport` の CONNECT 開始にはピアの `SETTINGS_ENABLE_CONNECT_PROTOCOL=1` と `SETTINGS_WT_ENABLED=1` の両方が必要。

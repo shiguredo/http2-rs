@@ -83,7 +83,7 @@ pub enum ValidationError {
     /// `:status = 101` (Switching Protocols) は HTTP/2 では使えない (RFC 9113 §8.6)
     Status101NotSupported,
     /// `:protocol=webtransport` 時に `:scheme` が `https` でない
-    /// (draft-ietf-webtrans-http2-15 Section 3.2)
+    /// (draft-ietf-webtrans-http2-16 Section 3.2)
     WebTransportRequiresHttps,
 }
 
@@ -156,7 +156,7 @@ impl std::fmt::Display for ValidationError {
             Self::WebTransportRequiresHttps => {
                 write!(
                     f,
-                    ":protocol=webtransport requires :scheme=https (draft-ietf-webtrans-http2-15 Section 3.2)"
+                    ":protocol=webtransport requires :scheme=https (draft-ietf-webtrans-http2-16 Section 3.2)"
                 )
             }
         }
@@ -362,7 +362,7 @@ pub fn validate_request_headers(headers: &[HeaderField]) -> Result<(), Error> {
                     ValidationError::ExtendedConnectInvalidAuthority,
                 ));
             }
-            // draft-ietf-webtrans-http2-15 Section 3.2:
+            // draft-ietf-webtrans-http2-16 Section 3.2:
             // :protocol=webtransport の場合 :scheme は MUST https
             // RFC 3986 Section 3.1: scheme は case-insensitive
             if protocol_value == Some(b"webtransport")

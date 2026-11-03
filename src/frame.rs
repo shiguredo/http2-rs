@@ -511,7 +511,7 @@ pub struct PriorityUpdateFrame {
     pub prioritized_element_id: NonZeroStreamId,
     /// Priority Field Value
     ///
-    /// RFC 9218 §7.1: Structured Fields (RFC 8941) の Dictionary 形式。
+    /// RFC 9218 §7.1: Structured Fields (現在は RFC 9651) の Dictionary 形式。
     /// 空の場合はデフォルト優先度を使用。
     pub priority_field_value: Vec<u8>,
 }

@@ -17,7 +17,7 @@
 
 また、`initial_max_streams_bidi` / `initial_max_streams_uni` は `u64` のため、`WtConfig` を手動構築した場合に 2^60 超過の値を注入できる。2^60 超過の注入経路は構造体リテラルとフィールド代入の 2 つのみで、いずれも private 化により構造的に閉じる。`Settings` 経由の WT 系パラメータは `u32`（最大 2^32-1）で制約され、`WtInit` のキーは `u` / `bl` / `br` のみでストリーム数を含まず（`SF_INTEGER_MAX` = 10^15-1 < 2^60）、`overlay_settings` / `apply_init` / `apply_init_as_peer` も 2^60 未満の値のみをマージするため、直接構築以外の経路は存在しない。
 
-draft-ietf-webtrans-http2-15 Section 6.7 / 6.10 は Maximum Streams の上限を 2^60 と定めており（"This value cannot exceed 2^60"）、Section 4.3.1 は初期ストリーム数を "WT_MAX_STREAMS via SETTINGS_WT_INITIAL_MAX_STREAMS_UNI and SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI" として定義しているため、初期値にも 2^60 上限が及ぶ（Section 6.7 末尾の "Initial values for these limits MAY be communicated by sending non-zero values for SETTINGS_WT_INITIAL_MAX_STREAMS_UNI and SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI" も同旨）。
+draft-ietf-webtrans-http2-16 Section 6.7 / 6.10 は Maximum Streams の上限を 2^60 と定めており（"This value cannot exceed 2^60"）、Section 4.3.1 は初期ストリーム数を "WT_MAX_STREAMS via SETTINGS_WT_INITIAL_MAX_STREAMS_UNI and SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI" として定義しているため、初期値にも 2^60 上限が及ぶ（Section 6.7 末尾の "Initial values for these limits MAY be communicated by sending non-zero values for SETTINGS_WT_INITIAL_MAX_STREAMS_UNI and SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI" も同旨）。
 
 ## 設計方針
 

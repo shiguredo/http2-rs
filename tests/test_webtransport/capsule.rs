@@ -1,6 +1,6 @@
 use shiguredo_http2::webtransport::{Capsule, CapsuleDecoder, CapsuleEncoder};
 
-// draft-ietf-webtrans-http2-15 Section 6.4:
+// draft-ietf-webtrans-http2-16 Section 6.4:
 // 非終端 WT_STREAM (FIN=0) の capsule type は 0x190B4D3C、
 // 終端 WT_STREAM (FIN=1) の capsule type は 0x190B4D3B。
 // LSB が FIN bit であり、0x3B の LSB=1 → FIN=1、0x3C の LSB=0 → FIN=0。
@@ -526,7 +526,7 @@ fn test_decode_wt_streams_blocked() {
 /// Application Protocol Error Code が 0xffffffff を超える WT_RESET_STREAM は
 /// セッションエラー (WT_ERROR 相当 = SessionStateError) になること
 ///
-/// draft-ietf-webtrans-http2-15 Section 6.2
+/// draft-ietf-webtrans-http2-16 Section 6.2
 #[test]
 fn test_wt_reset_stream_error_code_exceeds_u32_is_session_error() {
     use shiguredo_http2::webtransport::{WtErrorKind, capsule_type, varint_encode};
@@ -563,7 +563,7 @@ fn test_wt_reset_stream_error_code_exceeds_u32_is_session_error() {
 /// Application Protocol Error Code が 0xffffffff を超える WT_STOP_SENDING は
 /// セッションエラー (WT_ERROR 相当 = SessionStateError) になること
 ///
-/// draft-ietf-webtrans-http2-15 Section 6.3
+/// draft-ietf-webtrans-http2-16 Section 6.3
 #[test]
 fn test_wt_stop_sending_error_code_exceeds_u32_is_session_error() {
     use shiguredo_http2::webtransport::{WtErrorKind, capsule_type, varint_encode};

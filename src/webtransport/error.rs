@@ -1,11 +1,19 @@
 //! WebTransport エラー型定義
 //!
-//! draft-ietf-webtrans-http2-15 で使用されるエラー型を提供する。
+//! draft-ietf-webtrans-http2-16 で使用されるエラー型を提供する。
 
 use std::backtrace::{Backtrace, BacktraceStatus};
 use std::panic::Location;
 
 /// WebTransport エラーの種類
+///
+/// draft-ietf-webtrans-http2-16 Section 3.4 は、ストリーム状態の違反を
+/// WT_STREAM_STATE_ERROR、フロー制御上限の違反を WT_FLOW_CONTROL_ERROR、
+/// より具体的なエラーコードを持たない違反を WT_ERROR のセッションエラーとして扱う。
+/// これらが受信した capsule の検証で生じた場合、tokio-http2 の driver は
+/// CONNECT ストリームを RST_STREAM で終了してセッションを終了させる。
+/// ローカル API の検証エラーとして返る場合は呼び出し側へエラーを返すだけで、
+/// セッションは継続する。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WtErrorKind {
     /// 入力データが不足している
@@ -24,12 +32,23 @@ pub enum WtErrorKind {
     InvalidStreamId,
 
     /// ストリーム状態エラー
+    ///
+    /// draft-ietf-webtrans-http2-16 Section 6.2 / Section 6.3 / Section 6.4 /
+    /// Section 6.6 / Section 6.9 が定める WT_STREAM_STATE_ERROR に対応する。
     StreamStateError,
 
     /// フロー制御エラー
+    ///
+    /// draft-ietf-webtrans-http2-16 Section 6.4 / Section 6.5 / Section 6.6 /
+    /// Section 6.7 / Section 6.10 が定める WT_FLOW_CONTROL_ERROR に対応する。
     FlowControlError,
 
     /// セッション状態エラー
+    ///
+    /// draft-ietf-webtrans-http2-16 Section 3.4 が定める WT_ERROR に対応する。
+    /// セッション状態の遷移違反に加え、より具体的なエラーコードを持たない
+    /// 受信 capsule の検証失敗 (Application Protocol Error Code の 32 bit 超過、
+    /// WT_CLOSE_SESSION の理由長超過・非 UTF-8 など) を含む。
     SessionStateError,
 }
 

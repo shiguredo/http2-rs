@@ -29,7 +29,7 @@ Rust で実装された依存 0 かつ Sans I/O な HTTP/2 と WebTransport over
 - 依存ライブラリ 0
 - RFC 9113 (HTTP/2) および RFC 7541 (HPACK) 準拠
 - RFC 9218 (Extensible Priorities) サポート
-- WebTransport over HTTP/2 (draft-ietf-webtrans-http2) サポート
+- WebTransport over HTTP/2 (draft-ietf-webtrans-http2-16) サポート
 
 ## 使い方
 
@@ -169,15 +169,15 @@ session.send_datagram(b"Datagram")?;
 - SETTINGS_MAX_HEADER_LIST_SIZE (0x06)
 - SETTINGS_ENABLE_CONNECT_PROTOCOL (0x08) - RFC 8441
 - SETTINGS_NO_RFC7540_PRIORITIES (0x09) - RFC 9218
-- SETTINGS_WT_INITIAL_MAX_DATA (0x2b61) - draft-ietf-webtrans-http2
-- SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62) - draft-ietf-webtrans-http2
-- SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63) - draft-ietf-webtrans-http2
-- SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64) - draft-ietf-webtrans-http2
-- SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65) - draft-ietf-webtrans-http2
-- SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66) - draft-ietf-webtrans-http2
-- SETTINGS_WT_ENABLED (0x2b67) - draft-ietf-webtrans-http2
+- SETTINGS_WT_INITIAL_MAX_DATA (0x2b61) - draft-ietf-webtrans-http2-16
+- SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62) - draft-ietf-webtrans-http2-16
+- SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63) - draft-ietf-webtrans-http2-16
+- SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64) - draft-ietf-webtrans-http2-16
+- SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65) - draft-ietf-webtrans-http2-16
+- SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66) - draft-ietf-webtrans-http2-16
+- SETTINGS_WT_ENABLED (0x2b67) - draft-ietf-webtrans-http2-16
 
-draft-ietf-webtrans-http2-16 では `SETTINGS_WT_ENABLED` の識別子が `0x2b67` に変更された。draft-ietf-webtrans-http2-15 の識別子 `0x2b60` は未知の SETTINGS として無視するため、draft-ietf-webtrans-http2-15 準拠のピアとの相互運用は想定していない。
+draft-ietf-webtrans-http2-16 では `SETTINGS_WT_ENABLED` の識別子が `0x2b67` に変更された。旧 draft (draft-15) の識別子 `0x2b60` は未知の SETTINGS として無視するため、draft-15 準拠のピアとの相互運用は想定していない。
 
 ### HPACK (RFC 7541)
 
@@ -219,7 +219,7 @@ draft-ietf-webtrans-http2-16 では `SETTINGS_WT_ENABLED` の識別子が `0x2b6
 
 ## WebTransport over HTTP/2
 
-draft-ietf-webtrans-http2 で定義される WebTransport をサポートします。
+draft-ietf-webtrans-http2-16 で定義される WebTransport をサポートします。
 
 WebTransport を有効にするには `LimitsBuilder` で `enable_connect_protocol(true)` と `wt_enabled(true)` の両方を設定する必要があります (SETTINGS_ENABLE_CONNECT_PROTOCOL と SETTINGS_WT_ENABLED の二重ゲート)。
 
@@ -230,7 +230,7 @@ WebTransport を有効にするには `LimitsBuilder` で `enable_connect_protoc
 - DATAGRAM
 - PADDING
 
-### WebTransport Capsule (draft-ietf-webtrans-http2 Section 6)
+### WebTransport Capsule (draft-ietf-webtrans-http2-16 Section 6)
 
 - WT_RESET_STREAM
 - WT_STOP_SENDING
@@ -325,7 +325,7 @@ curl -k --http2 https://localhost:8443/
 
 ### wt_server
 
-WebTransport over HTTP/2 (draft-ietf-webtrans-http2) エコーサーバーの例です。自己署名証明書を自動生成します。
+WebTransport over HTTP/2 (draft-ietf-webtrans-http2-16) エコーサーバーの例です。自己署名証明書を自動生成します。
 
 ```bash
 cargo run -p wt_server
@@ -347,8 +347,10 @@ cargo run -p wt_server
   - <https://datatracker.ietf.org/doc/html/rfc9218>
 - RFC 9297 - HTTP Datagrams and the Capsule Protocol
   - <https://datatracker.ietf.org/doc/html/rfc9297>
-- draft-ietf-webtrans-http2 - WebTransport over HTTP/2
-  - <https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http2>
+- RFC 9651 - Structured Field Values for HTTP
+  - <https://datatracker.ietf.org/doc/html/rfc9651>
+- draft-ietf-webtrans-http2-16 - WebTransport over HTTP/2
+  - <https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http2-16>
 
 ## ライセンス
 

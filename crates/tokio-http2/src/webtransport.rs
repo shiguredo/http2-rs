@@ -1,6 +1,6 @@
 //! WebTransport over HTTP/2 サーバー API
 //!
-//! draft-ietf-webtrans-http2-15 に基づく WebTransport サーバー実装。
+//! draft-ietf-webtrans-http2-16 に基づく WebTransport サーバー実装。
 //! Extended CONNECT (`:protocol=webtransport`) で確立されたセッション上で、
 //! Capsule Protocol によって bidi / uni ストリームと DATAGRAM を多重化する。
 //!
@@ -35,7 +35,7 @@ pub const WEBTRANSPORT_PROTOCOL: &[u8] = b"webtransport";
 /// `shiguredo_http2::settings::DEFAULT_INITIAL_WINDOW_SIZE` と同じ定数を参照する
 /// (固定容量 65535)。1 回の `send_data` にそれ以上を渡すと全量拒否される。
 /// WebTransport capsule は HTTP/2 のバイトストリーム上に載るため、capsule 境界と
-/// 無関係に分割して送信できる (draft-ietf-webtrans-http2-15 Section 2 /
+/// 無関係に分割して送信できる (draft-ietf-webtrans-http2-16 Section 2 /
 /// RFC 9297 Section 3.1)。
 const WT_SEND_CHUNK_SIZE: usize = shiguredo_http2::settings::DEFAULT_INITIAL_WINDOW_SIZE as usize;
 
@@ -101,14 +101,14 @@ impl WtServerRequest {
         self.header(b"origin")
     }
 
-    /// `WebTransport-Init` ヘッダー値 (RFC 8941 Dictionary バイト列) を取得する
+    /// `WebTransport-Init` ヘッダー値 (RFC 9651 Dictionary バイト列) を取得する
     ///
-    /// draft-ietf-webtrans-http2-15 Section 4.3.2 (L583-L590) で規定される
+    /// draft-ietf-webtrans-http2-16 Section 4.3.2 で規定される
     /// 初期フロー制御値のヘッダー。HTTP/2 では field name は小文字なので
     /// `webtransport-init` (lowercase) で照合する。
     ///
     /// 既知の制限: 同名ヘッダーが複数あった場合は最初の 1 個のみを返し、
-    /// RFC 8941 §4.2 (L1042-L1046) が MUST 要求する comma-concat 結合は未対応。
+    /// RFC 9651 §4.2 が MUST 要求する comma-concat 結合は未対応。
     /// 通常のクライアント実装が複数行を送ることは稀だが、必要に応じて将来対応する。
     #[must_use]
     pub fn webtransport_init(&self) -> Option<&[u8]> {
@@ -117,7 +117,7 @@ impl WtServerRequest {
 
     /// `WT-Available-Protocols` ヘッダー値を取得する
     ///
-    /// draft-ietf-webtrans-http2-15 Section 3.3 / draft-ietf-webtrans-http3
+    /// draft-ietf-webtrans-http2-16 Section 3.3 / draft-ietf-webtrans-http3-16 Section 3.3
     /// Application Protocol Negotiation。HTTP/2 では field name は小文字なので
     /// `wt-available-protocols` で照合する。
     ///
@@ -140,15 +140,15 @@ impl WtServerRequest {
     /// 双方向エコーやストリーム受信が可能な状態にする。
     ///
     /// `allowed_origin` に `Some` を指定すると、リクエストに Origin ヘッダーが
-    /// ある場合に検証する (draft-ietf-webtrans-http2-15 Section 3.2 MUST)。
+    /// ある場合に検証する (draft-ietf-webtrans-http2-16 Section 3.2 MUST)。
     /// Origin が一致しない場合は 403 を返す。Origin が欠落している場合は
     /// 検証をスキップする。`None` を指定すると検証をスキップする
     /// (非 Web context 向け)。
     ///
     /// `selected_protocol` に `Some` を指定すると、リクエストの
     /// `WT-Available-Protocols` に含まれる値であることを検証し、
-    /// レスポンスに `wt-protocol` (RFC 8941 sf-string) を付与する
-    /// (draft-ietf-webtrans-http2-15 Section 3.3)。
+    /// レスポンスに `wt-protocol` (RFC 9651 sf-string) を付与する
+    /// (draft-ietf-webtrans-http2-16 Section 3.3)。
     ///
     /// `config` の WT 初期値は、この接続が広告した SETTINGS の値で上書きされる。
     /// SETTINGS で広告していない項目は Initial Value の 0 になる
@@ -159,7 +159,7 @@ impl WtServerRequest {
         allowed_origin: Option<&[u8]>,
         selected_protocol: Option<&[u8]>,
     ) -> Result<WtServerSession> {
-        // draft-ietf-webtrans-http2-15 Section 7 (L1483-L1487):
+        // draft-ietf-webtrans-http2-16 Section 7:
         // WebTransport over HTTP/2 は TLS 1.3 か、TLS 1.2 + extended master secret を要求する。
         // rustls 0.23 は extended master secret のネゴシエーション状態を外部公開していないため、
         // 動的判定不可。安全側に倒して TLS 1.3 のみを許可する (仕様より厳しい)。
@@ -167,7 +167,7 @@ impl WtServerRequest {
         // `ProtocolVersion` は `#[non_exhaustive]` のため `matches!` で完全一致比較する。
         let tls_version = self.conn.with_tls(|tls| tls.protocol_version());
         if !matches!(tls_version, Some(rustls::ProtocolVersion::TLSv1_3)) {
-            // RFC 9113 Section 8.1.1 (L2463-L2465) / Section 5.4.2:
+            // RFC 9113 Section 8.1.1 / Section 5.4.2:
             // malformed request は stream error of type PROTOCOL_ERROR で処理する。
             self.conn
                 .reset_stream(self.stream_id, ErrorCode::ProtocolError)
@@ -178,7 +178,7 @@ impl WtServerRequest {
             )));
         }
 
-        // draft-ietf-webtrans-http2-15 Section 3.2:
+        // draft-ietf-webtrans-http2-16 Section 3.2:
         // `:scheme` は `https` でなければならない (MUST)。case-insensitive。
         // 違反は stream error of type PROTOCOL_ERROR。
         let scheme_ok = self
@@ -204,7 +204,7 @@ impl WtServerRequest {
             ..
         } = self;
 
-        // draft-ietf-webtrans-http2-15 Section 3.2:
+        // draft-ietf-webtrans-http2-16 Section 3.2:
         // Origin ヘッダーがある場合に MUST verify。失敗は SHOULD 403。
         // 欠落時の必須検証は書かれていない (draft-14 の無条件 MUST verify から変更)。
         if let Some(allowed) = allowed_origin {
@@ -224,19 +224,19 @@ impl WtServerRequest {
             }
         }
 
-        // draft-ietf-webtrans-http2-15 Section 4.3.1 / draft-ietf-webtrans-http2-16 Section 11.2:
+        // draft-ietf-webtrans-http2-16 Section 4.3.1 / Section 11.2:
         // セッション確立時は ACK 済みの自広告 SETTINGS 初期値を適用する。
         // 未広告の WT 初期値は Initial Value の 0 として扱う。
         config.apply_advertised_settings(conn.local_settings());
 
-        // draft-ietf-webtrans-http2-15 Section 4.3.1:
+        // draft-ietf-webtrans-http2-16 Section 4.3.1:
         // ピア (クライアント) の SETTINGS からピア用 WtConfig を構築する。
         // send_max はピアの広告値を使う。未広告項目の Initial Value は 0 のため
         // WtConfig::default() ではなく peer_default() から開始する (Section 11.2)
         let mut peer_config = WtConfig::peer_default();
         peer_config.overlay_settings(conn.remote_settings());
 
-        // draft-ietf-webtrans-http2-15 Section 4.3 (L509-L530) / Section 4.3.2 (L583-L590):
+        // draft-ietf-webtrans-http2-16 Section 4.3 / Section 4.3.2:
         // WebTransport-Init はクライアントが送信するヘッダーであり、クライアントの広告値を含む。
         // ピア用 config では bl → initial_max_stream_data_bidi_local、
         // br → initial_max_stream_data_bidi_remote と対応するため apply_init_as_peer を使う。
@@ -252,8 +252,8 @@ impl WtServerRequest {
             }
         }
 
-        // draft-ietf-webtrans-http2-15 Section 3.3 / draft-ietf-webtrans-http3:
-        // WT-Available-Protocols は RFC 8941 List of String。
+        // draft-ietf-webtrans-http2-16 Section 3.3 / draft-ietf-webtrans-http3-16 Section 3.3:
+        // WT-Available-Protocols は RFC 9651 List of String。
         // パース失敗は仕様上 ignore (= ヘッダー不在扱い)。
         let available = available_bytes
             .as_deref()
@@ -280,7 +280,7 @@ impl WtServerRequest {
             }
         }
 
-        // draft-ietf-webtrans-http2-15 Section 3.2:
+        // draft-ietf-webtrans-http2-16 Section 3.2:
         // WebTransport セッション確立時はサーバーが 2xx ステータスを返し、
         // END_STREAM は立てない (Capsule Protocol で通信を継続する)。
         let mut response = vec![HeaderField::from_static(b":status", b"200")];
@@ -416,7 +416,7 @@ impl WtServerSession {
     ///
     /// ピアが上位 ID を先に開いた場合、同一型・同方向の下位 ID のストリームも
     /// 返り得るため、受信した capsule に現れていない ID のストリームが返ることがある
-    /// (RFC 9000 Section 3.2 / draft-ietf-webtrans-http2-15 Section 6.7)。
+    /// (RFC 9000 Section 3.2 / draft-ietf-webtrans-http2-16 Section 6.7)。
     pub async fn accept_bidi(&mut self) -> Option<WtBidiStream> {
         self.bidi_rx.recv().await
     }
@@ -425,7 +425,7 @@ impl WtServerSession {
     ///
     /// ピアが上位 ID を先に開いた場合、同一型・同方向の下位 ID のストリームも
     /// 返り得るため、受信した capsule に現れていない ID のストリームが返ることがある
-    /// (RFC 9000 Section 3.2 / draft-ietf-webtrans-http2-15 Section 6.7)。
+    /// (RFC 9000 Section 3.2 / draft-ietf-webtrans-http2-16 Section 6.7)。
     pub async fn accept_uni(&mut self) -> Option<WtUniRecvStream> {
         self.uni_rx.recv().await
     }
@@ -464,7 +464,7 @@ impl WtServerSession {
 
     /// TLS Keying Material Exporter で鍵素材を導出する
     ///
-    /// draft-ietf-webtrans-http2-15 Section 5.3:
+    /// draft-ietf-webtrans-http2-16 Section 5.3:
     /// ラベルは `EXPORTER-WebTransport`、コンテキストは
     /// `serialize_exporter_context(session_id, app_label, app_context)` の結果。
     pub async fn export_keying_material(
@@ -1013,7 +1013,7 @@ impl DriverState {
                     .close(error_code, &reason)
                     .map_err(Error::from);
                 if res.is_ok() {
-                    // draft-ietf-webtrans-http2-15 Section 6.12 (L1405-L1406):
+                    // draft-ietf-webtrans-http2-16 Section 6.12:
                     // WT_CLOSE_SESSION 送信後は MUST half-close the stream。このため
                     // 出力フラッシュに続けて空 DATA + END_STREAM を送信する。
                     // RFC 9113 Section 6.9.1: 空 DATA + END_STREAM はフロー制御ウィンドウ
@@ -1149,7 +1149,7 @@ impl DriverState {
                     self.dispatch_wt_event(wt_ev).await?;
                 }
 
-                // draft-ietf-webtrans-http2-15 Section 6.12 (L1407-L1409):
+                // draft-ietf-webtrans-http2-16 Section 6.12:
                 // WT_CLOSE_SESSION 受信時は MUST close the stream with END_STREAM。
                 // end_stream=true と WT_CLOSE_SESSION が同一 DATA フレームに
                 // 含まれている場合でも、先に END_STREAM を返信する必要があるため
@@ -1167,7 +1167,7 @@ impl DriverState {
                     return Err(Error::ConnectionClosed);
                 }
 
-                // draft-ietf-webtrans-http2-15 Section 6: 受信時にフロー制御を更新する
+                // draft-ietf-webtrans-http2-16 Section 6: 受信時にフロー制御を更新する
                 if let Err(e) = self.maybe_grow_session_window() {
                     return Err(self.abort_session_with_wt_error(e).await);
                 }
@@ -1213,6 +1213,10 @@ impl DriverState {
     }
 
     /// セッション終了系の `WtError` なら CONNECT に RST_STREAM を送ってから返す
+    ///
+    /// draft-ietf-webtrans-http2-16 Section 3.4: セッションエラーは WebTransport
+    /// セッションを終了させる。WT_CLOSE_SESSION によるアプリケーション通知は行わず、
+    /// CONNECT ストリームを RST_STREAM で終了して HTTP/2 エラーコードで伝える。
     async fn abort_session_with_wt_error(
         &mut self,
         e: shiguredo_http2::webtransport::WtError,
@@ -1242,7 +1246,7 @@ impl DriverState {
         let Some(stream) = self.wt_session.stream(stream_id) else {
             return Ok(());
         };
-        // draft-ietf-webtrans-http2-15 Section 5.2: WebTransport ストリームの状態は
+        // draft-ietf-webtrans-http2-16 Section 5.2: WebTransport ストリームの状態は
         // QUIC ストリームの状態を mirror する。RFC 9000 Section 3.3 / Section 19.10:
         // MAX_STREAM_DATA を送れるのは `Recv` 状態のストリームに限られ、
         // `WtSession::grow_stream_recv_window` も同じ基準で検証する。
@@ -1255,7 +1259,7 @@ impl DriverState {
         let bidirectional = stream.is_bidirectional();
         let recv_available = stream.recv_available();
         let initial = if bidirectional {
-            // draft-ietf-webtrans-http2-15 Section 11.2:
+            // draft-ietf-webtrans-http2-16 Section 11.2:
             // ローカル開始 bidi の recv_max は bidi_local、ピア開始 bidi は bidi_remote で
             // 初期化されるため、しきい値・拡張量も開始主体に応じて選ぶ
             // 現在の DriverState はサーバー専用のため Role::Client は到達しないが、
@@ -1341,7 +1345,7 @@ impl DriverState {
             } => {
                 // RFC 9000 Section 3.5: STOP_SENDING 送信後の受信データは
                 // アプリへ配送せず破棄し、ストリームウィンドウも拡張しない。
-                // ウィンドウ拡張の抑止は draft-ietf-webtrans-http2-15 Section 6.6 の
+                // ウィンドウ拡張の抑止は draft-ietf-webtrans-http2-16 Section 6.6 の
                 // WT_MAX_STREAM_DATA 送信禁止 (MUST NOT) に従う。
                 // 破棄しても connection / stream のフロー制御への計上は
                 // sans-io 層 (`WtStream::recv_data` と `WtFlowControl::consume_recv`) で継続する。
@@ -1419,7 +1423,7 @@ impl DriverState {
 
 /// セッション終了系 `WtErrorKind` を HTTP/2 エラーコードへ対応付ける
 ///
-/// draft-ietf-webtrans-http2-15 Section 3.4 / Section 11.3:
+/// draft-ietf-webtrans-http2-16 Section 3.4 / Section 11.3:
 /// セッションエラーは CONNECT ストリームの RST_STREAM で伝える。
 fn wt_http2_error_code(kind: WtErrorKind) -> Option<ErrorCode> {
     match kind {

@@ -207,7 +207,7 @@ const checks = {
   // datagram の送受信
   //
   // HTTP/2 では unreliable delivery を提供しないが、datagram 自体は capsule として
-  // 送受信できる (draft-ietf-webtrans-http2-15 Section 5.1 / Section 6.11)。
+  // 送受信できる (draft-ietf-webtrans-http2-16 Section 5.1 / Section 6.11)。
   // 送信側の API は仕様改訂で writable 属性から createWritable() に変わっており、
   // 両方を受け付ける。
   async datagrams() {
