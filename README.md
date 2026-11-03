@@ -169,13 +169,15 @@ session.send_datagram(b"Datagram")?;
 - SETTINGS_MAX_HEADER_LIST_SIZE (0x06)
 - SETTINGS_ENABLE_CONNECT_PROTOCOL (0x08) - RFC 8441
 - SETTINGS_NO_RFC7540_PRIORITIES (0x09) - RFC 9218
-- SETTINGS_WT_ENABLED (0x2b60) - draft-ietf-webtrans-http2
 - SETTINGS_WT_INITIAL_MAX_DATA (0x2b61) - draft-ietf-webtrans-http2
 - SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62) - draft-ietf-webtrans-http2
 - SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63) - draft-ietf-webtrans-http2
 - SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64) - draft-ietf-webtrans-http2
 - SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65) - draft-ietf-webtrans-http2
 - SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66) - draft-ietf-webtrans-http2
+- SETTINGS_WT_ENABLED (0x2b67) - draft-ietf-webtrans-http2
+
+draft-ietf-webtrans-http2-16 では `SETTINGS_WT_ENABLED` の識別子が `0x2b67` に変更された。draft-ietf-webtrans-http2-15 の識別子 `0x2b60` は未知の SETTINGS として無視するため、draft-ietf-webtrans-http2-15 準拠のピアとの相互運用は想定していない。
 
 ### HPACK (RFC 7541)
 

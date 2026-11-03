@@ -12,7 +12,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 - **依存なし**: 外部依存ゼロ (`std` のみ)
 - **Sans I/O**: I/O を完全に分離した設計 (Tokio, async-std, 同期 I/O など任意の環境で使用可能)
 - **RFC 準拠**: RFC 9113 (HTTP/2), RFC 7541 (HPACK), RFC 9218 (Extensible Priorities) に対応
-- **WebTransport over HTTP/2**: draft-ietf-webtrans-http2-15 に対応
+- **WebTransport over HTTP/2**: draft-ietf-webtrans-http2-16 の `SETTINGS_WT_ENABLED` (0x2b67) に対応し、それ以外の WebTransport 動作は draft-ietf-webtrans-http2-15 に基づく
 - **HPACK**: 静的/動的テーブル、Huffman 符号化、サイズ更新対応
 - **フロー制御**: 接続レベル/ストリームレベル両対応
 - **DoS 対策**: `Limits` による各種上限設定
@@ -116,7 +116,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 | `LimitsBuilder` | `Limits` のビルダー。`builder()` で取得し、各メソッドで設定後 `build()` / `build_static()` (`const fn`)。WebTransport には `wt_enabled(true)` + `enable_connect_protocol(true)` + `webtransport(...)` が必要 (二重ゲート) |
 | `LimitsError` | `Limits` 構築時のエラー (`WebtransportRequiresConnectProtocol`, `WebtransportRequiresWtEnabled`) |
 | `Settings` | 受信した SETTINGS パラメータの値ホルダー (フィールド private、getter 経由) |
-| `Setting` | 個別の SETTINGS パラメータ (`HeaderTableSize`, `EnablePush`, `MaxConcurrentStreams`, `InitialWindowSize`, `MaxFrameSize`, `MaxHeaderListSize`, `EnableConnectProtocol`, `NoRfc7540Priorities`, `WtEnabled`, `WtInitialMaxData`, `WtInitialMaxStreamDataUni`, `WtInitialMaxStreamDataBidiLocal`, `WtInitialMaxStreamsUni`, `WtInitialMaxStreamsBidi`, `WtInitialMaxStreamDataBidiRemote`, `Unknown { id, value }`) |
+| `Setting` | 個別の SETTINGS パラメータ (`HeaderTableSize`, `EnablePush`, `MaxConcurrentStreams`, `InitialWindowSize`, `MaxFrameSize`, `MaxHeaderListSize`, `EnableConnectProtocol`, `NoRfc7540Priorities`, `WtInitialMaxData`, `WtInitialMaxStreamDataUni`, `WtInitialMaxStreamDataBidiLocal`, `WtInitialMaxStreamsUni`, `WtInitialMaxStreamsBidi`, `WtInitialMaxStreamDataBidiRemote`, `WtEnabled`, `Unknown { id, value }`) |
 | `SettingError` | SETTINGS の値検証エラー (`EnablePushNotBoolean`, `InitialWindowSizeOutOfRange`, `MaxFrameSizeOutOfRange`, `EnableConnectProtocolNotBoolean`, `NoRfc7540PrioritiesNotBoolean`, `WtEnabledNotBoolean`) |
 | `WindowSize` | フロー制御ウィンドウサイズ (`from_static(u32)` const + 動的 `new(u32) -> Result`) |
 | `MaxFrameSize` | フレームサイズ上限 (16384..=16777215, RFC 9113 §6.5.2) |
@@ -268,13 +268,15 @@ draft-15 では WT_STREAM の LSB が FIN bit。`0x190B4D3C` (LSB=0) が非終�
 
 | パラメータ | Identifier |
 |----------|-----------|
-| `SETTINGS_WT_ENABLED` | `0x2b60` |
 | `SETTINGS_WT_INITIAL_MAX_DATA` | `0x2b61` |
 | `SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI` | `0x2b62` |
 | `SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL` | `0x2b63` |
 | `SETTINGS_WT_INITIAL_MAX_STREAMS_UNI` | `0x2b64` |
 | `SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI` | `0x2b65` |
 | `SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE` | `0x2b66` |
+| `SETTINGS_WT_ENABLED` | `0x2b67` |
+
+draft-ietf-webtrans-http2-16 では `SETTINGS_WT_ENABLED` の識別子が `0x2b67` に変更された。draft-ietf-webtrans-http2-15 の識別子 `0x2b60` は未知の SETTINGS として無視するため、draft-ietf-webtrans-http2-15 準拠のピアとの相互運用は想定していない。
 
 ## コード例
 
@@ -538,6 +540,8 @@ RFC 9113 §7 の HTTP/2 エラーコードに加え、draft-ietf-webtrans-http2-
 | RFC 9218 | Extensible Prioritization Scheme for HTTP | PRIORITY_UPDATE フレーム、`urgency` / `incremental` |
 | RFC 9297 | HTTP Datagrams and the Capsule Protocol | Capsule, DATAGRAM, PADDING |
 | draft-ietf-webtrans-http2-15 | WebTransport over HTTP/2 | WT_* Capsule, WebTransport SETTINGS, Extended CONNECT (`webtransport`), TLS 1.3 要件, Origin 検証 |
+
+`SETTINGS_WT_ENABLED` だけは draft-ietf-webtrans-http2-16 の識別子 `0x2b67` を使用する (それ以外の WebTransport 動作は draft-ietf-webtrans-http2-15 に基づく)。
 
 ## 既知の未対応 / 制限
 

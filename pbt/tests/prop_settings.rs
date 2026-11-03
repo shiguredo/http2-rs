@@ -120,23 +120,23 @@ fn sample_invalid_no_rfc7540_priorities_wire(ctx: &mut noprop::TestCaseContext) 
 
 /// 無効な WT_ENABLED wire 値を生成 (2 以上)
 fn sample_invalid_wt_enabled_wire(ctx: &mut noprop::TestCaseContext) -> (u16, u32) {
-    (0x2b60, sample_invalid_bool_wire(ctx))
+    (0x2b67, sample_invalid_bool_wire(ctx))
 }
 
-/// 未知の SETTINGS ID と任意の wire 値を生成する
+/// 未知の SETTINGS 識別子と任意の wire 値を生成する
 ///
-/// 既知 ID (0x01-0x06, 0x08, 0x09, 0x2b60-0x2b66) を除外し、谷間のどこを
+/// 既知の識別子 (0x01-0x06, 0x08, 0x09, 0x2b61-0x2b67) を除外し、谷間のどこを
 /// 引くかを一様なインデックスで valid-by-construction に決定する。
 fn sample_unknown_setting_wire(ctx: &mut noprop::TestCaseContext) -> (u16, u32) {
-    // 0x0a..=0x2b5f の個数 (0x2b60 未満の未知 ID 領域)
-    const HEAD: usize = 0x2b60 - 0x0a;
-    // 0x2b67..=0xffff の個数 (0x2b66 超の未知 ID 領域)
-    const TAIL: usize = 0xffff - 0x2b66;
+    // 0x0a..=0x2b60 の個数 (0x2b61 未満の未知の識別子の領域)
+    const HEAD: usize = 0x2b61 - 0x0a;
+    // 0x2b68..=0xffff の個数 (0x2b67 超の未知の識別子の領域)
+    const TAIL: usize = 0xffff - 0x2b67;
     let pick = noprop::sample_usize_in(ctx, 0..HEAD + TAIL);
     let id = if pick < HEAD {
         0x0a + pick
     } else {
-        0x2b67 + (pick - HEAD)
+        0x2b68 + (pick - HEAD)
     };
     (id as u16, noprop::sample_u32(ctx))
 }
@@ -241,7 +241,7 @@ fn prop_invalid_no_rfc7540_priorities_rejected() -> noprop::TestResult {
 /// 無効な WT_ENABLED wire 値は from_wire で拒否される
 ///
 /// 数学的意義: 二値性の検証 (0 または 1 のみ)
-/// draft-ietf-webtrans-http2-15 Section 3.1: クライアントは 1 より大きい値を
+/// draft-ietf-webtrans-http2-16 Section 3.1: クライアントは 1 より大きい値を
 /// 接続エラー PROTOCOL_ERROR として扱わなければならない (MUST)。
 #[test]
 fn prop_invalid_wt_enabled_rejected() -> noprop::TestResult {
@@ -280,35 +280,36 @@ fn prop_unknown_settings_ignored() -> noprop::TestResult {
             "Unknown ID should produce Setting::Unknown, got {setting:?}",
         );
 
-        // apply しても既知フィールドは変更されない
+        // apply しても全フィールドが変更されないことを構造体等価で検証する。
+        // 既定値へのリセットを検出できるよう、全 15 フィールドを非既定値にしてから始める
         let mut settings = Settings::default();
+        settings.apply(Setting::HeaderTableSize(1));
+        settings.apply(Setting::EnablePush(true));
+        settings.apply(Setting::MaxConcurrentStreams(noprop::sample_u32(ctx)));
+        settings.apply(Setting::InitialWindowSize(WindowSize::from_static(1)));
+        settings.apply(Setting::MaxFrameSize(MaxFrameSize::from_static(
+            MAX_MAX_FRAME_SIZE,
+        )));
+        settings.apply(Setting::MaxHeaderListSize(noprop::sample_u32(ctx)));
+        settings.apply(Setting::EnableConnectProtocol(true));
+        settings.apply(Setting::NoRfc7540Priorities(true));
+        settings.apply(Setting::WtEnabled(true));
+        settings.apply(Setting::WtInitialMaxData(noprop::sample_u32(ctx)));
+        settings.apply(Setting::WtInitialMaxStreamDataUni(noprop::sample_u32(ctx)));
+        settings.apply(Setting::WtInitialMaxStreamDataBidiLocal(
+            noprop::sample_u32(ctx),
+        ));
+        settings.apply(Setting::WtInitialMaxStreamsUni(noprop::sample_u32(ctx)));
+        settings.apply(Setting::WtInitialMaxStreamsBidi(noprop::sample_u32(ctx)));
+        settings.apply(Setting::WtInitialMaxStreamDataBidiRemote(
+            noprop::sample_u32(ctx),
+        ));
         let original = settings.clone();
         settings.apply(setting);
-
-        assert_eq!(settings.header_table_size(), original.header_table_size());
-        assert_eq!(settings.enable_push(), original.enable_push());
         assert_eq!(
-            settings.max_concurrent_streams(),
-            original.max_concurrent_streams()
+            settings, original,
+            "未知の SETTINGS は適用時に無視されなければならない"
         );
-        assert_eq!(
-            settings.initial_window_size(),
-            original.initial_window_size()
-        );
-        assert_eq!(settings.max_frame_size(), original.max_frame_size());
-        assert_eq!(
-            settings.max_header_list_size(),
-            original.max_header_list_size()
-        );
-        assert_eq!(
-            settings.enable_connect_protocol(),
-            original.enable_connect_protocol()
-        );
-        assert_eq!(
-            settings.no_rfc7540_priorities(),
-            original.no_rfc7540_priorities()
-        );
-        assert_eq!(settings.wt_enabled(), original.wt_enabled());
         Ok(())
     })?;
     Ok(())
@@ -583,6 +584,12 @@ fn prop_settings_roundtrip() -> noprop::TestResult {
         }
 
         let list = original.to_settings_list();
+        // to_settings_list は SETTINGS 識別子の昇順で出力しなければならない
+        let ids: Vec<u16> = list.iter().map(|setting| setting.as_wire().0).collect();
+        assert!(
+            ids.windows(2).all(|pair| pair[0] < pair[1]),
+            "to_settings_list の並びが SETTINGS 識別子の昇順でない: {ids:?}"
+        );
         let mut restored = Settings::default();
         for setting in list {
             restored.apply(setting);

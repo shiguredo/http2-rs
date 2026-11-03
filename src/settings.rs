@@ -3,8 +3,8 @@
 //! # 拡張 SETTINGS
 //!
 //! - SETTINGS_ENABLE_CONNECT_PROTOCOL (RFC 8441): Extended CONNECT
-//! - SETTINGS_WT_ENABLED (draft-ietf-webtrans-http2-15 Section 3.1 / Section 11.2): WebTransport サポート合図
 //! - SETTINGS_WT_INITIAL_MAX_* (draft-ietf-webtrans-http2-15 Section 11.2): WebTransport 初期フロー制御
+//! - SETTINGS_WT_ENABLED (draft-ietf-webtrans-http2-16 Section 3.1 / Section 11.2): WebTransport サポート合図
 
 /// SETTINGS_HEADER_TABLE_SIZE のデフォルト値
 pub const DEFAULT_HEADER_TABLE_SIZE: u32 = 4096;
@@ -40,7 +40,7 @@ pub const MAX_INITIAL_WINDOW_SIZE: u32 = 2_147_483_647;
 ///
 /// wire 上の (id, value) ペアから `Setting::from_wire` で構築する。
 /// 既知パラメータの値が範囲外の場合は `Err(SettingError)` を返す。
-/// 未知 ID は `Setting::Unknown { id, value }` として保持する
+/// 未知の識別子は `Setting::Unknown { id, value }` として保持する
 /// (RFC 9113 §6.5.2: 未知パラメータは MUST ignore)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Setting {
@@ -60,15 +60,6 @@ pub enum Setting {
     EnableConnectProtocol(bool),
     /// SETTINGS_NO_RFC7540_PRIORITIES (0x09) (RFC 9218 Section 2.1)
     NoRfc7540Priorities(bool),
-    /// SETTINGS_WT_ENABLED (0x2b60) (draft-ietf-webtrans-http2-15 Section 3.1 / Section 11.2)
-    ///
-    /// サーバーの WebTransport サポート合図。デフォルト値は 0 (非サポート)。
-    /// 値は 0 または 1 のみ。クライアントは 1 より大きい値を
-    /// 接続エラー PROTOCOL_ERROR として扱わなければならない (MUST)。
-    ///
-    /// 注: この識別子と値は draft-ietf-webtrans-http2-15 由来の暫定値であり、
-    /// IANA 登録後に変更される可能性がある。
-    WtEnabled(bool),
     /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61) (draft-ietf-webtrans-http2-15 Section 11.2)
     ///
     /// 注: この識別子と値は draft-ietf-webtrans-http2-15 由来の暫定値であり、
@@ -99,6 +90,18 @@ pub enum Setting {
     /// 注: この識別子と値は draft-ietf-webtrans-http2-15 由来の暫定値であり、
     /// IANA 登録後に変更される可能性がある。
     WtInitialMaxStreamDataBidiRemote(u32),
+    /// SETTINGS_WT_ENABLED (0x2b67) (draft-ietf-webtrans-http2-16 Section 3.1 / Section 11.2)
+    ///
+    /// サーバーの WebTransport サポート合図。デフォルト値は 0 (非サポート)。
+    /// 値は 0 または 1 のみ。クライアントは 1 より大きい値を
+    /// 接続エラー PROTOCOL_ERROR として扱わなければならない (MUST)。
+    ///
+    /// draft-ietf-webtrans-http2-15 の識別子 `0x2b60` は未知の SETTINGS として
+    /// 無視され、`wt_enabled` を変更しない (RFC 9113 Section 6.5.2)。
+    ///
+    /// 注: この識別子と値は draft-ietf-webtrans-http2-16 由来の暫定値であり、
+    /// IANA 登録後に変更される可能性がある。
+    WtEnabled(bool),
     /// 未知の SETTINGS パラメータ (RFC 9113 §6.5.2: MUST ignore)
     Unknown { id: u16, value: u32 },
 }
@@ -107,7 +110,7 @@ impl Setting {
     /// wire 上の (id, value) ペアから構築する
     ///
     /// 既知パラメータの値が範囲外の場合は `Err(SettingError)` を返す。
-    /// 未知の ID の場合は `Ok(Setting::Unknown { id, value })` を返す。
+    /// 未知の識別子の場合は `Ok(Setting::Unknown { id, value })` を返す。
     pub fn from_wire(id: u16, value: u32) -> Result<Self, SettingError> {
         match id {
             0x01 => Ok(Self::HeaderTableSize(value)),
@@ -133,18 +136,18 @@ impl Setting {
                 }
                 Ok(Self::NoRfc7540Priorities(value == 1))
             }
-            0x2b60 => {
-                if value > 1 {
-                    return Err(SettingError::WtEnabledNotBoolean { value });
-                }
-                Ok(Self::WtEnabled(value == 1))
-            }
             0x2b61 => Ok(Self::WtInitialMaxData(value)),
             0x2b62 => Ok(Self::WtInitialMaxStreamDataUni(value)),
             0x2b63 => Ok(Self::WtInitialMaxStreamDataBidiLocal(value)),
             0x2b64 => Ok(Self::WtInitialMaxStreamsUni(value)),
             0x2b65 => Ok(Self::WtInitialMaxStreamsBidi(value)),
             0x2b66 => Ok(Self::WtInitialMaxStreamDataBidiRemote(value)),
+            0x2b67 => {
+                if value > 1 {
+                    return Err(SettingError::WtEnabledNotBoolean { value });
+                }
+                Ok(Self::WtEnabled(value == 1))
+            }
             _ => Ok(Self::Unknown { id, value }),
         }
     }
@@ -160,13 +163,13 @@ impl Setting {
             Self::MaxHeaderListSize(v) => (0x06, v),
             Self::EnableConnectProtocol(b) => (0x08, b as u32),
             Self::NoRfc7540Priorities(b) => (0x09, b as u32),
-            Self::WtEnabled(b) => (0x2b60, b as u32),
             Self::WtInitialMaxData(v) => (0x2b61, v),
             Self::WtInitialMaxStreamDataUni(v) => (0x2b62, v),
             Self::WtInitialMaxStreamDataBidiLocal(v) => (0x2b63, v),
             Self::WtInitialMaxStreamsUni(v) => (0x2b64, v),
             Self::WtInitialMaxStreamsBidi(v) => (0x2b65, v),
             Self::WtInitialMaxStreamDataBidiRemote(v) => (0x2b66, v),
+            Self::WtEnabled(b) => (0x2b67, b as u32),
             Self::Unknown { id, value } => (id, value),
         }
     }
@@ -194,10 +197,6 @@ pub struct Settings {
     /// RFC 9113 Section 5.3.1/5.3.2 で非推奨となった RFC 7540 由来の優先度シグナリングを
     /// 使用しない (RFC 9218)
     no_rfc7540_priorities: bool,
-    /// SETTINGS_WT_ENABLED (0x2b60) (draft-ietf-webtrans-http2-15 Section 3.1)
-    ///
-    /// サーバーの WebTransport サポート合図。デフォルト値は false (非サポート)。
-    wt_enabled: bool,
     /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61)
     wt_initial_max_data: Option<u32>,
     /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62)
@@ -210,6 +209,10 @@ pub struct Settings {
     wt_initial_max_streams_bidi: Option<u32>,
     /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66)
     wt_initial_max_stream_data_bidi_remote: Option<u32>,
+    /// SETTINGS_WT_ENABLED (0x2b67) (draft-ietf-webtrans-http2-16 Section 3.1)
+    ///
+    /// サーバーの WebTransport サポート合図。デフォルト値は false (非サポート)。
+    wt_enabled: bool,
 }
 
 impl Default for Settings {
@@ -223,13 +226,13 @@ impl Default for Settings {
             max_header_list_size: DEFAULT_MAX_HEADER_LIST_SIZE,
             enable_connect_protocol: false,
             no_rfc7540_priorities: false,
-            wt_enabled: false,
             wt_initial_max_data: None,
             wt_initial_max_stream_data_uni: None,
             wt_initial_max_stream_data_bidi_local: None,
             wt_initial_max_streams_uni: None,
             wt_initial_max_streams_bidi: None,
             wt_initial_max_stream_data_bidi_remote: None,
+            wt_enabled: false,
         }
     }
 }
@@ -256,13 +259,13 @@ impl Settings {
             max_header_list_size: limits.max_header_list_size(),
             enable_connect_protocol: limits.enable_connect_protocol(),
             no_rfc7540_priorities: limits.no_rfc7540_priorities(),
-            wt_enabled: limits.wt_enabled(),
             wt_initial_max_data: limits.wt_initial_max_data(),
             wt_initial_max_stream_data_uni: limits.wt_initial_max_stream_data_uni(),
             wt_initial_max_stream_data_bidi_local: limits.wt_initial_max_stream_data_bidi_local(),
             wt_initial_max_streams_uni: limits.wt_initial_max_streams_uni(),
             wt_initial_max_streams_bidi: limits.wt_initial_max_streams_bidi(),
             wt_initial_max_stream_data_bidi_remote: limits.wt_initial_max_stream_data_bidi_remote(),
+            wt_enabled: limits.wt_enabled(),
         }
     }
 
@@ -314,14 +317,6 @@ impl Settings {
         self.no_rfc7540_priorities
     }
 
-    /// SETTINGS_WT_ENABLED (0x2b60) (draft-ietf-webtrans-http2-15 Section 3.1)
-    ///
-    /// サーバーの WebTransport サポート合図。
-    #[must_use]
-    pub const fn wt_enabled(&self) -> bool {
-        self.wt_enabled
-    }
-
     /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61)
     #[must_use]
     pub const fn wt_initial_max_data(&self) -> Option<u32> {
@@ -358,6 +353,18 @@ impl Settings {
         self.wt_initial_max_stream_data_bidi_remote
     }
 
+    /// SETTINGS_WT_ENABLED (0x2b67) (draft-ietf-webtrans-http2-16 Section 3.1)
+    ///
+    /// WebTransport サポート合図。デフォルト値は false (非サポート)。
+    /// 本ライブラリのクライアントは draft-ietf-webtrans-http2-15 のサーバーと
+    /// WebTransport を確立できない (サーバーが送る旧識別子 `0x2b60` を未知の
+    /// SETTINGS として無視するため)。ピアから受信した値は
+    /// `Connection::remote_settings()` で確認する。
+    #[must_use]
+    pub const fn wt_enabled(&self) -> bool {
+        self.wt_enabled
+    }
+
     /// 検証済み `Setting` を適用する
     ///
     /// `Setting` は `from_wire` で構築済みのため値検査は不要。
@@ -372,7 +379,6 @@ impl Settings {
             Setting::MaxHeaderListSize(v) => self.max_header_list_size = Some(v),
             Setting::EnableConnectProtocol(b) => self.enable_connect_protocol = b,
             Setting::NoRfc7540Priorities(b) => self.no_rfc7540_priorities = b,
-            Setting::WtEnabled(b) => self.wt_enabled = b,
             Setting::WtInitialMaxData(v) => self.wt_initial_max_data = Some(v),
             Setting::WtInitialMaxStreamDataUni(v) => {
                 self.wt_initial_max_stream_data_uni = Some(v);
@@ -385,6 +391,7 @@ impl Settings {
             Setting::WtInitialMaxStreamDataBidiRemote(v) => {
                 self.wt_initial_max_stream_data_bidi_remote = Some(v);
             }
+            Setting::WtEnabled(b) => self.wt_enabled = b,
             Setting::Unknown { .. } => {
                 // RFC 9113 §6.5.2: 未知の SETTINGS は無視
             }
@@ -392,6 +399,11 @@ impl Settings {
     }
 
     /// 設定を `Setting` のリストとして取得する
+    ///
+    /// SETTINGS 識別子の昇順で返す。値が `None` の項目は含めない。boolean フラグは
+    /// `EnablePush` を除き true のときだけ含める。既定値を持つ必須項目
+    /// (`HeaderTableSize` / `EnablePush` / `InitialWindowSize` / `MaxFrameSize`) は
+    /// `EnablePush` の false を含め常に含める。
     #[must_use]
     pub fn to_settings_list(&self) -> Vec<Setting> {
         let mut list = Vec::new();
@@ -411,9 +423,6 @@ impl Settings {
         if self.no_rfc7540_priorities {
             list.push(Setting::NoRfc7540Priorities(true));
         }
-        if self.wt_enabled {
-            list.push(Setting::WtEnabled(true));
-        }
         if let Some(v) = self.wt_initial_max_data {
             list.push(Setting::WtInitialMaxData(v));
         }
@@ -431,6 +440,9 @@ impl Settings {
         }
         if let Some(v) = self.wt_initial_max_stream_data_bidi_remote {
             list.push(Setting::WtInitialMaxStreamDataBidiRemote(v));
+        }
+        if self.wt_enabled {
+            list.push(Setting::WtEnabled(true));
         }
         list
     }
@@ -489,7 +501,7 @@ pub enum SettingError {
 
     /// `SETTINGS_WT_ENABLED` が 0/1 以外
     ///
-    /// draft-ietf-webtrans-http2-15 Section 3.1: クライアントは 1 より大きい値を
+    /// draft-ietf-webtrans-http2-16 Section 3.1: クライアントは 1 より大きい値を
     /// 接続エラー PROTOCOL_ERROR として扱わなければならない (MUST)。
     WtEnabledNotBoolean {
         /// 違反した値
