@@ -91,7 +91,7 @@ pub mod stream_id {
 ///    +-------+                   +-------+
 /// ```
 ///
-/// draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 は順序配送であり、ACK を待たずに
+/// draft-ietf-webtrans-http2-16 Section 5.2: HTTP/2 は順序配送であり、ACK を待たずに
 /// 状態を遷移させるため、RFC 9000 Section 3.1 の "Data Sent" と "Reset Sent" は経由しない
 /// (FIN / RESET_STREAM の送信と同時に終端状態へ遷移する)。
 ///
@@ -160,7 +160,7 @@ impl SendState {
 ///    +-------+
 /// ```
 ///
-/// draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 は順序配送であり、後続データの有無が
+/// draft-ietf-webtrans-http2-16 Section 5.2: HTTP/2 は順序配送であり、後続データの有無が
 /// FIN の受信時点で確定するため、RFC 9000 Section 3.2 の "Size Known" を経由せず、
 /// 最終サイズの確定と同時に "Data Recvd" へ遷移する。また RESET_STREAM の受信時には
 /// アプリへの通知 (`WtEvent::StreamReset`) まで同時に行うため、RFC 9000 Section 3.2 の
@@ -222,20 +222,20 @@ pub struct WtStream {
     recv_max: u64,
     /// STOP_SENDING を送信したかどうか
     ///
-    /// draft-ietf-webtrans-http2-15 Section 6.3: 冪等性チェック用。Section 6.6:
+    /// draft-ietf-webtrans-http2-16 Section 6.3: 冪等性チェック用。Section 6.6:
     /// WT_STOP_SENDING を送った側は同じストリームへ WT_MAX_STREAM_DATA を送れないため、
     /// 送信側 API (`WtSession::send_max_stream_data` /
     /// `WtSession::grow_stream_recv_window`) の検証にも使用する
     stop_sending_sent: bool,
     /// STOP_SENDING を受信したかどうか
     ///
-    /// draft-ietf-webtrans-http2-15 Section 6.3 / Section 6.6: 2 回目の
+    /// draft-ietf-webtrans-http2-16 Section 6.3 / Section 6.6: 2 回目の
     /// WT_STOP_SENDING の拒否と、WT_STOP_SENDING を受信した後の
     /// WT_MAX_STREAM_DATA の拒否に使用する
     stop_sending_received: bool,
     /// データを受信したかどうか
     ///
-    /// draft-ietf-webtrans-http2-15 Section 6.4: empty capsule チェック用
+    /// draft-ietf-webtrans-http2-16 Section 6.4: empty capsule チェック用
     has_received_data: bool,
 }
 
@@ -375,7 +375,7 @@ impl WtStream {
             return Err(WtError::stream_state_error("cannot send in current state"));
         }
 
-        // draft-ietf-webtrans-http2-15 Section 6.6: ストリームレベルのフロー制御上限チェック
+        // draft-ietf-webtrans-http2-16 Section 6.6: ストリームレベルのフロー制御上限チェック
         let new_offset = self.send_offset.saturating_add(size);
         if new_offset > self.send_max {
             return Err(WtError::flow_control_error("stream send limit exceeded"));
@@ -383,7 +383,7 @@ impl WtStream {
         self.send_offset = new_offset;
 
         if fin {
-            // draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 の順序配送により
+            // draft-ietf-webtrans-http2-16 Section 5.2: HTTP/2 の順序配送により
             // ACK が不要なため、FIN の送信と同時に終端状態へ遷移する
             self.send_state = SendState::DataRecvd;
         } else {
@@ -395,7 +395,7 @@ impl WtStream {
 
     /// リセットを送信する
     pub fn send_reset(&mut self) {
-        // draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 の順序配送により
+        // draft-ietf-webtrans-http2-16 Section 5.2: HTTP/2 の順序配送により
         // ACK が不要なため、RESET_STREAM の送信と同時に終端状態へ遷移する
         self.send_state = SendState::ResetRecvd;
     }
@@ -413,7 +413,7 @@ impl WtStream {
             ));
         }
 
-        // draft-ietf-webtrans-http2-15 Section 6.6: ストリームレベルのフロー制御上限チェック
+        // draft-ietf-webtrans-http2-16 Section 6.6: ストリームレベルのフロー制御上限チェック
         let new_offset = self.recv_offset.saturating_add(size);
         if new_offset > self.recv_max {
             return Err(WtError::flow_control_error("stream recv limit exceeded"));
@@ -421,7 +421,7 @@ impl WtStream {
         self.recv_offset = new_offset;
 
         if fin {
-            // draft-ietf-webtrans-http2-15 Section 5.2: HTTP/2 の順序配送により
+            // draft-ietf-webtrans-http2-16 Section 5.2: HTTP/2 の順序配送により
             // 全データ到着済みなので、最終サイズの確定と同時に DataRecvd へ遷移する
             self.recv_state = RecvState::DataRecvd;
         }
@@ -456,7 +456,6 @@ impl WtStream {
     /// 注: 以前の実装は同値を受理していたが、draft-16 では同値も拒否する
     /// (後方互換のない仕様変更)。
     ///
-    /// 注: draft-ietf-webtrans-http2-16 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
     pub fn update_send_max(&mut self, maximum: u64) -> WtResult<()> {
         if maximum > super::varint::MAX_VALUE {
             return Err(WtError::flow_control_error(format!(

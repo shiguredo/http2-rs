@@ -1,7 +1,7 @@
 //! `WtAvailableProtocols` / `serialize_wt_protocol` の単体テスト
 //!
-//! draft-ietf-webtrans-http3 の Application Protocol Negotiation と
-//! RFC 8941 List of String / sf-string の境界を検証する。
+//! draft-ietf-webtrans-http3-16 Section 3.3 の Application Protocol Negotiation と
+//! RFC 9651 List of String / sf-string の境界を検証する。
 
 use shiguredo_http2::webtransport::{WtAvailableProtocols, WtErrorKind, serialize_wt_protocol};
 

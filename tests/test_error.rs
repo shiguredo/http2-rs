@@ -2,8 +2,8 @@ use shiguredo_http2::decode_error::DecodeError;
 use shiguredo_http2::error::{Error, ErrorCode, ErrorKind};
 
 /// RFC 9113 Section 7 で定義された既知のエラーコード値 (0x00-0x0d) と、
-/// draft-ietf-webtrans-http2-15 Section 11.3 が予約する WebTransport エラーコード
-/// (draft ではコード値が 0xTBD のため 0x100-0x102 は本実装の暫定値)
+/// draft-ietf-webtrans-http2-16 Section 11.3 が予約する WebTransport エラーコード
+/// (同節ではコード値が 0xTBD のため 0x100-0x102 は本実装の暫定値)
 const KNOWN_ERROR_CODES: &[(u32, ErrorCode)] = &[
     (0x00, ErrorCode::NoError),
     (0x01, ErrorCode::ProtocolError),
@@ -86,7 +86,7 @@ fn test_error_kind_with_code_display_contains_code() {
 }
 
 /// RFC 9113 Section 7 で定義された既知のエラーコード (0x00-0x0d) と、
-/// draft-ietf-webtrans-http2-15 Section 11.3 由来の WebTransport エラーコード
+/// draft-ietf-webtrans-http2-16 Section 11.3 由来の WebTransport エラーコード
 /// (本実装の暫定値 0x100-0x102) のマッピングをテスト
 #[test]
 fn test_known_error_codes_mapping() {
@@ -189,7 +189,7 @@ fn test_debug_alternate_accepts_backtrace() {
     );
 }
 
-/// draft-ietf-webtrans-http2-15 Section 3.4 / Section 11.3 で改名された
+/// draft-ietf-webtrans-http2-16 Section 3.4 / Section 11.3 で改名された
 /// HTTP/2 エラーコード名の Display 文字列を直接検証する
 #[test]
 fn test_wt_error_code_display_names() {

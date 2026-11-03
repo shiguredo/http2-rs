@@ -3,7 +3,7 @@
 //! draft-ietf-webtrans-http2-16 Section 4.3.2 に定義されている
 //! `WebTransport-Init` HTTP ヘッダーフィールドをパースする。
 //! 実体は RFC 9651 (Structured Field Values for HTTP) Dictionary。
-//! RFC 8941 との差分 (Date / Display String) も読み飛ばしと構文検証のために扱う。
+//! RFC 9651 で追加された Date / Display String も読み飛ばしと構文検証のために扱う。
 //!
 //! 本モジュールは known キー (`u` / `bl` / `br`) のみ抽出する必要最小限の
 //! Dictionary パーサーを提供する。仕様の MUST 要件:
@@ -12,7 +12,7 @@
 //! - 重複キーは RFC 9651 Section 4.2.2 の規則で last-wins
 //!
 //! 本実装が参照する仕様は IETF draft (`-16`) であり、draft の改訂や RFC 化に
-//! 伴って章番号・行番号・要求項目が変わりうる。
+//! 伴って章番号・要求項目が変わりうる。
 
 use crate::webtransport::error::WtError;
 
@@ -23,6 +23,11 @@ use crate::webtransport::error::WtError;
 ///
 /// `None` はキーがヘッダーに含まれていなかったことを示し、
 /// SETTINGS 由来の値とマージする際に上書き対象外として扱う。
+///
+/// このヘッダーが持つのはストリームデータの初期上限のみであり、
+/// セッション上限とストリーム数上限は、セッション開始時に `WT_MAX_DATA` /
+/// `WT_MAX_STREAMS` capsule を要求または応答とともに送ることで提供できる
+/// (Section 4.3.2)。
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct WtInit {
     /// `u`: ピア (=送信者から見た recipient) が開く単方向ストリームの初期最大データ量
@@ -39,7 +44,7 @@ impl WtInit {
     /// 入力は HPACK でデコードされたヘッダー値そのまま (RFC 9651 Section 4.2 step 1:
     /// 非 ASCII バイトを含む入力はパース失敗)。RFC 9651 のパース手順を必要最小限で実装する。
     pub fn parse(value: &[u8]) -> Result<Self, WtError> {
-        // RFC 8941 Section 4.2 step 1: 入力は ASCII であること
+        // RFC 9651 Section 4.2 step 1: 入力は ASCII であること
         if value.iter().any(|&b| b >= 0x80) {
             return Err(WtError::invalid_input(
                 "WebTransport-Init: non-ASCII byte in header value",
@@ -49,15 +54,15 @@ impl WtInit {
         let mut parser = DictionaryParser::new(value);
         let mut out = WtInit::default();
 
-        // RFC 8941 Section 4.2 step 2 は先頭の SP のみ破棄を規定する。
+        // RFC 9651 Section 4.2 step 2 は先頭の SP のみ破棄を規定する。
         // 本実装は OWS (SP / HTAB) まで許容する独自緩和
         parser.skip_ows();
 
         while !parser.is_empty() {
-            // RFC 8941 Section 4.2.2 step 2.1: Parse a Key
+            // RFC 9651 Section 4.2.2 step 2.1: Parse a Key
             let key = parser.parse_key()?;
 
-            // RFC 8941 Section 4.2.2 step 2.2/2.3: "=" の有無で値を決める
+            // RFC 9651 Section 4.2.2 step 2.2/2.3: "=" の有無で値を決める
             let value = if parser.consume_if_eq(b'=') {
                 // Bare Item または Inner List をパースする
                 parser.parse_value()?
@@ -66,7 +71,7 @@ impl WtInit {
                 SfValue::Boolean
             };
 
-            // RFC 8941 Section 3.1.2: Parameters を消費 (本実装ではすべて無視)
+            // RFC 9651 Section 3.1.2: Parameters を消費 (本実装ではすべて無視)
             parser.skip_parameters()?;
 
             // known キーのみ WtInit に格納する
@@ -80,15 +85,15 @@ impl WtInit {
                 _ => {} // 未知キーは値の型に関わらず無視する
             }
 
-            // RFC 8941 Section 4.2.2 step 2.6: trailing OWS を破棄
+            // RFC 9651 Section 4.2.2 step 2.6: trailing OWS を破棄
             parser.skip_ows();
 
-            // RFC 8941 Section 4.2.2 step 2.7: 入力末尾なら成功
+            // RFC 9651 Section 4.2.2 step 2.7: 入力末尾なら成功
             if parser.is_empty() {
                 return Ok(out);
             }
 
-            // RFC 8941 Section 4.2.2 step 2.8-2.10: "," を必須消費、trailing comma は不可
+            // RFC 9651 Section 4.2.2 step 2.8-2.10: "," を必須消費、trailing comma は不可
             if !parser.consume_if_eq(b',') {
                 return Err(WtError::invalid_input(
                     "WebTransport-Init: expected ',' between dictionary members",
@@ -129,10 +134,10 @@ enum SfNumber {
     Decimal,
 }
 
-/// RFC 8941 の Bare Item (`u`/`bl`/`br` で実際に意味を持つのは Integer のみ)
+/// RFC 9651 の Bare Item (`u`/`bl`/`br` で実際に意味を持つのは Integer のみ)
 ///
 /// 未知キーの値読み飛ばしでも型を識別する必要があるため、サポート対象型を
-/// 列挙して保持する。Inner List は RFC 8941 §3.1 で Member Value として
+/// 列挙して保持する。Inner List は RFC 9651 §3.1 で Member Value として
 /// 許容されるが、本実装では `_` で受けて読み飛ばす。
 #[derive(Debug, Clone, Copy)]
 enum SfValue {
@@ -199,9 +204,10 @@ impl<'a> DictionaryParser<'a> {
         }
     }
 
-    /// RFC 8941 Section 4.2.3.3: Parsing a Key
+    /// RFC 9651 Section 4.2.3.3: Parsing a Key
     ///
-    /// RFC 8941 §3.1.2 の ABNF: `key = ( lcalpha / "*" ) *( lcalpha / DIGIT / "_" / "-" / "." / "*" )`
+    /// RFC 9651 Appendix C (非規範) の ABNF:
+    /// `key = ( lcalpha / "*" ) *( lcalpha / DIGIT / "_" / "-" / "." / "*" )`
     fn parse_key(&mut self) -> Result<Vec<u8>, WtError> {
         match self.peek() {
             Some(b) if b.is_ascii_lowercase() || b == b'*' => {}
@@ -228,7 +234,7 @@ impl<'a> DictionaryParser<'a> {
         Ok(self.input[start..self.pos].to_vec())
     }
 
-    /// RFC 8941 Section 4.2.1.1: Parsing an Item or Inner List
+    /// RFC 9651 Section 4.2.1.1: Parsing an Item or Inner List
     fn parse_value(&mut self) -> Result<SfValue, WtError> {
         match self.peek() {
             Some(b'(') => self.parse_inner_list(),
@@ -236,7 +242,7 @@ impl<'a> DictionaryParser<'a> {
         }
     }
 
-    /// RFC 8941 Section 4.2.3.1: Parsing a Bare Item
+    /// RFC 9651 Section 4.2.3.1: Parsing a Bare Item
     ///
     /// 先頭バイトで型を識別して bare item 末尾までを消費する。
     /// known キーへの値判定 (Integer かどうか) と、未知キーの値読み飛ばしの両方で使われる。
@@ -300,7 +306,7 @@ impl<'a> DictionaryParser<'a> {
                 "WebTransport-Init: integer must contain at least one digit",
             ));
         }
-        // RFC 8941 Section 4.2.4 step 7: Decimal なら "." の前で 12 桁まで
+        // RFC 9651 Section 4.2.4 step 7.3.1: Decimal なら "." の前で 12 桁まで
         if self.peek() == Some(b'.') {
             if int_digits > 12 {
                 return Err(WtError::invalid_input(
@@ -324,7 +330,7 @@ impl<'a> DictionaryParser<'a> {
             }
             return Ok(SfNumber::Decimal);
         }
-        // Integer: 15 桁制限 (RFC 8941 §3.3.1)
+        // Integer: 15 桁制限 (RFC 9651 §3.3.1)
         if int_digits > 15 {
             return Err(WtError::invalid_input(
                 "WebTransport-Init: integer exceeds 15 digits",
@@ -340,7 +346,7 @@ impl<'a> DictionaryParser<'a> {
         Ok(SfNumber::Integer(n))
     }
 
-    /// RFC 8941 Section 4.2.5: Parsing a String
+    /// RFC 9651 Section 4.2.5: Parsing a String
     fn skip_string(&mut self) -> Result<(), WtError> {
         // 先頭の `"` を消費
         if !self.consume_if_eq(b'"') {
@@ -350,7 +356,7 @@ impl<'a> DictionaryParser<'a> {
         }
         while let Some(b) = self.peek() {
             if b == b'\\' {
-                // RFC 8941 Section 4.2.5: エスケープは `\\` または `\"`
+                // RFC 9651 Section 4.2.5: エスケープは `\\` または `\"`
                 self.advance();
                 match self.peek() {
                     Some(b'\\') | Some(b'"') => self.advance(),
@@ -376,7 +382,7 @@ impl<'a> DictionaryParser<'a> {
         ))
     }
 
-    /// RFC 8941 Section 4.2.6: Parsing a Token
+    /// RFC 9651 Section 4.2.6: Parsing a Token
     ///
     /// `( ALPHA / "*" ) *( tchar / ":" / "/" )`
     fn skip_token(&mut self) -> Result<(), WtError> {
@@ -398,7 +404,7 @@ impl<'a> DictionaryParser<'a> {
         Ok(())
     }
 
-    /// RFC 8941 Section 4.2.7: Parsing a Byte Sequence
+    /// RFC 9651 Section 4.2.7: Parsing a Byte Sequence
     ///
     /// `":" *base64 ":"` (base64 文字: ALPHA / DIGIT / "+" / "/" / "=")
     fn skip_byte_sequence(&mut self) -> Result<(), WtError> {
@@ -422,7 +428,7 @@ impl<'a> DictionaryParser<'a> {
         Ok(())
     }
 
-    /// RFC 8941 Section 4.2.8: Parsing a Boolean
+    /// RFC 9651 Section 4.2.8: Parsing a Boolean
     ///
     /// `"?" ( "0" / "1" )`
     fn skip_boolean(&mut self) -> Result<(), WtError> {
@@ -521,9 +527,10 @@ impl<'a> DictionaryParser<'a> {
         }
     }
 
-    /// RFC 8941 Section 4.2.1.2: Parsing an Inner List
+    /// RFC 9651 Section 4.2.1.2: Parsing an Inner List
     ///
-    /// RFC 8941 §3.1.1 の ABNF: `inner-list = "(" *SP [ sf-item *( 1*SP sf-item ) *SP ] ")" parameters`。
+    /// RFC 9651 Appendix C (非規範) の ABNF:
+    /// `inner-list = "(" *SP [ sf-item *( 1*SP sf-item ) *SP ] ")" parameters`。
     /// 未知キーの値として現れた場合のみ呼ばれるため、内側の sf-item は読み飛ばすだけでよい。
     /// Inner List 自体に付くパラメータ列は呼び出し元 `parse_value` 直後の `skip_parameters`
     /// で処理される。
@@ -559,7 +566,7 @@ impl<'a> DictionaryParser<'a> {
         }
     }
 
-    /// RFC 8941 Section 4.2.3.2: Parsing Parameters
+    /// RFC 9651 Section 4.2.3.2: Parsing Parameters
     ///
     /// `*( ";" *SP parameter )` を全て読み飛ばす。`parameter = key [ "=" bare-item ]`。
     fn skip_parameters(&mut self) -> Result<(), WtError> {

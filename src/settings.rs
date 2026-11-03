@@ -3,7 +3,7 @@
 //! # 拡張 SETTINGS
 //!
 //! - SETTINGS_ENABLE_CONNECT_PROTOCOL (RFC 8441): Extended CONNECT
-//! - SETTINGS_WT_INITIAL_MAX_* (draft-ietf-webtrans-http2-15 Section 11.2): WebTransport 初期フロー制御
+//! - SETTINGS_WT_INITIAL_MAX_* (draft-ietf-webtrans-http2-16 Section 11.2): WebTransport 初期フロー制御
 //! - SETTINGS_WT_ENABLED (draft-ietf-webtrans-http2-16 Section 3.1 / Section 11.2): WebTransport サポート合図
 
 /// SETTINGS_HEADER_TABLE_SIZE のデフォルト値
@@ -60,35 +60,35 @@ pub enum Setting {
     EnableConnectProtocol(bool),
     /// SETTINGS_NO_RFC7540_PRIORITIES (0x09) (RFC 9218 Section 2.1)
     NoRfc7540Priorities(bool),
-    /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61) (draft-ietf-webtrans-http2-15 Section 11.2)
+    /// SETTINGS_WT_INITIAL_MAX_DATA (0x2b61) (draft-ietf-webtrans-http2-16 Section 11.2)
     ///
-    /// 注: この識別子と値は draft-ietf-webtrans-http2-15 由来の暫定値であり、
-    /// IANA 登録後に変更される可能性がある。
+    /// 注: この識別子と値は draft-ietf-webtrans-http2-16 Section 11.2 の登録値だが、
+    /// draft の改訂や RFC 化に伴い変更される可能性がある。
     WtInitialMaxData(u32),
-    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62) (draft-ietf-webtrans-http2-15 Section 11.2)
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_UNI (0x2b62) (draft-ietf-webtrans-http2-16 Section 11.2)
     ///
-    /// 注: この識別子と値は draft-ietf-webtrans-http2-15 由来の暫定値であり、
-    /// IANA 登録後に変更される可能性がある。
+    /// 注: この識別子と値は draft-ietf-webtrans-http2-16 Section 11.2 の登録値だが、
+    /// draft の改訂や RFC 化に伴い変更される可能性がある。
     WtInitialMaxStreamDataUni(u32),
-    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63) (draft-ietf-webtrans-http2-15 Section 11.2)
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL (0x2b63) (draft-ietf-webtrans-http2-16 Section 11.2)
     ///
-    /// 注: この識別子と値は draft-ietf-webtrans-http2-15 由来の暫定値であり、
-    /// IANA 登録後に変更される可能性がある。
+    /// 注: この識別子と値は draft-ietf-webtrans-http2-16 Section 11.2 の登録値だが、
+    /// draft の改訂や RFC 化に伴い変更される可能性がある。
     WtInitialMaxStreamDataBidiLocal(u32),
-    /// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64) (draft-ietf-webtrans-http2-15 Section 11.2)
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_UNI (0x2b64) (draft-ietf-webtrans-http2-16 Section 11.2)
     ///
-    /// 注: この識別子と値は draft-ietf-webtrans-http2-15 由来の暫定値であり、
-    /// IANA 登録後に変更される可能性がある。
+    /// 注: この識別子と値は draft-ietf-webtrans-http2-16 Section 11.2 の登録値だが、
+    /// draft の改訂や RFC 化に伴い変更される可能性がある。
     WtInitialMaxStreamsUni(u32),
-    /// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65) (draft-ietf-webtrans-http2-15 Section 11.2)
+    /// SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI (0x2b65) (draft-ietf-webtrans-http2-16 Section 11.2)
     ///
-    /// 注: この識別子と値は draft-ietf-webtrans-http2-15 由来の暫定値であり、
-    /// IANA 登録後に変更される可能性がある。
+    /// 注: この識別子と値は draft-ietf-webtrans-http2-16 Section 11.2 の登録値だが、
+    /// draft の改訂や RFC 化に伴い変更される可能性がある。
     WtInitialMaxStreamsBidi(u32),
-    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66) (draft-ietf-webtrans-http2-15 Section 11.2)
+    /// SETTINGS_WT_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE (0x2b66) (draft-ietf-webtrans-http2-16 Section 11.2)
     ///
-    /// 注: この識別子と値は draft-ietf-webtrans-http2-15 由来の暫定値であり、
-    /// IANA 登録後に変更される可能性がある。
+    /// 注: この識別子と値は draft-ietf-webtrans-http2-16 Section 11.2 の登録値だが、
+    /// draft の改訂や RFC 化に伴い変更される可能性がある。
     WtInitialMaxStreamDataBidiRemote(u32),
     /// SETTINGS_WT_ENABLED (0x2b67) (draft-ietf-webtrans-http2-16 Section 3.1 / Section 11.2)
     ///
@@ -96,11 +96,11 @@ pub enum Setting {
     /// 値は 0 または 1 のみ。クライアントは 1 より大きい値を
     /// 接続エラー PROTOCOL_ERROR として扱わなければならない (MUST)。
     ///
-    /// draft-ietf-webtrans-http2-15 の識別子 `0x2b60` は未知の SETTINGS として
+    /// 旧 draft (draft-15) の識別子 `0x2b60` は未知の SETTINGS として
     /// 無視され、`wt_enabled` を変更しない (RFC 9113 Section 6.5.2)。
     ///
-    /// 注: この識別子と値は draft-ietf-webtrans-http2-16 由来の暫定値であり、
-    /// IANA 登録後に変更される可能性がある。
+    /// 注: この識別子と値は draft-ietf-webtrans-http2-16 Section 11.2 の登録値だが、
+    /// draft の改訂や RFC 化に伴い変更される可能性がある。
     WtEnabled(bool),
     /// 未知の SETTINGS パラメータ (RFC 9113 §6.5.2: MUST ignore)
     Unknown { id: u16, value: u32 },
@@ -356,9 +356,9 @@ impl Settings {
     /// SETTINGS_WT_ENABLED (0x2b67) (draft-ietf-webtrans-http2-16 Section 3.1)
     ///
     /// WebTransport サポート合図。デフォルト値は false (非サポート)。
-    /// 本ライブラリのクライアントは draft-ietf-webtrans-http2-15 のサーバーと
-    /// WebTransport を確立できない (サーバーが送る旧識別子 `0x2b60` を未知の
-    /// SETTINGS として無視するため)。ピアから受信した値は
+    /// 本ライブラリのクライアントは旧 draft (draft-15) のサーバーと
+    /// WebTransport を確立できない (旧 draft のサーバーが送る識別子 `0x2b60` を
+    /// 未知の SETTINGS として無視するため)。ピアから受信した値は
     /// `Connection::remote_settings()` で確認する。
     #[must_use]
     pub const fn wt_enabled(&self) -> bool {

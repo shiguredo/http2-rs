@@ -69,7 +69,7 @@ fn test_wt_enabled_from_wire_rejects_greater_than_one() {
 /// SETTINGS_WT_ENABLED の SETTINGS 識別子の検証。
 ///
 /// draft-ietf-webtrans-http2-16 Section 11.2: SETTINGS_WT_ENABLED の識別子は 0x2b67。
-/// draft-ietf-webtrans-http2-15 の 0x2b60 は未知の SETTINGS として扱い、有効化にも値域違反にもしない
+/// 旧 draft (draft-15) の 0x2b60 は未知の SETTINGS として扱い、有効化にも値域違反にもしない
 /// (draft-ietf-webtrans-http2-16 Section 9.1: 非互換な変更では新しい識別子を使う)。
 #[test]
 fn test_wt_enabled_wire_id() {

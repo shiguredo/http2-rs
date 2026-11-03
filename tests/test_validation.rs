@@ -336,7 +336,7 @@ fn test_protocol_on_non_connect_rejected() {
     }
 }
 
-// draft-ietf-webtrans-http2-15 Section 3.2: :protocol=webtransport + :scheme=http は拒否される
+// draft-ietf-webtrans-http2-16 Section 3.2: :protocol=webtransport + :scheme=http は拒否される
 #[test]
 fn test_webtransport_scheme_http_rejected() {
     let headers = vec![
@@ -352,7 +352,7 @@ fn test_webtransport_scheme_http_rejected() {
     );
 }
 
-// draft-ietf-webtrans-http2-15 Section 3.2: :protocol=webtransport + :scheme=https は通過する
+// draft-ietf-webtrans-http2-16 Section 3.2: :protocol=webtransport + :scheme=https は通過する
 #[test]
 fn test_webtransport_scheme_https_accepted() {
     let headers = vec![

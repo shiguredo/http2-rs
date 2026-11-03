@@ -14,7 +14,7 @@ fn test_default_build_succeeds() {
 
 /// `wt_enabled=false` + WT 初期設定ありで `build()` が失敗する。
 ///
-/// draft-ietf-webtrans-http2-15 Section 3.1: WT 初期設定 (SETTINGS_WT_INITIAL_MAX_*) は
+/// draft-ietf-webtrans-http2-16 Section 3.1: WT 初期設定 (SETTINGS_WT_INITIAL_MAX_*) は
 /// SETTINGS_WT_ENABLED=1 のサポート表明があって意味を持つ。
 #[test]
 fn test_wt_initial_settings_without_wt_enabled_fails() {
@@ -31,7 +31,7 @@ fn test_wt_initial_settings_without_wt_enabled_fails() {
 
 /// `wt_enabled=true` + `enable_connect_protocol=false` で `build()` が失敗する。
 ///
-/// draft-ietf-webtrans-http2-15 Section 3.1: WebTransport を構成するなら
+/// draft-ietf-webtrans-http2-16 Section 3.1: WebTransport を構成するなら
 /// SETTINGS_ENABLE_CONNECT_PROTOCOL=1 が必須。
 #[test]
 fn test_wt_enabled_without_connect_protocol_fails() {

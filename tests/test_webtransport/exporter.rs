@@ -1,6 +1,6 @@
 //! `serialize_exporter_context` の単体テスト
 //!
-//! draft-ietf-webtrans-http2-15 Section 5.3 の WebTransport Exporter Context
+//! draft-ietf-webtrans-http2-16 Section 5.3 の WebTransport Exporter Context
 //! シリアライズ境界を検証する。
 
 use shiguredo_http2::webtransport::{WtErrorKind, serialize_exporter_context};

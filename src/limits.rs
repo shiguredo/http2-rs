@@ -240,15 +240,16 @@ impl LimitsBuilder {
     ///
     /// サーバーの WebTransport サポート合図。`enable_connect_protocol(true)` と
     /// 同様に呼び出し側が明示的に設定する。本ライブラリのサーバーが `0x2b67` を
-    /// 広告しても、draft-ietf-webtrans-http2-15 のクライアントはこれを認識できない
-    /// (サーバーの SETTINGS を確認せずに接続する非準拠クライアント実装では接続し得る)。
+    /// 広告しても、旧 draft (draft-15) のクライアントはこれを未知の SETTINGS として
+    /// 無視するため認識できない (サーバーの SETTINGS を確認せずに接続する
+    /// 非準拠クライアント実装では接続し得る)。
     #[must_use]
     pub const fn wt_enabled(mut self, enable: bool) -> Self {
         self.wt_enabled = enable;
         self
     }
 
-    /// WebTransport 初期設定を一括設定する (draft-ietf-webtrans-http2-15 Section 11.2)
+    /// WebTransport 初期設定を一括設定する (draft-ietf-webtrans-http2-16 Section 11.2)
     #[must_use]
     pub const fn webtransport(
         mut self,
@@ -278,12 +279,12 @@ impl LimitsBuilder {
     /// - WebTransport 関連フィールドが設定されているのに `wt_enabled = false`
     ///   → [`LimitsError::WebtransportRequiresWtEnabled`]
     pub fn build(self) -> Result<Limits, LimitsError> {
-        // draft-ietf-webtrans-http2-15 Section 3.1:
+        // draft-ietf-webtrans-http2-16 Section 3.1:
         // WebTransport を構成するなら SETTINGS_ENABLE_CONNECT_PROTOCOL=1 が必須
         if !self.enable_connect_protocol && (self.wt_enabled || self.has_webtransport_settings()) {
             return Err(LimitsError::WebtransportRequiresConnectProtocol);
         }
-        // draft-ietf-webtrans-http2-15 Section 3.1:
+        // draft-ietf-webtrans-http2-16 Section 3.1:
         // WT 初期設定は SETTINGS_WT_ENABLED=1 のサポート表明があって意味を持つ
         if !self.wt_enabled && self.has_webtransport_settings() {
             return Err(LimitsError::WebtransportRequiresWtEnabled);
@@ -355,14 +356,14 @@ impl LimitsBuilder {
 pub enum LimitsError {
     /// WebTransport 関連設定があるのに `enable_connect_protocol = false`
     ///
-    /// draft-ietf-webtrans-http2-15 §3.1: サーバーは WebTransport 対応を示すために
+    /// draft-ietf-webtrans-http2-16 §3.1: サーバーは WebTransport 対応を示すために
     /// `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` を SETTINGS フレームで MUST 送信する。
     /// SETTINGS の定義は §11.2 (将来変更される可能性がある)。
     WebtransportRequiresConnectProtocol,
 
     /// WebTransport 初期設定があるのに `wt_enabled = false`
     ///
-    /// draft-ietf-webtrans-http2-15 §3.1: WT 初期設定 (SETTINGS_WT_INITIAL_MAX_*) は
+    /// draft-ietf-webtrans-http2-16 §3.1: WT 初期設定 (SETTINGS_WT_INITIAL_MAX_*) は
     /// `SETTINGS_WT_ENABLED = 1` のサポート表明があって意味を持つ。
     WebtransportRequiresWtEnabled,
 }

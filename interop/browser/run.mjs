@@ -120,7 +120,7 @@ function generatePageCertificate() {
 function startWtServer(serverBin, allowedOrigin) {
   return new Promise((resolvePromise, rejectPromise) => {
     // ブラウザは必ず Origin を送るため、検証ページの Origin を許可する
-    // (draft-ietf-webtrans-http2-15 Section 3.2)
+    // (draft-ietf-webtrans-http2-16 Section 3.2)
     const child = spawn(
       serverBin,
       ['--listen', `127.0.0.1:${WT_PORT}`, '--allow-origin', allowedOrigin],

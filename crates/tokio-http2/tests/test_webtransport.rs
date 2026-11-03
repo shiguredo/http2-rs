@@ -158,7 +158,7 @@ fn initial_one_server_limits() -> Limits {
         .expect("サーバー Limits の構築に失敗した")
 }
 
-/// draft-ietf-webtrans-http2-15: クライアント → サーバー bidi ストリームへの送信をサーバーがエコーし、
+/// draft-ietf-webtrans-http2-16: クライアント → サーバー bidi ストリームへの送信をサーバーがエコーし、
 /// クライアントで同じデータを受信できることを確認する。
 #[tokio::test]
 async fn test_wt_bidi_echo() {
@@ -692,7 +692,7 @@ async fn test_wt_command_flush_error_not_masked_as_connection_closed() {
 /// サーバー視点ではピア開始となるため、サーバーの送信ウィンドウはクライアントの
 /// `initial_max_stream_data_bidi_local` で、セッションの送信ウィンドウは
 /// `initial_max_data` で初期化される
-/// (draft-ietf-webtrans-http2-15 Section 11.2)。
+/// (draft-ietf-webtrans-http2-16 Section 11.2)。
 #[tokio::test]
 async fn test_wt_send_large_stream_data_with_expanded_windows() {
     // 送信バッファの固定容量 (65535) を超え、複数チャンクに分割されるペイロード長
@@ -831,7 +831,7 @@ async fn test_wt_send_large_stream_data_with_expanded_windows() {
 
 /// ローカル開始 bidi ストリームの自動ウィンドウ拡張が
 /// `initial_max_stream_data_bidi_local` を基準に動作することを確認する
-/// (draft-ietf-webtrans-http2-15 Section 11.2)。
+/// (draft-ietf-webtrans-http2-16 Section 11.2)。
 #[tokio::test]
 async fn test_wt_local_bidi_window_grows_with_asymmetric_limits() {
     let tls = test_tls();
@@ -1057,7 +1057,7 @@ async fn test_wt_stream_window_grows_with_initial_one() {
 /// FIN を受信したストリームの受信ウィンドウを拡張しないことを確認する
 ///
 /// RFC 9000 Section 3.3 は MAX_STREAM_DATA を `Recv` 状態のストリームにしか
-/// 送れないとし、draft-ietf-webtrans-http2-15 Section 5.2 は WebTransport
+/// 送れないとし、draft-ietf-webtrans-http2-16 Section 5.2 は WebTransport
 /// ストリームの状態が QUIC ストリームの状態を mirror するとする。
 /// `WtSession::poll_event` は FIN 付きの `WtEvent::StreamData` を返す前に
 /// `WtStream::mark_data_read` を呼ぶため、ドライバが処理する時点の受信状態は
@@ -1194,7 +1194,7 @@ async fn test_wt_stream_window_not_grown_after_fin() {
 
 /// STOP_SENDING 送信後にピアから在路データが届いてもセッションが継続し、
 /// 停止要求後のデータがアプリへ配送されないことを確認する
-/// (RFC 9000 Section 3.5 / draft-ietf-webtrans-http2-15 Section 6.3)。
+/// (RFC 9000 Section 3.5 / draft-ietf-webtrans-http2-16 Section 6.3)。
 #[tokio::test]
 async fn test_wt_stop_sending_inflight_data_does_not_abort_session() {
     let tls = test_tls();
@@ -1601,7 +1601,7 @@ async fn test_wt_drain() {
 /// サーバーが close() を呼んだ後、クライアントが CONNECT ストリーム上で
 /// END_STREAM を受信することを確認する。
 ///
-/// draft-ietf-webtrans-http2-15 Section 6.12 (L1405-L1406) の MUST 要件:
+/// draft-ietf-webtrans-http2-16 Section 6.12 の MUST 要件:
 /// WT_CLOSE_SESSION 送信後は END_STREAM で half-close しなければならない。
 #[tokio::test]
 async fn test_wt_close_sends_end_stream() {
@@ -1671,7 +1671,7 @@ async fn test_wt_close_sends_end_stream() {
 /// クライアントが WT_CLOSE_SESSION + END_STREAM を送信した後、
 /// サーバーが END_STREAM を返信することを確認する。
 ///
-/// draft-ietf-webtrans-http2-15 Section 6.12 (L1407-L1409):
+/// draft-ietf-webtrans-http2-16 Section 6.12:
 /// WT_CLOSE_SESSION の受信者は END_STREAM で応答しなければならない (MUST)。
 #[tokio::test]
 async fn test_wt_close_received_sends_end_stream() {
@@ -1977,7 +1977,7 @@ async fn test_wt_origin_rejected() {
     server_task.await.expect("server join");
 }
 
-/// draft-ietf-webtrans-http2-15 Section 7 (L1483-L1487):
+/// draft-ietf-webtrans-http2-16 Section 7:
 /// TLS 1.3 で WebTransport セッションを要求した場合は `accept()` が成功する。
 /// (既存テストでも TLS 1.3 経路は通っているが、リグレッション防止のため明示テストを置く)
 #[tokio::test]
@@ -2012,7 +2012,7 @@ async fn test_wt_tls13_accept() {
     server_task.await.expect("サーバータスクの join に失敗");
 }
 
-/// draft-ietf-webtrans-http2-15 Section 7 (L1483-L1487) + RFC 9113 Section 8.1.1 (L2463-L2465):
+/// draft-ietf-webtrans-http2-16 Section 7 + RFC 9113 Section 8.1.1:
 /// TLS 1.2 で WebTransport セッションを要求した場合は malformed として扱い、
 /// CONNECT ストリームに `RST_STREAM(PROTOCOL_ERROR)` を送出して拒否する。
 #[tokio::test]
@@ -2109,7 +2109,7 @@ async fn test_wt_tls12_rejected() {
 }
 
 /// Origin ヘッダーが存在しない場合、allowed_origin=Some でも accept が成功することを確認する。
-/// (draft-ietf-webtrans-http2-15 Section 3.2: Origin 検証はヘッダーがある場合のみ)
+/// (draft-ietf-webtrans-http2-16 Section 3.2: Origin 検証はヘッダーがある場合のみ)
 #[tokio::test]
 async fn test_wt_origin_missing_accepted() {
     let tls = test_tls();
@@ -2150,7 +2150,7 @@ async fn test_wt_origin_missing_accepted() {
     server_task.await.expect("server join");
 }
 
-/// draft-ietf-webtrans-http2-15 Section 4.3 (L524-L528):
+/// draft-ietf-webtrans-http2-16 Section 4.3:
 /// SETTINGS_WT_INITIAL_MAX_* を広告しないクライアントが WebTransport-Init で
 /// 大きな値を送ると `accept()` が成功し、セッションが確立できる
 /// (ヘッダー値が Initial Value 0 を基準に採用される経路の確認)。
@@ -2257,7 +2257,7 @@ async fn test_wt_init_accept_with_small_value() {
 /// ピアが SETTINGS_WT_INITIAL_MAX_* を広告しない場合、WebTransport-Init ヘッダーの
 /// 値がピア用 config の Initial Value 0 を基準にそのまま採用されることを確認する。
 ///
-/// draft-ietf-webtrans-http2-15 Section 4.3 / Section 11.2: クライアントは SETTINGS を
+/// draft-ietf-webtrans-http2-16 Section 4.3 / Section 11.2: クライアントは SETTINGS を
 /// 広告せず、ヘッダーで `bl=128KiB` を通知する。`WtConfig::default` の `bidi_local`
 /// (256KiB) が混入していれば 200,000 bytes の送信が成功してしまうため、拒否されることで
 /// ヘッダー値が上限として採用されたことを確認できる。その後 64KiB の送信が成功し、
@@ -2428,7 +2428,7 @@ async fn test_wt_init_header_value_below_default_applied() {
     server_task.await.expect("サーバータスクの終了に失敗した");
 }
 
-/// draft-ietf-webtrans-http2-15 Section 4.3.2 (L583-L590):
+/// draft-ietf-webtrans-http2-16 Section 4.3.2:
 /// WebTransport-Init のパース失敗 (負値) で `:status=400` レスポンスが返り、
 /// CONNECT ストリームが END_STREAM で閉じられる。
 #[tokio::test]
@@ -2534,7 +2534,7 @@ fn connect_request_with_scheme(scheme: &str) -> Vec<HeaderField> {
     panic!(":scheme ヘッダーが見つからない");
 }
 
-/// draft-ietf-webtrans-http2-15 Section 3.3:
+/// draft-ietf-webtrans-http2-16 Section 3.3:
 /// `selected_protocol = Some(b"echo")` かつ `wt-available-protocols: "echo"` なら
 /// 受理され、レスポンスに `wt-protocol` (sf-string) が付く。
 #[tokio::test]
@@ -2627,7 +2627,7 @@ async fn test_wt_selected_protocol_accepted() {
     assert!(got_wt_protocol, "wt-protocol を受信しなかった");
 }
 
-/// draft-ietf-webtrans-http2-15 Section 3.3:
+/// draft-ietf-webtrans-http2-16 Section 3.3:
 /// `selected_protocol` が `WT-Available-Protocols` に含まれない場合は
 /// `Error::InvalidArgument` を返し、レスポンスは送らない。
 #[tokio::test]
@@ -2677,7 +2677,7 @@ async fn test_wt_selected_protocol_not_listed() {
     server_task.await.expect("サーバータスクの join に失敗");
 }
 
-/// draft-ietf-webtrans-http2-15 Section 5.3:
+/// draft-ietf-webtrans-http2-16 Section 5.3:
 /// `export_keying_material` が指定長の鍵素材を返し、冪等であり、label 変更で異なる。
 #[tokio::test]
 async fn test_wt_export_keying_material() {
@@ -2738,7 +2738,7 @@ async fn test_wt_export_keying_material() {
     server_task.await.expect("サーバータスクの join に失敗");
 }
 
-/// draft-ietf-webtrans-http2-15 Section 3.2:
+/// draft-ietf-webtrans-http2-16 Section 3.2:
 /// `:scheme` が `http` の `:protocol=webtransport` CONNECT は Sans I/O 層で送信時に拒否される。
 #[tokio::test]
 async fn test_wt_scheme_http_rejected() {

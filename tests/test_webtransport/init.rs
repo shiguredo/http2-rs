@@ -20,7 +20,7 @@ fn test_parse_all_known_keys() {
     assert_eq!(init.br, Some(300), "br は 300 が期待値");
 }
 
-/// 未知キーが含まれていても known キーだけが抽出されること (Section 4.3.2 L541 の MUST)
+/// 未知キーが含まれていても known キーだけが抽出されること (Section 4.3.2 の MUST)
 #[test]
 fn test_parse_ignores_unknown_keys() {
     let init = WtInit::parse(b"u=100, x=999").expect("未知キーは無視されるはず");
@@ -30,7 +30,7 @@ fn test_parse_ignores_unknown_keys() {
     assert_eq!(init.br, None);
 }
 
-/// known キーに付随するパラメータも無視されること (draft-ietf-webtrans-http2-15 Section 4.3.2 の MUST。パラメータの定義は RFC 8941 §3.1.2)
+/// known キーに付随するパラメータも無視されること (draft-ietf-webtrans-http2-16 Section 4.3.2 の MUST。パラメータの定義は RFC 9651 §3.1.2)
 #[test]
 fn test_parse_ignores_parameters_on_known_key() {
     let init = WtInit::parse(b"u=100;foo=bar").expect("パラメータは無視されるはず");
@@ -49,7 +49,7 @@ fn test_parse_ignores_parameters_on_unknown_key() {
     assert_eq!(init.u, Some(100));
 }
 
-/// 16 桁の数字は RFC 8941 §3.3.1 に従い拒否されること
+/// 16 桁の数字は RFC 9651 §3.3.1 に従い拒否されること
 #[test]
 fn test_parse_rejects_integer_exceeding_15_digits() {
     let err =
@@ -106,22 +106,22 @@ fn test_parse_rejects_token_value_on_known_key() {
 
 /// known キーの値が Decimal (`1.5`) だった場合は拒否されること
 ///
-/// RFC 8941 §3.3.2 で定義される Decimal は draft-ietf-webtrans-http2-15
-/// Section 4.3.2 L530-L537 が要求する Integer 型ではないので拒否する。
+/// RFC 9651 §3.3.2 で定義される Decimal は draft-ietf-webtrans-http2-16
+/// Section 4.3.2 が要求する Integer 型ではないので拒否する。
 #[test]
 fn test_parse_rejects_decimal_value_on_known_key() {
     let err = WtInit::parse(b"u=1.5").expect_err("Decimal は known キーには無効");
     assert!(format!("{err}").contains("Integer"));
 }
 
-/// 15 桁ちょうどの正値は受理されること (RFC 8941 §3.3.1 の絶対値上限)
+/// 15 桁ちょうどの正値は受理されること (RFC 9651 §3.3.1 の絶対値上限)
 #[test]
 fn test_parse_accepts_max_15_digits() {
     let init = WtInit::parse(b"u=999999999999999").expect("15 桁ちょうどは受理されるべき");
     assert_eq!(init.u, Some(999_999_999_999_999));
 }
 
-/// 重複キーは last-wins で扱われること (RFC 8941 §4.2.2 step 2.4)
+/// 重複キーは last-wins で扱われること (RFC 9651 §4.2.2 step 2.4)
 #[test]
 fn test_parse_duplicate_key_last_wins() {
     let init = WtInit::parse(b"u=10, u=20").expect("重複キーは last-wins でパース成功");
@@ -135,14 +135,14 @@ fn test_parse_empty_input_returns_default() {
     assert_eq!(init, WtInit::default());
 }
 
-/// 末尾カンマは拒否されること (RFC 8941 §4.2.2 step 2.10)
+/// 末尾カンマは拒否されること (RFC 9651 §4.2.2 step 2.10)
 #[test]
 fn test_parse_rejects_trailing_comma() {
     let err = WtInit::parse(b"u=100,").expect_err("末尾カンマは拒否されるべき");
     assert!(format!("{err}").contains("trailing comma"));
 }
 
-/// 非 ASCII バイトは拒否されること (RFC 8941 §4.2 step 1)
+/// 非 ASCII バイトは拒否されること (RFC 9651 §4.2 step 1)
 #[test]
 fn test_parse_rejects_non_ascii() {
     let err = WtInit::parse(&[b'u', b'=', 0xFF]).expect_err("非 ASCII バイトは拒否されるべき");
@@ -510,7 +510,7 @@ fn test_apply_init_as_peer_none_does_not_touch_config() {
     );
 }
 
-/// 先頭・末尾の SP は破棄されること (RFC 8941 §4.2 step 2 および step 6)
+/// 先頭・末尾の SP は破棄されること (RFC 9651 §4.2 step 2 および step 6)
 #[test]
 fn test_parse_handles_leading_and_trailing_ows() {
     let init = WtInit::parse(b"  u=100, bl=200  ").expect("先頭末尾の OWS は破棄されるべき");
@@ -542,7 +542,7 @@ fn test_apply_init_as_peer_propagates_to_uni_stream_send_max() {
 }
 
 /// `WtConfig::peer_default` は SETTINGS_WT_INITIAL_MAX_* の Initial Value (全て 0) を返すこと
-/// (draft-ietf-webtrans-http2-15 Section 11.2)
+/// (draft-ietf-webtrans-http2-16 Section 11.2)
 #[test]
 fn test_peer_default_is_all_zero() {
     let config = WtConfig::peer_default();
@@ -613,9 +613,10 @@ fn test_peer_default_zeros_session_send_limits() {
 /// セッション送信上限が 0 (SETTINGS_WT_INITIAL_MAX_DATA 未広告) でストリーム送信が
 /// 失敗しても、ストリームの送信済みバイト数と送信状態が変化しないこと。
 ///
-/// driver はストリームエラー後もセッションを継続するため、部分的な状態変更が残ると
-/// 再送時の送信済みバイト数や WT_RESET_STREAM の Reliable Size が実際の送信量とずれる
-/// (draft-ietf-webtrans-http2-15 Section 6.2 / Section 6.5)。
+/// この送信上限超過はピアへ送る前のローカル検証エラーであり、セッションは継続する。
+/// 上限回復後に再送できるため、部分的な状態変更が残ると再送時の送信済みバイト数や
+/// WT_RESET_STREAM の Reliable Size が実際の送信量とずれる
+/// (draft-ietf-webtrans-http2-16 Section 6.5 / Section 6.6)。
 #[test]
 fn test_peer_default_send_limit_failure_keeps_stream_state() {
     // initial_max_data は未広告 (0)、ストリーム送信上限のみヘッダー相当で許可する

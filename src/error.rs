@@ -42,31 +42,31 @@ pub enum ErrorCode {
     /// HTTP/1.1 使用要求
     Http11Required,
 
-    // === WebTransport エラーコード (draft-ietf-webtrans-http2-15) ===
+    // === WebTransport エラーコード (draft-ietf-webtrans-http2-16) ===
+    //
+    // 注: draft-ietf-webtrans-http2-16 Section 11.3 では 0x100-0x102 の登録値が 0xTBD の
+    // ため、これらは本実装の暫定値。IANA 登録後に更新される可能性がある。
     /// WT_ERROR
     ///
-    /// draft-ietf-webtrans-http2-15 Section 3.4: 汎用 WebTransport エラー。
+    /// draft-ietf-webtrans-http2-16 Section 3.4: 汎用 WebTransport エラー。
     /// より具体的なエラーコードがない場合に使用する。
     ///
     /// 注: `webtransport::WtError` 構造体とは別物。こちらは HTTP/2 エラーコードの
-    /// IANA 登録名 (draft-ietf-webtrans-http2-15 Section 11.3)。
+    /// IANA 登録名 (draft-ietf-webtrans-http2-16 Section 11.3)。
     ///
-    /// 注: この値は暫定値。IANA 登録後に更新される可能性がある。
     WtError,
 
     /// WT_STREAM_STATE_ERROR
     ///
-    /// draft-ietf-webtrans-http2-15 Section 3.4: ストリーム関連の capsule が
+    /// draft-ietf-webtrans-http2-16 Section 3.4: ストリーム関連の capsule が
     /// 無効な状態のストリームを指定した。
     ///
-    /// 注: この値は暫定値。IANA 登録後に更新される可能性がある。
     WtStreamStateError,
 
     /// WT_FLOW_CONTROL_ERROR
     ///
-    /// draft-ietf-webtrans-http2-15 Section 11.3: フロー制御エラーが発生した。
+    /// draft-ietf-webtrans-http2-16 Section 3.4: フロー制御上限に違反した。
     ///
-    /// 注: この値は暫定値。IANA 登録後に更新される可能性がある。
     WtFlowControlError,
 
     /// 未知のエラーコード (RFC 9113 Section 7)

@@ -1,7 +1,7 @@
 # draft 16 対応完了後に仕様参照とセッションエラーの説明を同期する
 
 - Created: 2026-11-03
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-11-03
 - Branch: feature/update-wt-h2-draft16-references
 - Polished: 2026-11-03
 
@@ -62,3 +62,23 @@ HTTP/2 draft 15 → 16 は本文の変更を節ごとに比較し、ページ送
 - 差分表の各項目が、対応完了または動作変更不要と判断した根拠を維持していること。
 - 削除された旧 draft ファイルへの現行のリンクを残さず、歴史的な説明と原本は保全すること。
 - 動作や公開 API の変更を混在させず、`cargo fmt --all -- --check` とドキュメントテストが通ること。
+
+## 解決方法
+
+- 0164〜0168 の実装完了を確認したうえで、コード・テスト・利用者向け文書に残る draft 15 の参照を draft 16 に同期した
+- 行番号アンカー (`L123-L456` 形式) を削除した。refs の更新で行番号が無効になり、節番号だけで参照できるためである
+- `WT_STREAM_STATE_ERROR` / `WT_FLOW_CONTROL_ERROR` を、受信した capsule の検証で生じた場合に driver が CONNECT ストリームを RST_STREAM で終了させるセッションエラーとして説明し直した。ローカル API の検証エラーは呼び出し側へ返すだけでセッションを継続することも明記した
+- `WtErrorKind` の doc に、対応する draft 16 の節 (`Section 6.2` / `6.3` / `6.4` / `6.6` / `6.9` / `6.5` / `6.7` / `6.10`) と WT_ERROR の範囲を記載した
+- `SETTINGS_WT_ENABLED` の旧識別子 `0x2b60` を「旧 draft (draft-15) の識別子」と明記し、文字列置換で意味が反転していた記述を修正した
+- WT エラーコード `0x100`-`0x102` が draft 16 Section 11.3 では `0xTBD` であることを、列挙部と SKILL / テストの注記にまとめた
+- `WebTransport-Init` / `WT-Available-Protocols` / `WT-Protocol` の規範参照を RFC 8941 から RFC 9651 に更新し、HTTP/3 の参照を HTTP/2 draft 16 が参照する draft-ietf-webtrans-http3-16 Section 3.3 に合わせた
+- RFC 9651 の ABNF 引用を Appendix C (非規範) に、パース手順の引用を各節に修正した
+- `WT-Available-Protocols` / `WT-Protocol` のパーサーがパラメータ値の Date / Display String に未対応であることを既知の制限として明記した (動作拡張は行っていない)
+- capsule タイプの登録元を RFC 9297 Section 5.4 / draft-ietf-webtrans-http2-16 Section 11.4 / draft-ietf-webtrans-http3-16 Section 9.6 に分けて記載した
+- `WtInit` に Section 4.3.2 の上限種別の注記、`WtSession::handle_capsule` に PADDING と未知 capsule の扱いの注記、`WtSession::handle_stream_data` にセッション終了の主体の注記を追加した
+- `WT_STREAM` の LSB=FIN の説明を版に依存しない表現に変更した
+- README / `crates/tokio-http2/README.md` / SKILL.md / examples / interop の対応版を draft 16 に統一し、規格書一覧に RFC 9651 を追加した
+- open issue の 0117 / 0120 に残っていた旧 draft への参照を現行の refs に更新した
+- `src/validation.rs` のエラーメッセージに含まれる版表記も同期した。実行時に見える唯一の変更であり、動作ロジックと公開 API は変更していない
+- `CODEBASE.md` の draft 番号は Git の特別規約に従い「整備」コミットとして develop に直接コミットした
+- `CODEBASE.md` の指示に従い `CHANGES.md` は変更していない

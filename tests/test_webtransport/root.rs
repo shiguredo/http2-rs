@@ -123,7 +123,7 @@ fn test_close_emits_wt_close_session_capsule() {
 }
 
 /// reason が 1024 バイトの境界値までは正常に close() できることを確認する。
-/// (draft-ietf-webtrans-http2-15 Section 6.12: メッセージ長は 1024 バイトを超えてはならない (MUST NOT))
+/// (draft-ietf-webtrans-http2-16 Section 6.12: メッセージ長は 1024 バイトを超えてはならない (MUST NOT))
 #[test]
 fn test_close_reason_max_length_ok() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
@@ -135,7 +135,7 @@ fn test_close_reason_max_length_ok() {
 }
 
 /// reason が 1024 バイトを超えると UTF-8 境界で切り詰められることを確認する。
-/// (draft-ietf-webtrans-http2-15 Section 6.12: 切り詰めは義務ではないが許容される)
+/// (draft-ietf-webtrans-http2-16 Section 6.12: 切り詰めは義務ではないが許容される)
 #[test]
 fn test_close_reason_exceeds_max_length_truncated() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
@@ -203,7 +203,7 @@ fn test_close_reason_truncation_utf8_boundary() {
     }
 }
 
-/// draft-ietf-webtrans-http2-15 Section 6.2 / 6.3: `reset_stream` / `stop_sending` の
+/// draft-ietf-webtrans-http2-16 Section 6.2 / 6.3: `reset_stream` / `stop_sending` の
 /// 重複送信はエラーになる。
 #[test]
 fn test_duplicate_operations_are_errors() {
@@ -264,7 +264,7 @@ fn test_send_max_streams_boundary_errors() {
     );
 }
 
-/// draft-ietf-webtrans-http2-15 Section 6.13: Draining 状態でもストリーム開設・データ送信・データグラム送信が許可される
+/// draft-ietf-webtrans-http2-16 Section 6.13: Draining 状態でもストリーム開設・データ送信・データグラム送信が許可される
 #[test]
 fn test_draining_state_allows_operations() {
     let mut session = WtSession::client(WtConfig::default(), WtConfig::default());
@@ -293,7 +293,7 @@ fn test_draining_state_allows_operations() {
 }
 
 /// WtConfig::overlay_settings が SETTINGS 値で上書きし、None 時は既存値を維持することを確認する
-/// (draft-ietf-webtrans-http2-15 Section 4.3.1)
+/// (draft-ietf-webtrans-http2-16 Section 4.3.1)
 #[test]
 fn test_overlay_settings() {
     use shiguredo_http2::settings::{Setting, Settings};

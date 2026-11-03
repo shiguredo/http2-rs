@@ -1,6 +1,6 @@
 use shiguredo_http2::webtransport::stream::{RecvState, SendState, WtStream, stream_id};
 
-// draft-ietf-webtrans-http2-15 Section 5.2: クライアント起点は偶数、サーバー起点は奇数、下位から 2 ビット目が単方向/双方向を示す (RFC 9000 Section 2.1 と同セマンティクス)。
+// draft-ietf-webtrans-http2-16 Section 5.2: クライアント起点は偶数、サーバー起点は奇数、下位から 2 ビット目が単方向/双方向を示す (RFC 9000 Section 2.1 と同セマンティクス)。
 #[test]
 fn test_stream_id_client_bidi() {
     let id = stream_id::first(true, true);
@@ -60,7 +60,7 @@ fn test_send_data() {
     assert_eq!(stream.send_offset(), 100);
     assert!(stream.can_send());
 
-    // draft-ietf-webtrans-http2-15 Section 5.2: FIN 送信で即座に DataRecvd へ遷移
+    // draft-ietf-webtrans-http2-16 Section 5.2: FIN 送信で即座に DataRecvd へ遷移
     stream
         .send_data(100, true)
         .expect("操作は成功しなければならない");
@@ -80,7 +80,7 @@ fn test_recv_data() {
     assert_eq!(stream.recv_offset(), 100);
     assert!(stream.can_recv());
 
-    // draft-ietf-webtrans-http2-15 Section 5.2: FIN 受信で即座に DataRecvd へ遷移
+    // draft-ietf-webtrans-http2-16 Section 5.2: FIN 受信で即座に DataRecvd へ遷移
     stream
         .recv_data(100, true)
         .expect("操作は成功しなければならない");
@@ -95,7 +95,7 @@ fn test_send_reset() {
     stream
         .send_data(100, false)
         .expect("操作は成功しなければならない");
-    // draft-ietf-webtrans-http2-15 Section 5.2: リセット送信で即座に ResetRecvd へ遷移
+    // draft-ietf-webtrans-http2-16 Section 5.2: リセット送信で即座に ResetRecvd へ遷移
     stream.send_reset();
     assert_eq!(stream.send_state(), SendState::ResetRecvd);
     assert!(!stream.can_send());
@@ -108,7 +108,7 @@ fn test_recv_reset() {
     stream
         .recv_data(100, false)
         .expect("操作は成功しなければならない");
-    // draft-ietf-webtrans-http2-15 Section 5.2: リセット受信で即座に ResetRead へ遷移
+    // draft-ietf-webtrans-http2-16 Section 5.2: リセット受信で即座に ResetRead へ遷移
     stream.recv_reset();
     assert_eq!(stream.recv_state(), RecvState::ResetRead);
     assert!(!stream.can_recv());
@@ -290,7 +290,7 @@ fn test_send_data_after_reset_is_error() {
 
 /// 受信パートの有無がストリームの方向 (双方向 / 開始主体) で決まることを確認する。
 ///
-/// draft-ietf-webtrans-http2-15 Section 6.2 / Section 6.9: 送信専用ストリームへの
+/// draft-ietf-webtrans-http2-16 Section 6.2 / Section 6.9: 送信専用ストリームへの
 /// WT_RESET_STREAM / WT_STREAM_DATA_BLOCKED の拒否に使う判定。
 #[test]
 fn test_has_recv_part_by_direction() {

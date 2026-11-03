@@ -533,7 +533,7 @@ impl Connection {
             }
         }
 
-        // RFC 8441 Section 3, draft-ietf-webtrans-http2-15 Section 3.1:
+        // RFC 8441 Section 3, draft-ietf-webtrans-http2-16 Section 3.1:
         // :protocol を含むリクエストは、ピアが SETTINGS_ENABLE_CONNECT_PROTOCOL=1 を
         // 送信済みの場合のみ許可する。
         let protocol_value = headers
@@ -546,7 +546,7 @@ impl Connection {
             ));
         }
 
-        // draft-ietf-webtrans-http2-15 Section 3.1:
+        // draft-ietf-webtrans-http2-16 Section 3.1:
         // :protocol = webtransport の場合、ピアが SETTINGS_WT_ENABLED=1 を
         // 送信済みの場合のみ許可する (二重ゲート)。
         // SETTINGS_WT_ENABLED は 1→0 ダウングレードが合法であり、

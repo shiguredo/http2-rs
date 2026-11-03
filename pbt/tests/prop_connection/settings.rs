@@ -500,7 +500,7 @@ fn prop_wt_enabled_greater_than_one_is_error() -> noprop::TestResult {
 /// SETTINGS_WT_ENABLED の旧識別子 (0x2b60) は未知の SETTINGS として無視される
 ///
 /// draft-ietf-webtrans-http2-16 Section 9.1: 非互換な変更では SETTINGS_WT_ENABLED の
-/// 識別子を変更する。draft-ietf-webtrans-http2-15 の 0x2b60 は未知の SETTINGS として
+/// 識別子を変更する。旧 draft (draft-15) の 0x2b60 は未知の SETTINGS として
 /// 無視し (RFC 9113 Section 6.5.2)、WebTransport サポートの有効化にも値域違反にもしない。
 /// 無効状態から有効化されないことに加え、有効状態から無効化されないことも検証する。
 #[test]
@@ -597,7 +597,7 @@ fn prop_old_wt_enabled_id_ignored() -> noprop::TestResult {
 /// draft-ietf-webtrans-http2-16 Section 3.1: 新しい識別子の値が 1 より大きい場合は
 /// 接続エラー PROTOCOL_ERROR とする。接続エラー時は SETTINGS ACK を送らない
 /// (RFC 9113 Section 6.5.3 の ACK 規則に基づく実装判断)。
-/// draft-ietf-webtrans-http2-15 の旧識別子は未知の SETTINGS として無視し、
+/// 旧 draft (draft-15) の識別子は未知の SETTINGS として無視し、
 /// 接続を Active にして ACK を送る (RFC 9113 Section 6.5.2 / Section 6.5.3)。
 #[test]
 fn prop_initial_settings_wt_enabled_identifier_handling() -> noprop::TestResult {

@@ -1,4 +1,4 @@
-//! Capsule Protocol (RFC 9297 + draft-ietf-webtrans-http2-15)
+//! Capsule Protocol (RFC 9297 + draft-ietf-webtrans-http2-16)
 //!
 //! # Capsule フォーマット (RFC 9297 Section 3.2)
 //!
@@ -13,62 +13,71 @@
 use crate::webtransport::error::{WtError, WtErrorKind, WtResult};
 use crate::webtransport::varint;
 
-/// Capsule タイプ定数 (RFC 9297 + draft-ietf-webtrans-http2-15)
+/// Capsule タイプ定数
 ///
-/// 注: draft-ietf-webtrans-http2-15 由来の capsule タイプ値は暫定値であり、
-/// IANA 登録後に変更される可能性がある。
+/// 登録元は 3 つに分かれる。
+/// - DATAGRAM: RFC 9297 Section 5.4
+/// - PADDING / WT_RESET_STREAM / WT_STOP_SENDING / WT_STREAM /
+///   WT_MAX_STREAM_DATA / WT_STREAM_DATA_BLOCKED:
+///   draft-ietf-webtrans-http2-16 Section 11.4
+/// - WT_MAX_DATA / WT_MAX_STREAMS / WT_DATA_BLOCKED / WT_STREAMS_BLOCKED /
+///   WT_CLOSE_SESSION / WT_DRAIN_SESSION:
+///   draft-ietf-webtrans-http3-16 Section 9.6 (HTTP/2 draft 16 が参照する版)
+///
+/// 注: WebTransport の仕様は IETF draft であり、draft の改訂や RFC 化に伴い
+/// 値が変更される可能性がある。
 pub mod capsule_type {
     /// DATAGRAM (RFC 9297 Section 3.5)
     pub const DATAGRAM: u64 = 0x00;
 
-    /// PADDING (draft-ietf-webtrans-http2-15 Section 6.1)
+    /// PADDING (draft-ietf-webtrans-http2-16 Section 6.1)
     pub const PADDING: u64 = 0x190B4D38;
 
-    /// WT_RESET_STREAM (draft-ietf-webtrans-http2-15 Section 6.2)
+    /// WT_RESET_STREAM (draft-ietf-webtrans-http2-16 Section 6.2)
     pub const WT_RESET_STREAM: u64 = 0x190B4D39;
 
-    /// WT_STOP_SENDING (draft-ietf-webtrans-http2-15 Section 6.3)
+    /// WT_STOP_SENDING (draft-ietf-webtrans-http2-16 Section 6.3)
     pub const WT_STOP_SENDING: u64 = 0x190B4D3A;
 
-    /// WT_STREAM (FIN=0, 非終端) (draft-ietf-webtrans-http2-15 Section 6.4)
+    /// WT_STREAM (FIN=0, 非終端) (draft-ietf-webtrans-http2-16 Section 6.4)
     ///
-    /// draft-15 では LSB=FIN bit。0x190B4D3C の LSB=0 → FIN=0 (非終端)。
+    /// WT_STREAM の LSB は FIN bit。0x190B4D3C の LSB=0 → FIN=0 (非終端)。
     /// 任意個の 0x190B4D3C capsule の後に終端 0x190B4D3B capsule が続く。
     pub const WT_STREAM: u64 = 0x190B4D3C;
 
-    /// WT_STREAM (FIN=1, 終端) (draft-ietf-webtrans-http2-15 Section 6.4)
+    /// WT_STREAM (FIN=1, 終端) (draft-ietf-webtrans-http2-16 Section 6.4)
     ///
-    /// draft-15 では LSB=FIN bit。0x190B4D3B の LSB=1 → FIN=1 (終端)。
+    /// WT_STREAM の LSB は FIN bit。0x190B4D3B の LSB=1 → FIN=1 (終端)。
     pub const WT_STREAM_FIN: u64 = 0x190B4D3B;
 
-    /// WT_MAX_DATA (draft-ietf-webtrans-http2-15 Section 6.5)
+    /// WT_MAX_DATA (draft-ietf-webtrans-http2-16 Section 6.5)
     pub const WT_MAX_DATA: u64 = 0x190B4D3D;
 
-    /// WT_MAX_STREAM_DATA (draft-ietf-webtrans-http2-15 Section 6.6)
+    /// WT_MAX_STREAM_DATA (draft-ietf-webtrans-http2-16 Section 6.6)
     pub const WT_MAX_STREAM_DATA: u64 = 0x190B4D3E;
 
-    /// WT_MAX_STREAMS (bidirectional) (draft-ietf-webtrans-http2-15 Section 6.7)
+    /// WT_MAX_STREAMS (bidirectional) (draft-ietf-webtrans-http2-16 Section 6.7)
     pub const WT_MAX_STREAMS_BIDI: u64 = 0x190B4D3F;
 
-    /// WT_MAX_STREAMS (unidirectional) (draft-ietf-webtrans-http2-15 Section 6.7)
+    /// WT_MAX_STREAMS (unidirectional) (draft-ietf-webtrans-http2-16 Section 6.7)
     pub const WT_MAX_STREAMS_UNI: u64 = 0x190B4D40;
 
-    /// WT_DATA_BLOCKED (draft-ietf-webtrans-http2-15 Section 6.8)
+    /// WT_DATA_BLOCKED (draft-ietf-webtrans-http2-16 Section 6.8)
     pub const WT_DATA_BLOCKED: u64 = 0x190B4D41;
 
-    /// WT_STREAM_DATA_BLOCKED (draft-ietf-webtrans-http2-15 Section 6.9)
+    /// WT_STREAM_DATA_BLOCKED (draft-ietf-webtrans-http2-16 Section 6.9)
     pub const WT_STREAM_DATA_BLOCKED: u64 = 0x190B4D42;
 
-    /// WT_STREAMS_BLOCKED (bidirectional) (draft-ietf-webtrans-http2-15 Section 6.10)
+    /// WT_STREAMS_BLOCKED (bidirectional) (draft-ietf-webtrans-http2-16 Section 6.10)
     pub const WT_STREAMS_BLOCKED_BIDI: u64 = 0x190B4D43;
 
-    /// WT_STREAMS_BLOCKED (unidirectional) (draft-ietf-webtrans-http2-15 Section 6.10)
+    /// WT_STREAMS_BLOCKED (unidirectional) (draft-ietf-webtrans-http2-16 Section 6.10)
     pub const WT_STREAMS_BLOCKED_UNI: u64 = 0x190B4D44;
 
-    /// WT_CLOSE_SESSION (draft-ietf-webtrans-http2-15 Section 6.12)
+    /// WT_CLOSE_SESSION (draft-ietf-webtrans-http2-16 Section 6.12)
     pub const WT_CLOSE_SESSION: u64 = 0x2843;
 
-    /// WT_DRAIN_SESSION (draft-ietf-webtrans-http2-15 Section 6.13)
+    /// WT_DRAIN_SESSION (draft-ietf-webtrans-http2-16 Section 6.13)
     pub const WT_DRAIN_SESSION: u64 = 0x78AE;
 }
 
@@ -77,59 +86,59 @@ pub(crate) const MAX_CLOSE_REASON_LEN: usize = 1024;
 
 /// WebTransport アプリケーションエラーコードの最大値 (32-bit)
 ///
-/// draft-ietf-webtrans-http2-15 Section 6.2, 6.3:
+/// draft-ietf-webtrans-http2-16 Section 6.2, 6.3:
 /// Application Protocol Error Code は 0xffffffff 以下でなければならない。
 pub(crate) const MAX_APPLICATION_ERROR_CODE: u64 = 0xffff_ffff;
 
-/// Capsule 構造体 (draft-ietf-webtrans-http2-15 Section 6)
+/// Capsule 構造体 (draft-ietf-webtrans-http2-16 Section 6)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Capsule {
     /// DATAGRAM (RFC 9297 Section 3.5)
     Datagram { data: Vec<u8> },
 
-    /// PADDING (draft-ietf-webtrans-http2-15 Section 6.1)
+    /// PADDING (draft-ietf-webtrans-http2-16 Section 6.1)
     Padding { length: usize },
 
-    /// WT_RESET_STREAM (draft-ietf-webtrans-http2-15 Section 6.2)
+    /// WT_RESET_STREAM (draft-ietf-webtrans-http2-16 Section 6.2)
     WtResetStream {
         stream_id: u64,
         error_code: u64,
         reliable_size: u64,
     },
 
-    /// WT_STOP_SENDING (draft-ietf-webtrans-http2-15 Section 6.3)
+    /// WT_STOP_SENDING (draft-ietf-webtrans-http2-16 Section 6.3)
     WtStopSending { stream_id: u64, error_code: u64 },
 
-    /// WT_STREAM (draft-ietf-webtrans-http2-15 Section 6.4)
+    /// WT_STREAM (draft-ietf-webtrans-http2-16 Section 6.4)
     WtStream {
         stream_id: u64,
         data: Vec<u8>,
         fin: bool,
     },
 
-    /// WT_MAX_DATA (draft-ietf-webtrans-http2-15 Section 6.5)
+    /// WT_MAX_DATA (draft-ietf-webtrans-http2-16 Section 6.5)
     WtMaxData { maximum: u64 },
 
-    /// WT_MAX_STREAM_DATA (draft-ietf-webtrans-http2-15 Section 6.6)
+    /// WT_MAX_STREAM_DATA (draft-ietf-webtrans-http2-16 Section 6.6)
     WtMaxStreamData { stream_id: u64, maximum: u64 },
 
-    /// WT_MAX_STREAMS (draft-ietf-webtrans-http2-15 Section 6.7)
+    /// WT_MAX_STREAMS (draft-ietf-webtrans-http2-16 Section 6.7)
     WtMaxStreams { maximum: u64, bidirectional: bool },
 
-    /// WT_DATA_BLOCKED (draft-ietf-webtrans-http2-15 Section 6.8)
+    /// WT_DATA_BLOCKED (draft-ietf-webtrans-http2-16 Section 6.8)
     WtDataBlocked { maximum: u64 },
 
-    /// WT_STREAM_DATA_BLOCKED (draft-ietf-webtrans-http2-15 Section 6.9)
+    /// WT_STREAM_DATA_BLOCKED (draft-ietf-webtrans-http2-16 Section 6.9)
     WtStreamDataBlocked { stream_id: u64, maximum: u64 },
 
-    /// WT_STREAMS_BLOCKED (draft-ietf-webtrans-http2-15 Section 6.10)
+    /// WT_STREAMS_BLOCKED (draft-ietf-webtrans-http2-16 Section 6.10)
     WtStreamsBlocked { maximum: u64, bidirectional: bool },
 
-    /// WT_CLOSE_SESSION (draft-ietf-webtrans-http2-15 Section 6.12)
+    /// WT_CLOSE_SESSION (draft-ietf-webtrans-http2-16 Section 6.12)
     /// Application Error Code: 32-bit, Message: UTF-8, max 1024 bytes
     WtCloseSession { error_code: u32, reason: String },
 
-    /// WT_DRAIN_SESSION (draft-ietf-webtrans-http2-15 Section 6.13, Length=0)
+    /// WT_DRAIN_SESSION (draft-ietf-webtrans-http2-16 Section 6.13, Length=0)
     WtDrainSession,
 
     /// 未知の Capsule タイプ (RFC 9297 Section 3.2: MUST silently drop)
@@ -419,7 +428,7 @@ impl CapsuleDecoder {
                 offset += len;
                 let (error_code, len) = varint::decode(&payload[offset..])?;
                 offset += len;
-                // draft-ietf-webtrans-http2-15 Section 6.2:
+                // draft-ietf-webtrans-http2-16 Section 6.2:
                 // error_code は 0xffffffff 以下でなければならない。
                 // 超過時は session error of type WT_ERROR として扱う (MUST)。
                 // Sans I/O では WT_ERROR 相当を SessionStateError で表現する。
@@ -449,7 +458,7 @@ impl CapsuleDecoder {
                 offset += len;
                 let (error_code, len) = varint::decode(&payload[offset..])?;
                 offset += len;
-                // draft-ietf-webtrans-http2-15 Section 6.3:
+                // draft-ietf-webtrans-http2-16 Section 6.3:
                 // error_code は 0xffffffff 以下でなければならない。
                 // 超過時は session error of type WT_ERROR として扱う (MUST)。
                 // Sans I/O では WT_ERROR 相当を SessionStateError で表現する。
@@ -595,7 +604,7 @@ impl CapsuleDecoder {
                         "WT_CLOSE_SESSION payload too short",
                     ));
                 }
-                // draft-ietf-webtrans-http2-15 Section 6.12:
+                // draft-ietf-webtrans-http2-16 Section 6.12:
                 // 1024 超または非 UTF-8 は session error WT_ERROR として扱う (MUST)。
                 let reason_len = payload.len() - 4;
                 if reason_len > MAX_CLOSE_REASON_LEN {
