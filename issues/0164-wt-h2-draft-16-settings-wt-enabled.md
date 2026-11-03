@@ -3,7 +3,7 @@
 - Created: 2026-11-03
 - Completed: {YYYY-MM-DD}
 - Branch: feature/change-wt-enabled-draft16-codepoint
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-11-03
 
 ## 目的
 
@@ -31,6 +31,7 @@ WebTransport over HTTP/2 draft 16 のバージョン識別に追従し、draft 1
 - `Setting::WtEnabled` のエンコード・デコードを `0x2b67` に変更する。
 - draft 15 との複数バージョン対応は追加しない。`0x2b60` は未知の SETTINGS として扱い、`wt_enabled` を変更しない。旧識別子の値 2 も boolean の値域違反として拒否しない。
 - `tests/test_settings.rs` と `pbt/tests/prop_connection/settings.rs` の raw wire 入力を更新する。
+- `pbt/tests/prop_settings.rs` の `sample_invalid_wt_enabled_wire` も `0x2b67` を生成するように変更し、`prop_invalid_wt_enabled_rejected` が新識別子の値域違反を検証するようにする。
 - `pbt/tests/prop_settings.rs` の未知 ID サンプラーを修正する。既知 ID の連続範囲が `0x2b60`〜`0x2b66` から `0x2b61`〜`0x2b67` に移るため、`0x2b67` を未知 ID として生成せず、`0x2b60` を未知 ID として検証する。
 - `src/limits.rs`、`README.md`、`skills/shiguredo-http2/SKILL.md` の設定識別子の説明もこの変更と同期する。
 - HTTP/3 の設定識別子や、その draft バージョン交渉の処理は持ち込まない。
