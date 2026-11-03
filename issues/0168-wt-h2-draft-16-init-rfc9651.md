@@ -1,7 +1,7 @@
 # WebTransport-Init の Dictionary パーサーを RFC 9651 に対応させる
 
 - Created: 2026-11-03
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-11-03
 - Branch: feature/change-wt-init-rfc9651
 - Polished: 2026-11-03
 
@@ -45,3 +45,16 @@ WtInit::parse(b"u=100;x=@0")
 - 既知キーの型違反と、新しい型の構文違反を区別して拒否すること。
 - `tests/test_webtransport/init.rs` と関連 PBT で正常な構造と境界値を検証し、既存の整数範囲・既知キー・マージの検証も通ること。
 - `cargo test -p shiguredo_http2` と `cargo test -p pbt` が通ること。
+
+## 解決方法
+
+- `DictionaryParser::parse_bare_item` に RFC 9651 の Date (`@` + Integer) と Display String (`%"..."`) を追加し、未知キー・未知パラメータ・Inner List 内で構文検証して読み飛ばせるようにした
+- Date は `@` + Integer のみを受理し、Decimal・空・非数値を拒否する (Section 4.2.9)
+- Display String は `%"` で始まり DQUOTE で終わること、未エンコード文字が SP / VCHAR であること、percent encoding が 0-9 / 小文字 a-f の 2 文字であること、復号後のバイト列が UTF-8 として妥当であることを検証する (Section 4.2.10)
+- 既知キー `u` / `bl` / `br` に Date / Display String を指定した場合は Integer 型違反として拒否する。重複キーでも各メンバーの型検査を先に行う
+- `SfValue` に `Date` / `DisplayString` を追加して型を区別し、`parse_number` の戻り値を `SfNumber` に絞って Integer / Decimal の取り違えを防ぐ
+- モジュール doc・rustdoc・SKILL.md を RFC 9651 / draft 16 に更新した
+- `tests/test_webtransport/init.rs` に Date / Display String の正常系 (未知キー・パラメータ・Inner List、未知→既知キーの順序)、境界値、構文違反、既知キーの型違反、重複キーと型違反の組み合わせを追加した
+- `pbt/tests/prop_webtransport/init.rs` を新設し、RFC 9651 の全 bare item 型を含む妥当な Dictionary の受理と既知キー抽出、変異型の負例、既知キーの型違反を検証する PBT を追加した。Date / Display String の生成はフラグで追跡して到達を保証する
+- `fuzz/fuzz_targets/fuzz_wt_init.rs` を追加し、任意のヘッダー値バイト列で `WtInit::parse` がパニックしないことを検証する
+- `CODEBASE.md` の指示に従い `CHANGES.md` は変更していない。RFC 8941 を参照する既存コメントの残りは別途行う仕様参照の同期で更新する
