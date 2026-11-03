@@ -1,7 +1,7 @@
 # WT_MAX_STREAM_DATA をストリーム初期値から厳密に増加させる
 
 - Created: 2026-11-03
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-11-03
 - Branch: feature/change-wt-max-stream-data-strict-increase
 - Polished: 2026-11-03
 
@@ -39,3 +39,18 @@ draft 15 の「直前の広告値より小さい値」に加え、draft 16 は�
 - 送信拒否時に出力・上限を変更せず、正常に広告した新上限まで受信できること。
 - `tests/test_webtransport/stream.rs`、`tests/test_webtransport/integration.rs`、関連 PBT で検証し、tokio ドライバのストリーム受信ウィンドウ自動拡張が正常に動作すること。
 - `cargo test -p shiguredo_http2`、`cargo test -p pbt` と関連する tokio の WebTransport テストが通ること。
+
+## 解決方法
+
+- `WtStream::update_send_max` を、そのストリームの初期値または最後に受理した上限を増加させない値と varint 上限超過で `flow_control_error` を返すように変更した
+- `WtSession::send_max_stream_data` を、初期値・最後に広告した上限を増加させない値 (同値・減少) で `flow_control_error` を返すように変更した。成功時は広告値と `WtStream::recv_max` を一致させる
+- 比較基準の初期値は、開始主体・方向ごとに SETTINGS と `WebTransport-Init` の `u`・`bl`・`br` を反映した `WtConfig` (ローカル値は両者の大きい方) から決まる既存の経路を維持した。ピア開始 bidi の暗黙生成経路は生成前に同じ検証を行い、拒否時にストリームと `StreamOpened` を残さない
+- 削除済みストリームでも draft-16 Section 6.6 の MUST を満たすため、初期値または最後に受理した送信上限を上限付きの `BoundedMap` で保持し、削除後の非増加を検出するようにした。削除後の増加は記録だけ更新して無視する。記録から追い出された ID は非増加の検出を行わない既知の制限がある
+- `WtSession::grow_stream_recv_window` は存在確認と `checked_add` による u64 オーバーフロー検出だけを行い、状態検証・受信上限の更新・送信を `send_max_stream_data` に委譲するよう整理した。検証順とエラー種別を rustdoc に明記した
+- `WtStream::send_max` と初期送信上限ヘルパーを追加し、暗黙生成の判定と生成で同じ条件・同じ初期値を使うようにした
+- `src/bounded_map.rs` を追加し、追い出し・容量 0 / 1・同一キー更新の単体テストを追加した
+- `tests/test_webtransport/stream.rs` に送信上限の同値・減少・varint 上限の拒否と `send_max` の反映を追加・更新した
+- `tests/test_webtransport/integration.rs` に同値・減少・増分 0 の拒否、SETTINGS と `WebTransport-Init` の大きい方の初期値、開始主体・方向・uni・クライアントロールごとの初期値、暗黙生成の拒否と受理、検証順、削除済みストリームの非増加と増加の無視、varint 境界、受信 capsule の同値エラーを追加・更新した
+- `pbt/tests/prop_webtransport/stream.rs` を新設し、`WtStream::update_send_max` の更新列、`send_max_stream_data` の広告列、`grow_stream_recv_window` の増分列、暗黙生成経路の PBT を追加した
+- `skills/shiguredo-http2/SKILL.md` の `send_max_stream_data` / `grow_stream_recv_window` の検証順とエラー、暗黙生成と削除済みストリームの扱い、draft の適用範囲を更新した
+- `CODEBASE.md` の指示に従い `CHANGES.md` は変更していない。`WT_MAX_STREAM_DATA` 以外の draft 15 の仕様参照は別途行う仕様参照の同期で更新する
