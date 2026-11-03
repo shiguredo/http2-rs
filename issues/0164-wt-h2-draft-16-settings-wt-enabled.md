@@ -1,7 +1,7 @@
 # SETTINGS_WT_ENABLED の識別子を draft 16 の 0x2b67 に変更する
 
 - Created: 2026-11-03
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-11-03
 - Branch: feature/change-wt-enabled-draft16-codepoint
 - Polished: 2026-11-03
 
@@ -42,3 +42,16 @@ WebTransport over HTTP/2 draft 16 のバージョン識別に追従し、draft 1
 - 旧識別子を含む SETTINGS を受信しても WebTransport サポートを有効化しないこと。
 - 実際の HTTP/2 SETTINGS の送受信経路と PBT で新旧識別子の扱いを検証すること。自分自身のエンコーダーとデコーダーの往復だけで済ませないこと。
 - `cargo test -p shiguredo_http2` と `cargo test -p pbt` が通ること。
+
+## 解決方法
+
+- `Setting::WtEnabled` の wire 識別子を draft-ietf-webtrans-http2-16 の `0x2b67` に変更した (`src/settings.rs` の `from_wire` / `as_wire` / `to_settings_list`)
+- 旧識別子 `0x2b60` は未知の SETTINGS として無視し、`wt_enabled` を変更しない。boolean の値域検査 (0/1 のみ) は新識別子だけに適用する
+- `Setting` の variant、`Settings` のフィールド・getter、`to_settings_list`、README / SKILL.md の表の並びを SETTINGS 識別子の昇順に統一した
+- `Setting::WtEnabled` / `Settings::wt_enabled` / `LimitsBuilder::wt_enabled` の rustdoc に新旧識別子の扱いと draft-15 ピアとの相互運用の扱いを明記した
+- `tests/test_settings.rs` に新識別子の値域検査、旧識別子の `Unknown` 扱い、`Setting::Unknown::as_wire` の契約、`to_settings_list` の出力規則と識別子順、WT 初期設定 getter の検証を追加した
+- `tests/test_connection.rs` に送信する SETTINGS が `0x2b67` を使い旧識別子を含まないこと、およびクライアントの `:protocol=webtransport` ゲートが新識別子の受信でのみ開くことの回帰テストを追加した
+- `pbt/tests/prop_settings.rs` の未知識別子サンプラーと無効 WT_ENABLED サンプラーを新しい範囲に更新し、未知 SETTINGS の `apply` が全 15 フィールドを変更しないことを構造体等価で検証するようにした
+- `pbt/tests/prop_connection/settings.rs` に旧識別子の両方向 (有効化されない・無効化されない) 検証、未知 SETTINGS の ACK 送信、最初の SETTINGS での新旧識別子の扱い (有効値・値域違反・ACK の有無・ConnectionPreface) の PBT を追加した
+- `README.md` と `skills/shiguredo-http2/SKILL.md` に新識別子と旧識別子の扱い、draft-15 準拠ピアとの相互運用を想定しない旨を明記した
+- `CODEBASE.md` の指示に従い `CHANGES.md` は変更していない。`SETTINGS_WT_INITIAL_MAX_*` などの仕様参照は draft-15 のまま残し、別途行う仕様参照の同期で更新する
