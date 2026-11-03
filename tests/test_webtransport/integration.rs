@@ -31,6 +31,260 @@ fn grow_recv_window_emits_wt_max_data() {
     }
 }
 
+/// `grow_recv_window` が増分 0 を拒否し、受信上限と出力を変更しない
+///
+/// draft-ietf-webtrans-http2-16 Section 6.5: 広告値を増加させない更新は拒否する。
+#[test]
+fn grow_recv_window_zero_increment_errors() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let before = session.flow_control().recv_max();
+
+    let err = session
+        .grow_recv_window(0)
+        .expect_err("増分 0 は広告値が増加しないため拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert_eq!(
+        session.flow_control().recv_max(),
+        before,
+        "拒否時に受信上限が変わってはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に WT_MAX_DATA を出力してはいけない"
+    );
+}
+
+/// `grow_recv_window` が直接広告した上限を基準に拡張すること
+///
+/// draft-ietf-webtrans-http2-16 Section 6.5: 自動拡張と直接広告で更新経路を揃える。
+#[test]
+fn grow_recv_window_after_send_max_data_is_monotonic() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    session
+        .send_max_data(2_000_000)
+        .expect("初期値からの増加は受理されるはず");
+    let _ = session.poll_output();
+
+    session
+        .grow_recv_window(4096)
+        .expect("広告済みの上限からの増加は受理されるはず");
+    assert_eq!(
+        session.flow_control().recv_max(),
+        2_004_096,
+        "自動拡張は現在の広告値を基準にすること"
+    );
+    let out = session.poll_output().expect("WT_MAX_DATA の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtMaxData { maximum } => assert_eq!(maximum, 2_004_096),
+        other => panic!("WtMaxData を期待したが {other:?} だった"),
+    }
+}
+
+/// `grow_recv_window` が varint 上限を超える拡張を拒否し、受信上限と出力を変更しない
+///
+/// draft-ietf-webtrans-http2-16 Section 6.5 / RFC 9000 Section 16。
+#[test]
+fn grow_recv_window_varint_overflow_errors() {
+    use shiguredo_http2::webtransport::MAX_VALUE;
+
+    // 上限 - 1 からの +1 は varint 上限ちょうどに到達するため受理される
+    let config = WtConfig {
+        initial_max_data: MAX_VALUE - 1,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(config, WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    session
+        .grow_recv_window(1)
+        .expect("varint 上限ちょうどへの拡張は受理されるはず");
+    assert_eq!(session.flow_control().recv_max(), MAX_VALUE);
+    match decode_single_capsule(&session.poll_output().expect("WT_MAX_DATA の出力が必要")) {
+        Capsule::WtMaxData { maximum } => assert_eq!(maximum, MAX_VALUE),
+        other => panic!("WtMaxData を期待したが {other:?} だった"),
+    }
+
+    // varint 上限 + 1 になる拡張は varint 超過として拒否される
+    let err = session
+        .grow_recv_window(1)
+        .expect_err("varint 上限を超える拡張は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert_eq!(
+        session.flow_control().recv_max(),
+        MAX_VALUE,
+        "拒否時に受信上限が変わってはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に WT_MAX_DATA を出力してはいけない"
+    );
+
+    // u64 の範囲を超える増分も varint 超過として拒否される
+    let err = session
+        .grow_recv_window(u64::MAX)
+        .expect_err("u64 を超える拡張は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert_eq!(session.flow_control().recv_max(), MAX_VALUE);
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に WT_MAX_DATA を出力してはいけない"
+    );
+}
+
+/// `send_max_data` が初期値・広告済みの上限と同値なら拒否し、受信上限と出力を変更しない
+///
+/// draft-ietf-webtrans-http2-16 Section 6.5。
+#[test]
+fn send_max_data_rejects_non_increasing_values() {
+    let config = WtConfig {
+        initial_max_data: 1024,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(config, WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // 初期値と同値は拒否
+    let err = session
+        .send_max_data(1024)
+        .expect_err("初期値と同値は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert_eq!(session.flow_control().recv_max(), 1024);
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力してはいけない"
+    );
+
+    // 減少も拒否
+    let err = session
+        .send_max_data(1023)
+        .expect_err("減少は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert_eq!(session.flow_control().recv_max(), 1024);
+
+    // 増加は成功し、広告値と受信上限が一致する
+    session.send_max_data(2048).expect("増加は受理されるはず");
+    assert_eq!(
+        session.flow_control().recv_max(),
+        2048,
+        "広告した上限が recv_max に反映されるはず"
+    );
+    let out = session.poll_output().expect("WT_MAX_DATA の出力が必要");
+    match decode_single_capsule(&out) {
+        Capsule::WtMaxData { maximum } => assert_eq!(maximum, 2048),
+        other => panic!("WtMaxData を期待したが {other:?} だった"),
+    }
+
+    // 広告後の同値も拒否
+    let err = session
+        .send_max_data(2048)
+        .expect_err("広告済みの値と同値は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力してはいけない"
+    );
+
+    // 初期値 0 に対する最初の値 0 も拒否する
+    let zero = WtConfig {
+        initial_max_data: 0,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(zero, WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+    let err = session
+        .send_max_data(0)
+        .expect_err("初期値 0 と同値の最初の値も拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に出力してはいけない"
+    );
+}
+
+/// `send_max_data` で広告した上限までピアのデータを受信でき、超過は拒否される
+///
+/// draft-ietf-webtrans-http2-16 Section 6.5。
+#[test]
+fn send_max_data_updates_recv_max_and_allows_peer_data() {
+    // セッション上限だけを小さくし、ストリーム上限を十分大きくして
+    // セッションレベルのフロー制御だけを検証する
+    let config = WtConfig {
+        initial_max_data: 1024,
+        initial_max_stream_data_bidi_remote: 1_000_000,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(config, WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    let advertised = 300_000;
+    session
+        .send_max_data(advertised)
+        .expect("増加は受理されるはず");
+    let _ = session.poll_output();
+
+    // 広告値ちょうどのデータは受理される (ピア = クライアント開始の双方向ストリーム)
+    let peer_id = wt_stream_id::first(true, true);
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: peer_id,
+        data: vec![0u8; advertised as usize],
+        fin: false,
+    });
+    session
+        .feed(&encoder.take())
+        .expect("WT_STREAM の受信に成功しなければならない");
+    session
+        .process()
+        .expect("広告値の範囲内のデータは受理されるはず");
+    assert_eq!(
+        session.flow_control().recv_available(),
+        0,
+        "広告値まで受信できるはず"
+    );
+
+    // 広告値を超えるデータはセッションエラー
+    let mut encoder2 = CapsuleEncoder::new();
+    encoder2.encode(&Capsule::WtStream {
+        stream_id: peer_id,
+        data: vec![0u8; 1],
+        fin: false,
+    });
+    session
+        .feed(&encoder2.take())
+        .expect("WT_STREAM の受信に成功しなければならない");
+    let err = session
+        .process()
+        .expect_err("広告値を超えるデータは拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+}
+
 /// `grow_stream_recv_window` で存在しない stream_id を指定すると `invalid_stream_id`
 #[test]
 fn grow_stream_recv_window_unknown_stream_errors() {
@@ -107,7 +361,8 @@ fn grow_max_streams_bidi_emits_capsule() {
 }
 
 /// ピア側から受信した `WT_MAX_DATA` が減少値ならセッションエラー
-/// (draft-ietf-webtrans-http2-15 Section 6.5: 減少値の受信時は WT_FLOW_CONTROL_ERROR でセッションを閉じなければならない (MUST))
+/// (draft-ietf-webtrans-http2-16 Section 6.5: 初期値または最後に受理した上限を
+/// 増加させない値は WT_FLOW_CONTROL_ERROR でセッションを閉じなければならない (MUST))
 #[test]
 fn received_wt_max_data_decrease_errors() {
     // initial_max_data = 1024 のセッションに対し、500 という減少値を送り込む
@@ -124,6 +379,75 @@ fn received_wt_max_data_decrease_errors() {
 
     session.feed(&bytes).expect("feed should succeed");
     let err = session.process().unwrap_err();
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+}
+
+/// ピア側から受信した `WT_MAX_DATA` が初期値・受理済みの上限と同値ならセッションエラー
+/// (draft-ietf-webtrans-http2-16 Section 6.5)
+#[test]
+fn received_wt_max_data_equal_errors() {
+    // 初期値と同値
+    let config = WtConfig {
+        initial_max_data: 1024,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(config.clone(), config.clone());
+    session.initiate().expect("セッションを開始できるはず");
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtMaxData { maximum: 1024 });
+    session
+        .feed(&encoder.take())
+        .expect("WT_MAX_DATA の受信に成功しなければならない");
+    let err = session
+        .process()
+        .expect_err("初期値と同値の WT_MAX_DATA は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+
+    // 初期値 0 に対する最初の値 0 も拒否する
+    let zero = WtConfig {
+        initial_max_data: 0,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(zero.clone(), zero);
+    session.initiate().expect("セッションを開始できるはず");
+    let mut encoder0 = CapsuleEncoder::new();
+    encoder0.encode(&Capsule::WtMaxData { maximum: 0 });
+    session
+        .feed(&encoder0.take())
+        .expect("WT_MAX_DATA の受信に成功しなければならない");
+    let err = session
+        .process()
+        .expect_err("初期値 0 と同値の WT_MAX_DATA は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::FlowControlError
+    );
+
+    // 一度増加を受理した後も、その値と同値なら再びエラー
+    let mut session = WtSession::server(config.clone(), config);
+    session.initiate().expect("セッションを開始できるはず");
+    let mut encoder2 = CapsuleEncoder::new();
+    encoder2.encode(&Capsule::WtMaxData { maximum: 2048 });
+    session
+        .feed(&encoder2.take())
+        .expect("WT_MAX_DATA の受信に成功しなければならない");
+    session.process().expect("増加は受理されるはず");
+
+    let mut encoder3 = CapsuleEncoder::new();
+    encoder3.encode(&Capsule::WtMaxData { maximum: 2048 });
+    session
+        .feed(&encoder3.take())
+        .expect("WT_MAX_DATA の受信に成功しなければならない");
+    let err = session
+        .process()
+        .expect_err("受理済みの値と同値の WT_MAX_DATA は拒否されるはず");
     assert_eq!(
         err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::FlowControlError
@@ -292,6 +616,15 @@ fn send_max_data_rejects_varint_overflow() {
         err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::FlowControlError,
         "予期しないエラー種別: {err}"
+    );
+    assert_eq!(
+        session.flow_control().recv_max(),
+        MAX_VALUE,
+        "拒否時に受信上限が変わってはいけない"
+    );
+    assert!(
+        session.poll_output().is_none(),
+        "拒否時に WT_MAX_DATA を出力してはいけない"
     );
 }
 

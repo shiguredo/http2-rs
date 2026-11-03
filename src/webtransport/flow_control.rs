@@ -4,6 +4,8 @@
 //!
 //! 注: 本モジュールは draft-ietf-webtrans-http2-15 に基づく実装であり、
 //! draft の改訂や RFC 化に伴い仕様が変更される可能性がある。
+//! `WT_MAX_DATA` の厳密増加規則 (`update_send_max` / `update_recv_max`) だけは
+//! draft-ietf-webtrans-http2-16 Section 6.5 に従う。
 
 use crate::webtransport::error::{WtError, WtResult};
 
@@ -22,7 +24,10 @@ pub struct WtFlowControl {
     send_max: u64,
     /// 送信済みバイト数
     send_offset: u64,
-    /// ローカルが許可した受信上限
+    /// ローカルの受信上限 (初期値は `WtConfig::initial_max_data`)
+    ///
+    /// `WtSession` 経由で更新した場合はピアへ最後に広告した値と一致する。
+    /// `update_recv_max` を直接呼び出した場合は広告されないため一致しない。
     recv_max: u64,
     /// 受信済みバイト数
     recv_offset: u64,
@@ -46,6 +51,7 @@ impl WtFlowControl {
     /// 新しいフロー制御を生成する
     ///
     /// `send_max` にはピアが広告した送信上限、`recv_max` にはローカルが広告した受信上限を渡す。
+    /// `recv_max` は varint 上限 (2^62-1) 以下でなければならない (呼び出し側の事前条件)。
     /// ストリーム数も local (ローカルが許可) / remote (ピアが許可) を別々に指定する。
     #[must_use]
     pub fn new(
@@ -94,7 +100,9 @@ impl WtFlowControl {
         self.recv_offset
     }
 
-    /// 受信上限 (ローカルが許可した最大バイト数) を取得する
+    /// ローカルの受信上限 (初期値は `WtConfig::initial_max_data`) を取得する
+    ///
+    /// `WtSession` 経由で更新した場合はピアへ最後に広告した値と一致する。
     #[must_use]
     pub const fn recv_max(&self) -> u64 {
         self.recv_max
@@ -137,30 +145,69 @@ impl WtFlowControl {
 
     /// 送信上限を更新する (WT_MAX_DATA 受信時)
     ///
-    /// draft-ietf-webtrans-http2-15 Section 6.5:
-    /// 値が減少した場合は WT_FLOW_CONTROL_ERROR セッションエラーを返す。
+    /// draft-ietf-webtrans-http2-16 Section 6.5:
+    /// ピアの初期値または最後に受理した上限を増加させない値は
+    /// WT_FLOW_CONTROL_ERROR セッションエラーを返す。
+    /// varint で表現できない値も拒否する (RFC 9000 Section 16)。
     ///
-    /// 注: draft-ietf-webtrans-http2-15 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
+    /// 注: draft-ietf-webtrans-http2-16 由来の暫定仕様であり、RFC 化に伴い変更される可能性がある。
     pub fn update_send_max(&mut self, maximum: u64) -> WtResult<()> {
-        if maximum < self.send_max {
-            return Err(WtError::flow_control_error("WT_MAX_DATA value decreased"));
+        if maximum > super::varint::MAX_VALUE {
+            return Err(WtError::flow_control_error(format!(
+                "WT_MAX_DATA value {maximum} exceeds varint maximum {}",
+                super::varint::MAX_VALUE
+            )));
+        }
+        if maximum <= self.send_max {
+            return Err(WtError::flow_control_error(format!(
+                "WT_MAX_DATA value {maximum} does not increase the current maximum {}",
+                self.send_max
+            )));
         }
         self.send_max = maximum;
         Ok(())
     }
 
-    /// 受信上限を増加する (WT_MAX_DATA 送信前に呼び出す)
+    /// 広告する受信上限を更新する (WT_MAX_DATA 送信前に呼び出す)
     ///
-    /// varint の最大値 (2^62 - 1) を超えた場合はエラーを返す。
-    pub fn add_recv_max(&mut self, increment: u64) -> WtResult<()> {
-        let new_max = self.recv_max.saturating_add(increment);
-        // varint エンコード可能な最大値を超えると WT_MAX_DATA のエンコードで panic するため
-        if new_max > super::varint::MAX_VALUE {
-            return Err(WtError::flow_control_error(
-                "recv_max exceeds varint maximum value",
-            ));
+    /// draft-ietf-webtrans-http2-16 Section 6.5:
+    /// 現在の広告値 (初期値を含む) を増加させない値は拒否する。
+    /// また varint の最大値 (2^62 - 1) を超える値も拒否する
+    /// (RFC 9000 Section 16)。
+    ///
+    /// このメソッドは capsule を出力しない内部状態更新であり、
+    /// [`crate::webtransport::WtSession::send_max_data`] が内部で呼ぶ。
+    /// `flow_control_mut()` 経由で直接呼ぶと広告されない状態更新になるため、
+    /// `WT_MAX_DATA` の広告には `send_max_data` を使うこと。
+    /// `WtStream::update_recv_max` は広告を行わない補助 API で同値を無視するのに対し、
+    /// 本メソッドは広告値を進める更新であるため同値を拒否する。
+    ///
+    /// 旧 `add_recv_max(increment)` の置き換えであり、増分で指定する場合は
+    /// 次のように呼び出す (加算は飽和させ、varint 上限超過は本メソッドが拒否する)。
+    ///
+    /// ```
+    /// # use shiguredo_http2::webtransport::WtFlowControl;
+    /// # let mut flow_control = WtFlowControl::new(0, 65536, 0, 0, 0, 0);
+    /// let increment = 4096;
+    /// flow_control
+    ///     .update_recv_max(flow_control.recv_max().saturating_add(increment))
+    ///     .expect("増加する上限は受理される");
+    /// ```
+    pub fn update_recv_max(&mut self, maximum: u64) -> WtResult<()> {
+        // varint でエンコードできない値を保持すると WT_MAX_DATA の送信で panic するため
+        if maximum > super::varint::MAX_VALUE {
+            return Err(WtError::flow_control_error(format!(
+                "WT_MAX_DATA value {maximum} exceeds varint maximum {}",
+                super::varint::MAX_VALUE
+            )));
         }
-        self.recv_max = new_max;
+        if maximum <= self.recv_max {
+            return Err(WtError::flow_control_error(format!(
+                "WT_MAX_DATA value {maximum} does not increase the advertised maximum {}",
+                self.recv_max
+            )));
+        }
+        self.recv_max = maximum;
         Ok(())
     }
 
