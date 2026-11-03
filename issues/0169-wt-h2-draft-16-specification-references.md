@@ -3,7 +3,7 @@
 - Created: 2026-11-03
 - Completed: {YYYY-MM-DD}
 - Branch: feature/update-wt-h2-draft16-references
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-11-03
 
 ## 目的
 
@@ -49,7 +49,7 @@ HTTP/2 draft 15 → 16 は本文の変更を節ごとに比較し、ページ送
 ## 設計方針
 
 - 0164〜0168 の動作変更が完了した後に実施する。番号だけを先に置き換えて draft 16 対応済みと表記しない。
-- 現行の説明に残る draft 15 の参照を検索し、根拠と動作を確認して draft 16 に同期する。`WtInit` の RFC 8941 参照の残存も確認する。別ヘッダーが引き続き RFC 8941 を規範参照している箇所まで一括置換しない。
+- 現行の説明に残る draft 15 の参照を検索し、根拠と動作を確認して draft 16 に同期する。`WtInit` の RFC 8941 参照の残存も確認する。別ヘッダーも規範参照を個別に照合する。`WT-Available-Protocols` / `WT-Protocol` の根拠は、HTTP/2 draft 16 が参照する HTTP/3 draft 16 Section 3.3 と RFC 9651 であり、既存コメントが RFC 8941 であることを保全理由にしない。規範参照と現行実装の対応範囲を区別して説明し、パーサーの動作拡張・統合は本 issue に混在させない。
 - `WT_STREAM_STATE_ERROR` の名前自体や公開 enum を変更せず、個別の WT ストリームの状態違反とセッションエラーの範囲を文章で区別する。
 - `CODEBASE.md` の変更をコミットする場合は、同ファイルの Git 特別規約に従い、実装や通常の文書更新と分ける。
 - 過去の `issues/closed/` と変更履歴は履歴として保全する。現行 `CODEBASE.md` の指示に従い `CHANGES.md` は変更しない。RFC 8446 など旧版の資料への参照も、単なる廃止を理由に機械的に書き換えない。
