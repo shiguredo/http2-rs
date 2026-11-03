@@ -141,6 +141,13 @@ name = "fuzz_wt_flow_control"
 path = "fuzz_targets/fuzz_wt_flow_control.rs"
 test = false
 
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_wt_init"
+path = "fuzz_targets/fuzz_wt_init.rs"
+test = false
+
 [dependencies]
 # 任意バイト列からの構造化入力生成
 arbitrary = { version = "1", features = ["derive"] }

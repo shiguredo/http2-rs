@@ -1,23 +1,24 @@
 //! WebTransport-Init ヘッダーフィールドのパーサー
 //!
-//! draft-ietf-webtrans-http2-15 Section 4.3.2 に定義されている
+//! draft-ietf-webtrans-http2-16 Section 4.3.2 に定義されている
 //! `WebTransport-Init` HTTP ヘッダーフィールドをパースする。
-//! 実体は RFC 8941 (Structured Field Values for HTTP) Dictionary。
+//! 実体は RFC 9651 (Structured Field Values for HTTP) Dictionary。
+//! RFC 8941 との差分 (Date / Display String) も読み飛ばしと構文検証のために扱う。
 //!
 //! 本モジュールは known キー (`u` / `bl` / `br`) のみ抽出する必要最小限の
 //! Dictionary パーサーを提供する。仕様の MUST 要件:
 //! - 未知キーとパラメータは MUST 無視する (Section 4.3.2)
 //! - パース不能・型不一致・値範囲外は MUST 4xx で拒否する (Section 4.3.2)
-//! - 重複キーは RFC 8941 Section 4.2.2 の規則で last-wins
+//! - 重複キーは RFC 9651 Section 4.2.2 の規則で last-wins
 //!
-//! 本実装が参照する仕様は IETF draft (`-15`) であり、draft の改訂や RFC 化に
+//! 本実装が参照する仕様は IETF draft (`-16`) であり、draft の改訂や RFC 化に
 //! 伴って章番号・行番号・要求項目が変わりうる。
 
 use crate::webtransport::error::WtError;
 
 /// WebTransport-Init ヘッダーフィールドの値
 ///
-/// draft-ietf-webtrans-http2-15 Section 4.3.2 で定義された
+/// draft-ietf-webtrans-http2-16 Section 4.3.2 で定義された
 /// 3 つの Integer キーを optional に保持する。
 ///
 /// `None` はキーがヘッダーに含まれていなかったことを示し、
@@ -32,14 +33,11 @@ pub struct WtInit {
     pub br: Option<u64>,
 }
 
-/// RFC 8941 Section 3.3.1: Integer の絶対値上限 (15 桁の十進数)
-const SF_INTEGER_MAX: u64 = 999_999_999_999_999;
-
 impl WtInit {
     /// HTTP ヘッダー値バイト列をパースする
     ///
-    /// 入力は HPACK でデコードされたヘッダー値そのまま (RFC 8941 Section 4.2 step 1:
-    /// ASCII 変換に失敗した入力はパース失敗)。RFC 8941 のパース手順を必要最小限で実装する。
+    /// 入力は HPACK でデコードされたヘッダー値そのまま (RFC 9651 Section 4.2 step 1:
+    /// 非 ASCII バイトを含む入力はパース失敗)。RFC 9651 のパース手順を必要最小限で実装する。
     pub fn parse(value: &[u8]) -> Result<Self, WtError> {
         // RFC 8941 Section 4.2 step 1: 入力は ASCII であること
         if value.iter().any(|&b| b >= 0x80) {
@@ -72,7 +70,9 @@ impl WtInit {
             parser.skip_parameters()?;
 
             // known キーのみ WtInit に格納する
-            // (RFC 8941 §4.2.2 step 2.4 は last-wins、未知キーは Section 4.3.2 で無視)
+            // (RFC 9651 §4.2.2 step 2.4 は last-wins、未知キーは Section 4.3.2 で無視)。
+            // 既知キーの型検査は辞書メンバーごとに行うため、先行するメンバーが型違反なら
+            // last-wins の解決を待たずにその時点で Err を返す
             match key.as_slice() {
                 b"u" => out.u = Some(extract_nonneg_integer(&value, "u")?),
                 b"bl" => out.bl = Some(extract_nonneg_integer(&value, "bl")?),
@@ -122,18 +122,37 @@ fn extract_nonneg_integer(value: &SfValue, key: &str) -> Result<u64, WtError> {
     }
 }
 
+/// `parse_number` が返す数値 (Integer か Decimal か)
+#[derive(Debug, Clone, Copy)]
+enum SfNumber {
+    Integer(i64),
+    Decimal,
+}
+
 /// RFC 8941 の Bare Item (`u`/`bl`/`br` で実際に意味を持つのは Integer のみ)
 ///
 /// 未知キーの値読み飛ばしでも型を識別する必要があるため、サポート対象型を
 /// 列挙して保持する。Inner List は RFC 8941 §3.1 で Member Value として
 /// 許容されるが、本実装では `_` で受けて読み飛ばす。
+#[derive(Debug, Clone, Copy)]
 enum SfValue {
+    /// Integer (RFC 9651 Section 3.3.1)
     Integer(i64),
+    /// Decimal (RFC 9651 Section 3.3.2)
     Decimal,
+    /// String (RFC 9651 Section 3.3.3)
     String,
+    /// Token (RFC 9651 Section 3.3.4)
     Token,
+    /// Byte Sequence (RFC 9651 Section 3.3.5)
     ByteSequence,
+    /// Boolean (RFC 9651 Section 3.3.6)
     Boolean,
+    /// RFC 9651 Section 3.3.7 / Section 4.2.9: Date (`@` + Integer)
+    Date,
+    /// RFC 9651 Section 3.3.8 / Section 4.2.10: Display String (`%` + DQUOTE + ...)
+    DisplayString,
+    /// Inner List (RFC 9651 Section 3.1.1)
     InnerList,
 }
 
@@ -223,7 +242,10 @@ impl<'a> DictionaryParser<'a> {
     /// known キーへの値判定 (Integer かどうか) と、未知キーの値読み飛ばしの両方で使われる。
     fn parse_bare_item(&mut self) -> Result<SfValue, WtError> {
         match self.peek() {
-            Some(b) if b == b'-' || b.is_ascii_digit() => self.parse_number(),
+            Some(b) if b == b'-' || b.is_ascii_digit() => match self.parse_number()? {
+                SfNumber::Integer(n) => Ok(SfValue::Integer(n)),
+                SfNumber::Decimal => Ok(SfValue::Decimal),
+            },
             Some(b'"') => {
                 self.skip_string()?;
                 Ok(SfValue::String)
@@ -236,6 +258,14 @@ impl<'a> DictionaryParser<'a> {
                 self.skip_byte_sequence()?;
                 Ok(SfValue::ByteSequence)
             }
+            Some(b'@') => {
+                self.skip_date()?;
+                Ok(SfValue::Date)
+            }
+            Some(b'%') => {
+                self.skip_display_string()?;
+                Ok(SfValue::DisplayString)
+            }
             Some(b) if b == b'*' || b.is_ascii_alphabetic() => {
                 self.skip_token()?;
                 Ok(SfValue::Token)
@@ -246,12 +276,12 @@ impl<'a> DictionaryParser<'a> {
         }
     }
 
-    /// RFC 8941 Section 4.2.4: Parsing an Integer or Decimal
+    /// RFC 9651 Section 4.2.4: Parsing an Integer or Decimal
     ///
-    /// `[ "-" ] 1*15DIGIT [ "." 1*3DIGIT ]`。Integer は最大 15 桁、Decimal は整数部 12 桁 +
-    /// 小数部 1-3 桁。Decimal は WtInit のキーには使われないが、未知キーの値として現れた
-    /// 場合に正しく読み飛ばすため両方をハンドリングする。
-    fn parse_number(&mut self) -> Result<SfValue, WtError> {
+    /// Integer は `[ "-" ] 1*15DIGIT`、Decimal は `[ "-" ] 1*12DIGIT "." 1*3DIGIT`。
+    /// Decimal は WtInit のキーには使われないが、未知キーの値として現れた場合に
+    /// 正しく読み飛ばすため両方をハンドリングする。
+    fn parse_number(&mut self) -> Result<SfNumber, WtError> {
         let start = self.pos;
         if self.peek() == Some(b'-') {
             self.advance();
@@ -292,7 +322,7 @@ impl<'a> DictionaryParser<'a> {
                     "WebTransport-Init: decimal fractional part must be 1-3 digits",
                 ));
             }
-            return Ok(SfValue::Decimal);
+            return Ok(SfNumber::Decimal);
         }
         // Integer: 15 桁制限 (RFC 8941 §3.3.1)
         if int_digits > 15 {
@@ -301,18 +331,13 @@ impl<'a> DictionaryParser<'a> {
             ));
         }
         // 数値文字列を i64 に変換する
-        // 範囲は ±SF_INTEGER_MAX (= 10^15 - 1) で i64::MAX より十分小さい
+        // 桁数は 15 桁以下に制限済みのため、絶対値は 10^15-1 以下で i64 に収まる
         let text = std::str::from_utf8(&self.input[start..self.pos])
             .map_err(|_| WtError::invalid_input("WebTransport-Init: integer is not valid UTF-8"))?;
         let n: i64 = text
             .parse()
             .map_err(|_| WtError::invalid_input("WebTransport-Init: failed to parse integer"))?;
-        if n.unsigned_abs() > SF_INTEGER_MAX {
-            return Err(WtError::invalid_input(
-                "WebTransport-Init: integer out of range",
-            ));
-        }
-        Ok(SfValue::Integer(n))
+        Ok(SfNumber::Integer(n))
     }
 
     /// RFC 8941 Section 4.2.5: Parsing a String
@@ -415,6 +440,85 @@ impl<'a> DictionaryParser<'a> {
             }
         }
         Ok(())
+    }
+
+    /// RFC 9651 Section 4.2.9: Parsing a Date
+    ///
+    /// `"@" Integer` の形式で、Decimal は許容されない。
+    /// 整数の桁数・範囲は RFC 9651 Section 4.2.4 / Section 3.3.1 と同じ。
+    fn skip_date(&mut self) -> Result<(), WtError> {
+        // 呼び出し元 (`parse_bare_item`) が先頭の '@' を確認済みのため、ここで消費する
+        debug_assert_eq!(self.peek(), Some(b'@'));
+        self.advance();
+        match self.parse_number()? {
+            SfNumber::Integer(_) => Ok(()),
+            SfNumber::Decimal => Err(WtError::invalid_input(
+                "WebTransport-Init: date must not be a decimal",
+            )),
+        }
+    }
+
+    /// RFC 9651 Section 4.2.10: Parsing a Display String
+    ///
+    /// `"%" DQUOTE` で始まり、DQUOTE で終わる。`%` に続く 2 文字は 0-9 または
+    /// 小文字 a-f の 16 進数でなければならない。未エンコード文字は SP と VCHAR
+    /// (%x20-7e) に限られ、復号後のバイト列は UTF-8 として妥当でなければならない。
+    fn skip_display_string(&mut self) -> Result<(), WtError> {
+        // 呼び出し元 (`parse_bare_item`) が先頭の '%' を確認済みのため、ここで消費する
+        debug_assert_eq!(self.peek(), Some(b'%'));
+        self.advance();
+        if !self.consume_if_eq(b'"') {
+            return Err(WtError::invalid_input(
+                "WebTransport-Init: display string must start with percent-DQUOTE",
+            ));
+        }
+        let mut bytes = Vec::new();
+        while let Some(b) = self.peek() {
+            self.advance();
+            // SP と VCHAR 以外 (制御文字・非 ASCII) は不正
+            if !(0x20..=0x7E).contains(&b) {
+                return Err(WtError::invalid_input(
+                    "WebTransport-Init: invalid character in display string",
+                ));
+            }
+            if b == b'%' {
+                let high = self.next_hex_digit()?;
+                let low = self.next_hex_digit()?;
+                bytes.push((high << 4) | low);
+            } else if b == b'"' {
+                std::str::from_utf8(&bytes).map_err(|_| {
+                    WtError::invalid_input("WebTransport-Init: display string is not valid UTF-8")
+                })?;
+                return Ok(());
+            } else {
+                bytes.push(b);
+            }
+        }
+        Err(WtError::invalid_input(
+            "WebTransport-Init: unterminated display string",
+        ))
+    }
+
+    /// Display String の percent encoding から 16 進数 1 桁を読み取る
+    ///
+    /// RFC 9651 Section 4.2.10 step 4.3.2: 16 進英字は小文字のみ許容する。
+    fn next_hex_digit(&mut self) -> Result<u8, WtError> {
+        match self.peek() {
+            Some(b @ b'0'..=b'9') => {
+                self.advance();
+                Ok(b - b'0')
+            }
+            Some(b @ b'a'..=b'f') => {
+                self.advance();
+                Ok(b - b'a' + 10)
+            }
+            None => Err(WtError::invalid_input(
+                "WebTransport-Init: percent encoding must contain two lowercase hexadecimal digits",
+            )),
+            Some(_) => Err(WtError::invalid_input(
+                "WebTransport-Init: percent encoding must use lowercase hexadecimal digits",
+            )),
+        }
     }
 
     /// RFC 8941 Section 4.2.1.2: Parsing an Inner List

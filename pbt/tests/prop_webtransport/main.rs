@@ -1,6 +1,7 @@
 //! WebTransport の PBT
 //!
-//! Capsule Protocol と WtSession の状態遷移をテストする。
+//! Capsule Protocol、WebTransport-Init のパース (RFC 9651 の Date / Display String を含む)、
+//! WtSession の状態遷移をテストする。
 
 use shiguredo_http2::webtransport::{
     Capsule, CapsuleDecoder, CapsuleEncoder, MAX_VALUE, WtConfig, WtSession, WtSessionState,
@@ -8,6 +9,7 @@ use shiguredo_http2::webtransport::{
 };
 
 mod flow_control;
+mod init;
 mod stream;
 
 /// 各 PBT 共通のシード取得用環境変数名
