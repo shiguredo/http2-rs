@@ -114,11 +114,18 @@ pub struct Connection {
     output_buffer: VecDeque<u8>,
     /// イベントキュー
     events: VecDeque<Event>,
-    /// 未 ACK の SETTINGS フレーム数
+    /// 未処理の SETTINGS バッチ (送信した SETTINGS 1 フレームの値のスナップショット)
     ///
-    /// RFC 9113 Section 6.5: SETTINGS は接続中いつでも送信でき、
-    /// ACK は最古の未 ACK SETTINGS に対する同期点として定義される。
-    pending_settings_count: u32,
+    /// RFC 9113 Section 6.5.3 (Settings Synchronization) は ACK を最古の未 ACK SETTINGS
+    /// への応答と定義するため先入れ先出しで管理し、ACK 受信時に先頭 1 バッチを取り出して
+    /// `acked_local_settings` の集約に適用する。
+    pending_settings: VecDeque<Settings>,
+    /// ピアから ACK を受信した自広告 SETTINGS 値の集約
+    ///
+    /// draft-ietf-webtrans-http2-16 Section 4.3.1: セッションの初期値は設定の
+    /// 「CONNECT 送信直前 (またはセッション受入直前) に ACK 済み」の値に限られる。
+    /// 1 つも ACK を適用していない状態は未広告 (全項目が `Settings` の既定値) 相当である。
+    acked_local_settings: Settings,
     /// 接続プリフェイスを受信したかどうか
     preface_received: bool,
     /// 接続プリフェイスを送信したかどうか
@@ -230,7 +237,8 @@ impl Connection {
             frame_encoder: FrameEncoder::new(),
             output_buffer: VecDeque::new(),
             events: VecDeque::new(),
-            pending_settings_count: 0,
+            pending_settings: VecDeque::new(),
+            acked_local_settings: Settings::new(),
             preface_received: false,
             preface_sent: false,
             header_continuation_stream: None,
@@ -273,8 +281,9 @@ impl Connection {
 
     /// ローカル設定を取得する
     ///
-    /// 送信済みの SETTINGS に対応する設定。WebTransport 初期設定
-    /// (`wt_initial_max_*`) を含む拡張 SETTINGS もここから参照できる。
+    /// 送信済みの SETTINGS に対応する設定 (ACK 確定値は `acked_settings()` 参照)。
+    /// WebTransport 初期設定 (`wt_initial_max_*`) を含む拡張 SETTINGS も
+    /// ここから参照できる。
     #[must_use]
     pub const fn local_settings(&self) -> &Settings {
         &self.local_settings
@@ -288,6 +297,23 @@ impl Connection {
     #[must_use]
     pub const fn remote_settings(&self) -> &Settings {
         &self.remote_settings
+    }
+
+    /// ACK 済み自広告 SETTINGS を参照する
+    ///
+    /// ピアから SETTINGS ACK を受信した分の自広告 SETTINGS 値の集約。
+    /// 1 つも ACK を受けた SETTINGS がない場合は未広告 (全項目が `Settings` の既定値) を返し、
+    /// 1 つでも ACK を受けた場合は自広告値 (`local_settings()`) と同じ値を返す
+    /// (自広告 SETTINGS は構築後に不変で、送信バッチ間の値は同一であるため)。
+    ///
+    /// draft-ietf-webtrans-http2-16 Section 4.3.1 / Section 11.2: WebTransport 用途では、
+    /// この値に含まれない WT 初期値は Initial Value 0 として扱われる
+    /// (`WtConfig::apply_advertised_settings` の未広告扱いと一致)。
+    /// Section 4.3.1 が定める決定点 (CONNECT 送信直前・セッション受入直前) ごとの
+    /// 運用は、この getter を参照する側で扱う。
+    #[must_use]
+    pub const fn acked_settings(&self) -> &Settings {
+        &self.acked_local_settings
     }
 
     /// 接続がアクティブかどうかを返す
@@ -308,10 +334,38 @@ impl Connection {
         self.next_stream_id = id;
     }
 
+    /// 送信対象の SETTINGS 値を構築する
+    ///
+    /// `initiate()` と `send_settings()` が送信する SETTINGS フレーム、および
+    /// `pending_settings` に記録する ACK 未確定バッチの 2 つの経路で共用する。
+    /// サーバーロールでは ENABLE_PUSH を送信しないため対象にも含めない
+    /// (RFC 9113 Section 8.4)。
+    fn sendable_settings(&self) -> Vec<Setting> {
+        let mut settings = Vec::new();
+        for setting in self.local_settings.to_settings_list() {
+            if self.role == Role::Server && matches!(setting, Setting::EnablePush(_)) {
+                continue;
+            }
+            settings.push(setting);
+        }
+        settings
+    }
+
+    /// 送信する SETTINGS の値のスナップショットを構築する
+    ///
+    /// `sendable_settings()` と同じ値で構成する
+    /// (`pending_settings` への記録で使う)。
+    fn settings_snapshot(&self) -> Settings {
+        let mut snapshot = Settings::new();
+        for setting in self.sendable_settings() {
+            snapshot.apply(setting);
+        }
+        snapshot
+    }
+
     /// 接続プリフェイスを送信する（クライアント）
     ///
-    /// RFC 9113 Section 8.4: サーバーは ENABLE_PUSH を 0 以外に設定できない。
-    /// そのため、サーバーの場合は ENABLE_PUSH を送信しない。
+    /// サーバーの場合は ENABLE_PUSH を送信しない (`sendable_settings()` 参照)。
     pub fn initiate(&mut self) -> Result<()> {
         if self.preface_sent {
             return Ok(());
@@ -324,15 +378,12 @@ impl Connection {
 
         // SETTINGS フレームを送信する
         let mut settings_frame = SettingsFrame::new();
-        for setting in self.local_settings.to_settings_list() {
-            // RFC 9113 Section 8.4: サーバーは ENABLE_PUSH を 1 に設定できない
-            if self.role == Role::Server && matches!(setting, Setting::EnablePush(_)) {
-                continue;
-            }
+        for setting in self.sendable_settings() {
             settings_frame.add(setting);
         }
         self.send_frame(&Frame::Settings(settings_frame))?;
-        self.pending_settings_count += 1;
+        // 送信した SETTINGS の値をスナップショットしてバッチ管理へ追加する
+        self.pending_settings.push_back(self.settings_snapshot());
         self.preface_sent = true;
 
         // RFC 9113 Section 6.9.2: 接続レベルのウィンドウは SETTINGS では変更できないため
@@ -398,20 +449,15 @@ impl Connection {
     ///
     /// initiate() とは異なり、preface_sent のチェックを行わない。
     /// 外部でコネクションプリフェイスを処理した場合に使用する。
-    ///
-    /// RFC 9113 Section 8.4: サーバーは ENABLE_PUSH を 0 以外に設定できない。
-    /// そのため、サーバーの場合は ENABLE_PUSH を送信しない。
+    /// サーバーの場合は ENABLE_PUSH を送信しない (`sendable_settings()` 参照)。
     pub fn send_settings(&mut self) -> Result<()> {
         let mut settings_frame = SettingsFrame::new();
-        for setting in self.local_settings.to_settings_list() {
-            // RFC 9113 Section 8.4: サーバーは ENABLE_PUSH を 1 に設定できない
-            if self.role == Role::Server && matches!(setting, Setting::EnablePush(_)) {
-                continue;
-            }
+        for setting in self.sendable_settings() {
             settings_frame.add(setting);
         }
         self.send_frame(&Frame::Settings(settings_frame))?;
-        self.pending_settings_count += 1;
+        // 送信した SETTINGS の値をスナップショットしてバッチ管理へ追加する
+        self.pending_settings.push_back(self.settings_snapshot());
 
         // RFC 9113 Section 6.9.2: 接続レベルのウィンドウは SETTINGS では変更できないため
         // デフォルト (65535) を超える受信ウィンドウは WINDOW_UPDATE で広告する。
@@ -1277,16 +1323,20 @@ impl Connection {
     /// SETTINGS フレームを処理する
     fn handle_settings(&mut self, frame: SettingsFrame) -> Result<()> {
         if frame.is_ack() {
-            // RFC 9113 Section 6.5.3 (Settings Synchronization) は ACK を最古の未 ACK SETTINGS への応答と定義する。
-            // 未送信 SETTINGS への ACK は同期が取れないため、本実装では PROTOCOL_ERROR の接続エラーとする (実装判断)
-            if self.pending_settings_count == 0 {
+            // RFC 9113 Section 6.5.3 (Settings Synchronization): SETTINGS ACK を受信
+            // (最古の未 ACK SETTINGS に対応)。バッチの値を ACK 済み自広告 SETTINGS の
+            // 集約に適用して確定値とする。
+            // 同期が取れない未送信 SETTINGS への ACK は、本実装の判断で
+            // PROTOCOL_ERROR の接続エラーとする
+            let Some(batch) = self.pending_settings.pop_front() else {
                 return Err(Error::connection_error(
                     ErrorCode::ProtocolError,
                     "received SETTINGS ACK without pending SETTINGS",
                 ));
+            };
+            for setting in batch.to_settings_list() {
+                self.acked_local_settings.apply(setting);
             }
-            // SETTINGS ACK を受信 (最古の未 ACK SETTINGS に対応)
-            self.pending_settings_count -= 1;
             if self.state == ConnectionState::WaitingPreface {
                 self.state = ConnectionState::Active;
             }

@@ -50,6 +50,7 @@ Sans I/O 設計に基づく HTTP/2 と WebTransport over HTTP/2 のライブラ�
 | `state()` | `ConnectionState` | 接続状態を返す |
 | `is_active()` / `is_closed()` | `bool` | 状態判定 |
 | `local_settings()` / `remote_settings()` | `&Settings` | 自分側 / 相手側の SETTINGS 値を取得 |
+| `acked_settings()` | `&Settings` | ピアから SETTINGS ACK を受信した分の自広告 SETTINGS 値の集約 (1 つも ACK がない状態は未広告 (全項目が `Settings` の既定値)、1 つでも ACK があれば自広告値と一致)。draft-ietf-webtrans-http2-16 Section 4.3.1: WebTransport セッションの初期値に使う値の確認用 |
 | `initiate()` | `Result<()>` | プリフェイスと初期 SETTINGS をキューに積む |
 | `send_settings()` | `Result<()>` | SETTINGS を送信 |
 | `mark_preface_sent()` / `mark_preface_received()` | `()` | プリフェイスの送受信完了をマーク (I/O 層からの通知用) |
@@ -455,7 +456,7 @@ WebTransport 関連型: `WtServerRequest`, `WtServerSession`, `WtSessionHandle`,
 - `allowed_origin: Some(_)` のとき、Origin ヘッダーが存在する場合のみ検証する。欠落時は検証スキップ。不一致は 403
 - `selected_protocol: Some(_)` のとき、リクエストの `WT-Available-Protocols` に含まれることを検証し、レスポンスに `wt-protocol` を付与 (Section 3.3)
 - `WebTransport-Init` のパース失敗時は `:status=400` で拒否
-- 自広告 SETTINGS は `WtConfig::apply_advertised_settings` でローカル config に反映する (未広告の WT 初期値は 0)。ピア SETTINGS は `WtConfig::peer_default` (Initial Value 0) から開始した config に `overlay_settings` で反映する (Section 4.3.1 / Section 11.2)
+- 自広告 SETTINGS は ACK 済み値 (`ServerConnection::acked_settings` → `WtConfig::apply_advertised_settings`) でローカル config に反映し、ACK を受けた SETTINGS に含まれない WT 初期値は Initial Value 0 として扱う。ピア SETTINGS は `WtConfig::peer_default` (Initial Value 0) から開始した config に `overlay_settings` で反映する (Section 4.3.1 / Section 11.2)
 
 `WtServerSession::export_keying_material` / `WtSessionHandle::export_keying_material` で TLS Keying Material Exporter を利用できる (Section 5.3)。
 

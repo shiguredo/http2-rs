@@ -1,7 +1,7 @@
 # ACK 済み自広告 SETTINGS を参照する API を追加する
 
 - Created: 2026-11-09
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-11-09
 - Branch: feature/add-acked-settings-api
 - Polished: 2026-11-09
 
@@ -50,9 +50,22 @@ draft-ietf-webtrans-http2-16 Section 4.3.1 は、セッション開始の時点�
 - `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通る
 - `skills/shiguredo-http2/SKILL.md` の Connection API 表に `acked_settings()` が追記されている
 
+## 解決方法
+
+- `src/connection.rs` の `Connection` に `pending_settings: VecDeque<Settings>` (送信した SETTINGS 1 フレームの値のスナップショットの先入れ先出し待ち行列) と `acked_local_settings: Settings` (ACK 済み自広告値の集約) を追加し、旧 `pending_settings_count` を置き換えた。RFC 9113 Section 6.5.3 (Settings Synchronization) の ACK と最古の未 ACK SETTINGS の対応付けを FIFO で実装する
+- `initiate()` と `send_settings()` に、送信した SETTINGS の値をバッチ管理へ push する処理を追加した。フレーム内容とバッチ値を 1 本の `sendable_settings()` (サーバーロールの ENABLE_PUSH 除外を含む送信対象値)、バッチ記録を `settings_snapshot()` で直接に共有して重複を除いた
+- SETTINGS ACK 受信時は `handle_settings` で先頭 1 バッチを取り出して集約に適用する。未送信 SETTINGS への ACK は従来どおり PROTOCOL_ERROR 接続エラーとし、この挙動を新規テスト `test_unsolicited_settings_ack_is_connection_error` で検証した
+- 公開 getter `Connection::acked_settings()` を追加した。doc には、未広告 (全項目が `Settings` の既定値) と 1 つでも ACK 後は自広告値との一致、draft-ietf-webtrans-http2-16 Section 4.3.1 / Section 11.2 の Initial Value 0 扱い、決定点の運用は参照側で扱うこと、を記載した
+- `crates/tokio-http2/src/server.rs` に公開ラッパー `ServerConnection::acked_settings()` を追加し、`crates/tokio-http2/src/connection.rs` の `conn.acked_settings()` は `pub(crate)` 化した (CODEBASE.md の「公開 API は必ず使用箇所とテスト」に従い、未使用の公開ラッパーを作らない。使用面は WT accept 経路と tokio integration テストで担保する)
+- `crates/tokio-http2/src/webtransport.rs` の `WtServerRequest::accept` で `WtConfig::apply_advertised_settings(conn.acked_settings())` に変更し、関数 doc と accept 内コメント (接続の順序により CONNECT 前の ACK 処理済に一致し、ACK 未取得時は Initial Value 0 に倒す) を draft-ietf-webtrans-http2-16 Section 4.3.1 に基づいて改修した
+- `tests/test_connection.rs` に 3 テストを追加した: 初回 SETTINGS ACK 後の `acked_settings() == local_settings()`、未広告状態が `&Settings::new()` と同値 (`&shiguredo_http2::Settings::new()` との直定義) であること、連続 `send_settings()` でも観測値が変化しないこと (テストヘルパー `webtransport_limits` / `drain_connection_output` / `exchange_connection_output` を同ファイルに追加。モックなしの実際の往復)
+- `skills/shiguredo-http2/SKILL.md` に Connection API 表の `acked_settings()` 行と、accept の挙動 (ACK 済み値を初期値として扱う) の説明を追記した
+- `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo doc -p shiguredo_http2 --no-deps` (警告は差分外の既存 7 件のみ) がすべて通ることを確認した
+- tokio 層で「SETTINGS ACK を 1 つも処理していない accept」を直接観測する統合テストは作らなかった。本ライブラリの tokio `Client` はサーバー SETTINGS を処理した時点で ACK を送信待ちに積む (処理順が送信順を決める) ため、wire 上で ACK より CONNECT が先になる経路は tokio `Client` の流儀では到達しない。当該状態は sans-io の単体テスト (`tests/test_connection.rs` の未広告直定義) で担保する
+
 ## 参照
 
-- `src/connection.rs` — `Connection` / `Connection::initiate` / `Connection::send_settings` / `Connection::handle_settings` / `Connection::pending_settings_count` / `Connection::local_settings` / `Connection::remote_settings`
+- `src/connection.rs` — `Connection` / `Connection::acked_settings` / `Connection::sendable_settings` / `Connection::settings_snapshot` / `Connection::pending_settings` / `Connection::acked_local_settings` / `Connection::handle_settings` / `Connection::local_settings` / `Connection::remote_settings` (現状節の `pending_settings_count` は置換前の存在を指す)
 - `src/settings.rs` — `Settings` / `Settings::apply` / `Settings::to_settings_list`
 - `src/webtransport.rs` — `WtConfig::apply_advertised_settings` / `WtConfig::overlay_settings`
 - `crates/tokio-http2/src/webtransport.rs` — `WtServerRequest::accept`
