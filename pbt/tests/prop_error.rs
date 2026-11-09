@@ -1,7 +1,9 @@
 //! HTTP/2 エラー型の PBT
 //!
 //! RFC 9113 Section 7 および draft-ietf-webtrans-http2-16 Section 11.3 のエラーコードのプロパティをテストする
-//! (WebTransport 系コードは draft では 0xTBD のため、0x100-0x102 は本実装の暫定値)。
+//! (WebTransport 系コードは draft では 0xTBD (IANA 登録未了) のため、
+//! 0x100-0x102 は本実装の暫定値。値が確定した時点では後方互換のない変更として
+//! 更新される)。
 
 use shiguredo_http2::{Error, ErrorCode, ErrorKind};
 

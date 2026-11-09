@@ -44,8 +44,11 @@ pub enum ErrorCode {
 
     // === WebTransport エラーコード (draft-ietf-webtrans-http2-16) ===
     //
-    // 注: draft-ietf-webtrans-http2-16 Section 11.3 では 0x100-0x102 の登録値が 0xTBD の
-    // ため、これらは本実装の暫定値。IANA 登録後に更新される可能性がある。
+    // 注: 0x100-0x102 は本実装の暫定値である。
+    // draft-ietf-webtrans-http2-16 Section 11.3 の登録値は 0xTBD のままであり、
+    // IANA の HTTP/2 Error Code 登録表に WT 系の値は存在しない (draft-16 時点)。
+    // 値が確定した draft 改訂や RFC 化のタイミングで後方互換のない (wire 値が
+    // 変わる) 変更として更新する。更新は利用者への告知と一体で行う。
     /// WT_ERROR
     ///
     /// draft-ietf-webtrans-http2-16 Section 3.4: 汎用 WebTransport エラー。
