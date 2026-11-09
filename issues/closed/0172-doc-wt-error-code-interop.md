@@ -52,6 +52,7 @@
 - 衝突照合の結果の注記への反映は行わない (issue の設計方針どおり)。refs 原本で RFC 9113 Section 7 が 0x00-0x0d までの登録値で 0x100-0x102 と衝突しないこと、RFC 8441 が HTTP/2 Error Code を登録しないことを確認した
 - datatracker と IANA 登録表の再確認結果 (2026-11-09): draft-16 が 2026-11-02 投稿の最新版で draft 17 は未投稿。IANA HTTP/2 Error Code 登録表は 0x00-0x0d の実名登録のみで、0x0e 以降は Unassigned で WT 系の登録は未実施
 - 値と動作の変更はなし (0x100-0x102 維持)。`cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo doc -p shiguredo_http2 --no-deps` (警告は差分外の既存 7 件のみ) がすべて通ることを確認した
+- 2026-11-10 決着: 暫定値 `0x100`-`0x102` を値が確定するまで相互運用上の共有値として維持する方針を確定した。相互運用する関連実装も同一の暫定値を使用することを確認済み (相手側のテストは wire 値の固定を外しており、本リポジトリの mapping テストが wire 値の参照ピンとして残る)。draft の記載の継続観察と値確定時の更新は後続追跡の issue (issues/0174-update-wt-error-code-value-watch.md) に渡し、wire 値の分岐が draft で生じた場合の差別化検討は相互運用側の責務とする (本リポジトリは draft の登録値に追従する)
 
 ## 参照
 
