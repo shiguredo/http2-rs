@@ -227,7 +227,7 @@ Sans I/O の `WtErrorKind::StreamStateError` / `FlowControlError` / `SessionStat
 |--------------------|------|
 | `StreamOpened { stream_id, bidirectional }` | ストリームが開かれた。ピアが上位 ID を先に開いた場合は同一型・同方向の下位 ID も通知される (RFC 9000 Section 3.2 / draft-ietf-webtrans-http2-16 Section 6.7) |
 | `StreamData { stream_id, data, fin }` | ストリームに WT_STREAM Capsule が到着 |
-| `StreamReset { stream_id, error_code }` | WT_RESET_STREAM を受信 |
+| `StreamReset { stream_id, error_code, reliable_size }` | WT_RESET_STREAM を受信。`reliable_size` は draft-ietf-webtrans-http2-16 Section 6.2 の MUST equal 検証を通過した Reliable Size で、リセット前の受信済みバイト数と一致する |
 | `StopSending { stream_id, error_code }` | WT_STOP_SENDING を受信 |
 | `DatagramReceived { data }` | DATAGRAM を受信 |
 | `SessionDraining` | WT_DRAIN_SESSION を受信 |

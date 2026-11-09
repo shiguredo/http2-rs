@@ -109,9 +109,18 @@ pub enum WtEvent {
         fin: bool,
     },
     /// ストリームがリセットされた
+    ///
+    /// `reliable_size` はピアが `WT_RESET_STREAM` で通知した Reliable Size である。
+    /// draft-ietf-webtrans-http2-16 Section 6.2 の MUST equal 検証を通過した値であり、
+    /// リセット前に受信したバイト数 (`WtStream::recv_offset`) と一致する。
+    /// 受信専用の単方向ストリームなど、リセットでストリームが削除される経路では
+    /// `WtSession::stream()` から受信済みバイト数を参照できなくなる。受信データの
+    /// 集計をアプリで記録していない場合は、リセット時の受信済みバイト数を知る
+    /// 唯一の経路がこの値である。
     StreamReset {
         stream_id: WtStreamId,
         error_code: u64,
+        reliable_size: u64,
     },
     /// ストリーム送信停止要求を受信
     StopSending {
@@ -1160,9 +1169,11 @@ impl WtSession {
                 }
                 stream.recv_reset();
 
+                // 検証を通過した Reliable Size をイベントに含める
                 self.events.push_back(WtEvent::StreamReset {
                     stream_id,
                     error_code,
+                    reliable_size,
                 });
 
                 // リセット受信で閉じたストリームを削除する
