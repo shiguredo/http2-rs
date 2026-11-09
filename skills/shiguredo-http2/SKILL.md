@@ -513,7 +513,9 @@ RFC 9113 §7 の HTTP/2 エラーコードに加え、draft-ietf-webtrans-http2-
 | `WtStreamStateError` | `0x101` (`WT_STREAM_STATE_ERROR`) |
 | `WtFlowControlError` | `0x102` (`WT_FLOW_CONTROL_ERROR`) |
 
-注: `ErrorCode::WtError` は HTTP/2 GOAWAY/RST_STREAM 用のエラーコードであり、`webtransport::WtError` 構造体とは別物。`WtError` / `WtStreamStateError` / `WtFlowControlError` の `0x100`-`0x102` は draft-ietf-webtrans-http2-16 Section 11.3 が 0xTBD のため本実装の暫定値。
+注: `ErrorCode::WtError` は HTTP/2 GOAWAY/RST_STREAM 用のエラーコードであり、`webtransport::WtError` 構造体とは別物。
+
+`WtError` / `WtStreamStateError` / `WtFlowControlError` の `0x100`-`0x102` は draft-ietf-webtrans-http2-16 Section 11.3 が 0xTBD (IANA 登録未了) のため本実装の暫定値であり、値が確定した draft 改訂や RFC 化の時点で後方互換のない変更として更新される。
 
 ### `tokio_http2::Error`
 
