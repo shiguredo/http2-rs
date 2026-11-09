@@ -2686,7 +2686,7 @@ fn wt_reset_stream_unknown_stream_id_errors() {
 #[test]
 fn wt_reset_stream_reliable_size_exact_match() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
-    session.initiate().expect("initiate should succeed");
+    session.initiate().expect("セッションを開始できるはず");
 
     // クライアント起点の bidi ストリーム (id=0) から 5 バイト受信
     let peer_id: WtStreamId = wt_stream_id::first(true, true);
@@ -2696,8 +2696,8 @@ fn wt_reset_stream_reliable_size_exact_match() {
         data: b"hello".to_vec(),
         fin: false,
     });
-    session.feed(&encoder.take()).expect("feed should succeed");
-    session.process().expect("process should succeed");
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
 
     // reliable_size == recv_offset (5) → 正常
     let mut encoder = CapsuleEncoder::new();
@@ -2706,28 +2706,36 @@ fn wt_reset_stream_reliable_size_exact_match() {
         error_code: 0,
         reliable_size: 5,
     });
-    session.feed(&encoder.take()).expect("feed should succeed");
+    session.feed(&encoder.take()).expect("feed に成功するはず");
     session
         .process()
-        .expect("reliable_size == recv_offset should succeed");
+        .expect("reliable_size == recv_offset で失敗するはずがない");
 
-    // StreamReset イベントが発火している
+    // StreamReset イベントで Reliable Size を確認する (受信済みバイト数 5 のストリーム)
     let mut got_reset = false;
     while let Some(ev) = session.poll_event() {
-        if let WtEvent::StreamReset { stream_id, .. } = ev
+        if let WtEvent::StreamReset {
+            stream_id,
+            reliable_size,
+            ..
+        } = ev
             && stream_id == peer_id
         {
             got_reset = true;
+            assert_eq!(
+                reliable_size, 5,
+                "検証を通過した Reliable Size は受信済みバイト数と一致するはず"
+            );
         }
     }
-    assert!(got_reset, "StreamReset event expected");
+    assert!(got_reset, "StreamReset イベントが送出されるはず");
 }
 
 /// reliable_size == 0 && recv_offset == 0 で WT_RESET_STREAM が正常に処理される
 #[test]
 fn wt_reset_stream_reliable_size_zero_match() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
-    session.initiate().expect("initiate should succeed");
+    session.initiate().expect("セッションを開始できるはず");
 
     // クライアント起点の bidi ストリーム (id=0) をデータなしで開く
     let peer_id: WtStreamId = wt_stream_id::first(true, true);
@@ -2737,8 +2745,8 @@ fn wt_reset_stream_reliable_size_zero_match() {
         data: vec![],
         fin: false,
     });
-    session.feed(&encoder.take()).expect("feed should succeed");
-    session.process().expect("process should succeed");
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
 
     // reliable_size == recv_offset (0) → 正常
     let mut encoder = CapsuleEncoder::new();
@@ -2747,17 +2755,117 @@ fn wt_reset_stream_reliable_size_zero_match() {
         error_code: 0,
         reliable_size: 0,
     });
-    session.feed(&encoder.take()).expect("feed should succeed");
+    session.feed(&encoder.take()).expect("feed に成功するはず");
     session
         .process()
-        .expect("reliable_size == 0 == recv_offset should succeed");
+        .expect("reliable_size == 0 == recv_offset で失敗するはずがない");
+
+    // StreamReset イベントで Reliable Size を確認する (データなしのストリーム)
+    let mut got_reset = false;
+    while let Some(ev) = session.poll_event() {
+        if let WtEvent::StreamReset {
+            stream_id,
+            reliable_size,
+            ..
+        } = ev
+            && stream_id == peer_id
+        {
+            got_reset = true;
+            assert_eq!(
+                reliable_size, 0,
+                "空ストリームの Reliable Size は 0 であるはず"
+            );
+        }
+    }
+    assert!(got_reset, "StreamReset イベントが送出されるはず");
+}
+
+/// WT_STOP_SENDING 受信による自動 WT_RESET_STREAM 送信と、その後の追送データへの
+/// WT_RESET_STREAM 受信を組み合わせた流水 (組合検証) で、受信側イベントの
+/// `reliable_size` が受信済みバイト数と常に一致することを検証する。
+/// 自動応答の送信側は既存テストで担保済みのため、本検証は受信側イベントの値を固定する。
+/// (draft-ietf-webtrans-http2-16 Section 6.2: Reliable Size MUST equal)
+#[test]
+fn wt_reset_stream_reliable_size_after_stop_sending_auto_reset() {
+    let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    // 未作成のピア開始 bidi ストリームへ WT_STOP_SENDING を受信すると、
+    // ストリームが暗黙生成され自动応答の WT_RESET_STREAM がキューに積まれる
+    let peer_id = wt_stream_id::first(true, true);
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStopSending {
+        stream_id: peer_id,
+        error_code: 9,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
+
+    // イベントと出力を消費する (自動応答の中身の検証は既存の送信側テストに任せる)
+    let mut got_stop = false;
+    while let Some(ev) = session.poll_event() {
+        if matches!(ev, WtEvent::StopSending { .. }) {
+            got_stop = true;
+        }
+    }
+    assert!(got_stop, "StopSending イベントが送出されるはず");
+    while session.poll_output().is_some() {}
+
+    // ピアは自動応答後も追送データを送れる (受信側は生存している)。
+    // draft-ietf-webtrans-http2-16 Section 6.3: 自動応答は送信パートを停止するだけで、
+    // 受信パートは Recv 状態を維持する
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: peer_id,
+        data: b"yz".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("追送データの受信に成功するはず");
+    while let Some(ev) = session.poll_event() {
+        assert!(
+            matches!(ev, WtEvent::StreamData { .. }),
+            "追送データは StreamData として届くはず"
+        );
+    }
+
+    // ピアからの WT_RESET_STREAM (reliable_size = 2 == recv_offset) を検証する
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtResetStream {
+        stream_id: peer_id,
+        error_code: 0x43,
+        reliable_size: 2,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("受信済みバイト数と一致する WT_RESET_STREAM は受理されるはず");
+
+    let mut got_reset = false;
+    while let Some(ev) = session.poll_event() {
+        if let WtEvent::StreamReset {
+            stream_id,
+            error_code,
+            reliable_size,
+        } = ev
+            && stream_id == peer_id
+        {
+            got_reset = true;
+            assert_eq!(
+                reliable_size, 2,
+                "Reliable Size は受信済みバイト数 (2) と一致するはず"
+            );
+            assert_eq!(error_code, 0x43, "エラーコードはそのまま伝わるはず");
+        }
+    }
+    assert!(got_reset, "StreamReset イベントが送出されるはず");
 }
 
 /// reliable_size > recv_offset (過大) でセッションエラーになる
 #[test]
 fn wt_reset_stream_reliable_size_too_large_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
-    session.initiate().expect("initiate should succeed");
+    session.initiate().expect("セッションを開始できるはず");
 
     // クライアント起点の bidi ストリーム (id=0) から 5 バイト受信
     let peer_id: WtStreamId = wt_stream_id::first(true, true);
@@ -2767,8 +2875,8 @@ fn wt_reset_stream_reliable_size_too_large_errors() {
         data: b"hello".to_vec(),
         fin: false,
     });
-    session.feed(&encoder.take()).expect("feed should succeed");
-    session.process().expect("process should succeed");
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
 
     // reliable_size = 6 > recv_offset = 5 → エラー
     let mut encoder = CapsuleEncoder::new();
@@ -2777,20 +2885,27 @@ fn wt_reset_stream_reliable_size_too_large_errors() {
         error_code: 0,
         reliable_size: 6,
     });
-    session.feed(&encoder.take()).expect("feed should succeed");
+    session.feed(&encoder.take()).expect("feed に成功するはず");
     let err = session.process().unwrap_err();
     assert_eq!(
         err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::StreamStateError
     );
     assert!(err.reason().contains("does not match"));
+    // 不一致の WT_RESET_STREAM では StreamReset イベントが送出されないこと
+    while let Some(ev) = session.poll_event() {
+        assert!(
+            !matches!(ev, WtEvent::StreamReset { .. }),
+            "過大では StreamReset が送出されるはずがない"
+        );
+    }
 }
 
 /// reliable_size < recv_offset (過小) でセッションエラーになる
 #[test]
 fn wt_reset_stream_reliable_size_too_small_errors() {
     let mut session = WtSession::server(WtConfig::default(), WtConfig::default());
-    session.initiate().expect("initiate should succeed");
+    session.initiate().expect("セッションを開始できるはず");
 
     // クライアント起点の bidi ストリーム (id=0) から 5 バイト受信
     let peer_id: WtStreamId = wt_stream_id::first(true, true);
@@ -2800,8 +2915,8 @@ fn wt_reset_stream_reliable_size_too_small_errors() {
         data: b"hello".to_vec(),
         fin: false,
     });
-    session.feed(&encoder.take()).expect("feed should succeed");
-    session.process().expect("process should succeed");
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session.process().expect("process に成功するはず");
 
     // reliable_size = 4 < recv_offset = 5 → エラー
     let mut encoder = CapsuleEncoder::new();
@@ -2810,13 +2925,20 @@ fn wt_reset_stream_reliable_size_too_small_errors() {
         error_code: 0,
         reliable_size: 4,
     });
-    session.feed(&encoder.take()).expect("feed should succeed");
+    session.feed(&encoder.take()).expect("feed に成功するはず");
     let err = session.process().unwrap_err();
     assert_eq!(
         err.kind(),
         shiguredo_http2::webtransport::WtErrorKind::StreamStateError
     );
     assert!(err.reason().contains("does not match"));
+    // 不一致の WT_RESET_STREAM では StreamReset イベントが送出されないこと
+    while let Some(ev) = session.poll_event() {
+        assert!(
+            !matches!(ev, WtEvent::StreamReset { .. }),
+            "過小では StreamReset が送出されるはずがない"
+        );
+    }
 }
 
 /// 送信専用のローカル開始 uni ストリームへの WT_RESET_STREAM は
@@ -2912,10 +3034,18 @@ fn wt_reset_stream_peer_uni_stream_accepted() {
 
     let mut got_reset = false;
     while let Some(ev) = session.poll_event() {
-        if let WtEvent::StreamReset { stream_id, .. } = ev
+        if let WtEvent::StreamReset {
+            stream_id,
+            reliable_size,
+            ..
+        } = ev
             && stream_id == peer_id
         {
             got_reset = true;
+            assert_eq!(
+                reliable_size, 2,
+                "Reliable Size は受信済みバイト数 (2) と一致するはず"
+            );
         }
     }
     assert!(got_reset, "StreamReset イベントが送出されるはず");

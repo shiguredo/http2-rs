@@ -1372,6 +1372,10 @@ impl DriverState {
             WtEvent::StreamReset {
                 stream_id,
                 error_code,
+                // reliable_size は現行の利用者表面に載せていない。
+                // Sans I/O 層の `WtEvent::StreamReset` で取得できる値であり、
+                // 追加が必要になったときは利用者表面の拡張として扱う
+                ..
             } => {
                 if let Some(ch) = self.stream_channels.remove(&stream_id) {
                     let _ = ch.send(StreamPacket::Reset { error_code });
