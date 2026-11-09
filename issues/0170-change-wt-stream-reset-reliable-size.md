@@ -1,7 +1,7 @@
 # WtEvent::StreamReset に Reliable Size を追加する
 
 - Created: 2026-11-09
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-11-09
 - Branch: feature/change-wt-stream-reset-reliable-size
 - Polished: 2026-11-09
 
@@ -48,3 +48,13 @@
 - `tests/test_webtransport/integration.rs` — WT_RESET_STREAM の Reliable Size 一致検証テスト群
 - `refs/draft-ietf-webtrans-http2-16.txt` — Section 6.2 (Reliable Size の定義と MUST equal)
 - `skills/shiguredo-http2/SKILL.md` — `WtEvent` の表
+
+## 解決方法
+
+- `src/webtransport.rs` の `WtEvent::StreamReset` に `reliable_size: u64` を追加した。doc コメントに、検証を通過した値で `WtStream::recv_offset` と一致すること、受信専用単方向ストリームなどリセットでストリームが削除される経路では `WtSession::stream()` 参照が失われるため、受信集計をアプリで記録していない場合はリセット時の受信済みバイト数を知る唯一の経路であること (draft-ietf-webtrans-http2-16 Section 6.2) を記載した
+- `WtSession::handle_capsule` の `Capsule::WtResetStream` 分岐で、一致検証 (`reliable_size != stream.recv_offset()`) を通過した capsule 値をイベントに載せて送出した。送信側 (`WtSession::reset_stream` と自動応答) は変更していない
+- `crates/tokio-http2/src/webtransport.rs` の `DriverState::dispatch_wt_event` は `stream_id` / `error_code` を名前で受け、`..` で追加フィールドを吸収した。`StreamPacket::Reset` をはじめ利用者表面は不変であり、`..` 直前に「reliable_size は現行の利用者表面に載せていない」旨のコメントを残した
+- `tests/test_webtransport/integration.rs` に正常系 3 件 (exact match / zero match / ピア開始 uni) で送出値の assert を追加し、過大・過小の 2 件に「StreamReset イベントが送出されないこと」の assert を追加した。あわせて、WT_STOP_SENDING 受信による自動 WT_RESET_STREAM 送信と追送データを組み合わせた組合検証テスト `wt_reset_stream_reliable_size_after_stop_sending_auto_reset` を追加した (受信集計 0 / 5 / 2 の全経路値を流水で固定する)
+- `skills/shiguredo-http2/SKILL.md` の `WtEvent` 表の `StreamReset` 行に `reliable_size` を追記した
+- WT_RESET_STREAM 関連テストの既存英語 expect メッセージを日本語に統一した
+- `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通ることを確認した
