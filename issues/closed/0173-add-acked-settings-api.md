@@ -62,6 +62,7 @@ draft-ietf-webtrans-http2-16 Section 4.3.1 は、セッション開始の時点�
 - `skills/shiguredo-http2/SKILL.md` に Connection API 表の `acked_settings()` 行と、accept の挙動 (ACK 済み値を初期値として扱う) の説明を追記した
 - `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo doc -p shiguredo_http2 --no-deps` (警告は差分外の既存 7 件のみ) がすべて通ることを確認した
 - tokio 層で「SETTINGS ACK を 1 つも処理していない accept」を直接観測する統合テストは作らなかった。本ライブラリの tokio `Client` はサーバー SETTINGS を処理した時点で ACK を送信待ちに積む (処理順が送信順を決める) ため、wire 上で ACK より CONNECT が先になる経路は tokio `Client` の流儀では到達しない。当該状態は sans-io の単体テスト (`tests/test_connection.rs` の未広告直定義) で担保する
+- 2026-11-10 確定: 本 API の方向は「自分の自広告 SETTINGS のうちピア ACK 済みの値を追跡する」で正確であることを確定した。申し送り時の「ACK 済み peer SETTINGS」の表現は「自広告側の ACK 済み」と「peer から受信した値」の対応を同一文に書き込むのは表現が薄弱になるための着地であり、`remote_settings_acked()` のような逆方向 API は追加しない。受信したピア値は `Connection::remote_settings()` 一本のままである (受信時に当該 SETTINGS への ACK を即座に送信待ちへ積むため、参照値は ACK 送信済みに一致する)。申し送りの意図自体は同内容で等価と確認済み
 
 ## 参照
 
