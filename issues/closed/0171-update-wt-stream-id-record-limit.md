@@ -1,7 +1,7 @@
 # WebTransport ストリーム ID 記録の追い出し既知制限を明文化する
 
 - Created: 2026-11-09
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-11-09
 - Branch: feature/update-wt-stream-id-record-limit
 - Polished: 2026-11-09
 
@@ -61,6 +61,15 @@
 - 分散していた既知制限の注記のうち、重複を縮めてよい箇所 (`handle_stream_data` 冒頭、`create_peer_streams_up_to`、`closed_stream_send_max` のフィールド doc) が定数 doc への集約と整合する。0152 の非再作成方針の説明 (`create_implicit_peer_bidi_stream` / `will_create_implicit_peer_bidi_stream`) と、`stop_sending_received` の OR 判定とその既知制限の説明 (`stop_sending_received_ids`) は残す
 - 追い出し既知制限を固定するテストが `tests/test_webtransport/integration.rs` に追加され、許可側 (最古は受理) と拒否側 (記録に残る ID は拒否) の双方が検証されている
 - `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通る
+
+## 解決方法
+
+- 定数 doc (`STREAM_ID_RECORD_MAX_SIZE`) を 1 本化した。共通の規則に加えて、記録ごとの追い出し条件 (`closed_stream_send_max` は閉鎖数基準、`stop_sending_received_ids` は WT_STOP_SENDING の受理数基準) と追い出される記録の値に応じた Section 6.4 / 6.6 / 6.3 検出漏れを記録の経路に紐付けて記載した。Section 6.6 の検出漏れは、削除済みローカル開始ストリームでは完全に漏れること、削除済みピア開始 bidi では追い出される記録の値が初期値より大きい (生存中に上限の増加を受理してから閉じた経路と、削除後に増加を受理して記録を更新した経路の 2 経路) 場合に限り最後に受理した値との比較が漏れ、記録値が初期値のままの場合は暗黙生成経路の初期値比較が残ることまで正確に記載した (draft-ietf-webtrans-http2-16 Section 3.4 / 6.3 / 6.4 / 6.6、RFC 9000 Section 2.1)
+- 分散していた既知制限の注記は定数 doc への参照に縮めた: `closed_stream_send_max` のフィールド doc (閉鎖数基準と漏れの集約先への参照)、`handle_stream_data` 冒頭のコメント、`create_peer_streams_up_to` の doc、重複検証のコメント (`WT_STOP_SENDING` 重複拒否と WT_STOP_SENDING 受信後の WT_MAX_STREAM_DATA 拒否の 2 経路)、暗黙生成 (`create_implicit_peer_bidi_stream` の例外記載)。0152 の非再作成方針の説明と `stop_sending_received` の OR 判定の説明はそのまま残した
+- 追い出し後の挙動を固定するテスト `wt_stream_on_evicted_closed_stream_id_recreates_stream` を `tests/test_webtransport/integration.rs` に追加した。ピア開始 bidi ストリームを 10001 件閉じて記録を超過させ、追い出された最古 ID (`wt_stream_id::first(true, true)`) への WT_STREAM が `WtEvent::StreamOpened` 再送出付きで新規受理されること (既知の制限側) と、記録に残る 2 番目の ID への WT_STREAM が WT_STREAM_STATE_ERROR で拒否されること (境界側) の双方を検証する。ストリーム数上限を `WtConfig::initial_max_streams_bidi: 20000` で担保した
+- 前 issue 由来のテスト doc コメントの言い換えが 2 箇所含まれる (「流水 (組合検証)」→「一連の流れ」、簡体字 typo「自动」→「自動」)。動作への影響はない
+- `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo doc -p shiguredo_http2 --no-deps` (差分起因の警告なし) がすべて通ることを確認した
+- 追い出しの実効条件の文言は、レビューで指摘された 2 経路 (閉鎖時の `send_max` 記録と削除後の記録更新) を再導出して分けて記載した
 
 ## 参照
 

@@ -276,12 +276,42 @@ impl WtConfig {
 
 /// WebTransport ストリーム ID を記録する上限付き集合・連想配列の上限
 ///
-/// `closed_stream_send_max` / `stop_sending_received_ids` で共用する。
-/// 各記録は独立に上限を管理し、超えた場合は最も小さい ID を追い出す。追い出された ID は
-/// 再作成・再処理を許す既知の制限がある。STOP_SENDING の重複・順序検証は
-/// `stop_sending_received_ids` と `WtStream::stop_sending_received` の OR で判定するため、
-/// `stop_sending_received_ids` から追い出された ID は、ストリームが生存していればフラグで
-/// 検証できるが、削除済みであれば検証できない (`closed_stream_send_max` は判定に使わない)。
+/// `closed_stream_send_max` / `stop_sending_received_ids` の 2 つの記録が共用する。
+/// 2 つの記録を分離する理由は、前者が削除済みストリームに限る「送信上限値」の記録、
+/// 後者がストリームの有無を問わない「WT_STOP_SENDING を受理した事実」の記録である。
+/// 単一の記録に統合すると生存ストリームの ID までクローズ済み判定に混ざる。
+///
+/// 各記録は独立に上限を管理し、超過時は最も小さい ID を追い出す。系統内では
+/// 典型として記録への追加順と一致するため最も古い ID が追い出されるが、capsule の
+/// 到着・閉鎖順によっては数値順と追加順が一致しない (系統をまたいでも一致しない。
+/// `BoundedMap` / `BoundedSet` の doc 参照)。
+/// 追い出しが発生すると draft-ietf-webtrans-http2-16 が MUST とする検出を漏らす既知の
+/// 制限があり、発生条件と漏れる検出は記録ごとに異なる。
+///
+/// - `closed_stream_send_max`: 閉鎖したストリームの記録が 10000 件を超えたときに
+///   最も小さい ID が追い出される (要素数を伸ばす経路は閉鎖に限る)。追い出された
+///   ID への WT_STREAM は新規ストリームとして受理され得る
+///   (Section 6.4 の WT_STREAM_STATE_ERROR 検出を漏らす)。Section 6.6 の非増加
+///   WT_MAX_STREAM_DATA の検出は、削除済みローカル開始ストリームでは完全に漏れ、
+///   初期値または最後に受理した送信上限との比較も失われる。削除済みピア開始 bidi
+///   では、追い出される記録の値が初期値より大きい場合
+///   (生存中に上限の増加を受理してから閉じた場合と、削除後に増加を受理して記録を
+///   更新した場合の 2 経路) に限り、最後に受理した値との比較が漏れる。追い出される
+///   記録の値が初期値と同値の場合、追い出し後の受信では暗黙生成経路の初期値との
+///   比較が残り、記録に基づかない検出は維持される
+/// - `stop_sending_received_ids`: WT_STOP_SENDING の受理が 10000 件を超えたときに
+///   最も小さい ID が追い出される (生存ストリームへの受理でも記録が伸びるため、
+///   閉鎖数とは別の条件)。追い出された削除済み ID は 2 回目の WT_STOP_SENDING の
+///   拒否 (Section 6.3) と、WT_STOP_SENDING 受信後の WT_MAX_STREAM_DATA の拒否
+///   (Section 6.6) を漏らす。生存ストリームでは `WtStream::stop_sending_received`
+///   フラグが判定を代替するが、削除済みでは代替されない
+///
+/// ストリーム ID は仕様上再利用されない (RFC 9000 Section 2.1) ため、上記の MUST を
+/// 記録期間と無関係に完全保証するには無上限の記録が必要になる。すべてのセッションで
+/// 常時有界である現行方針と両立させるため、実害条件を「1 つの記録が 10000 件を
+/// 超えて追い出しが発生すること」に限定して受け入れる。記録は小さなエントリ
+/// (ストリーム ID と値) であり、仕様が規定する検出を記録期間に限って補う役割である。
+/// 追い出し後の遅延 capsule への検出保証まで扱う文言は設けていない。
 const STREAM_ID_RECORD_MAX_SIZE: usize = 10000;
 
 /// WebTransport セッション (Sans I/O)
@@ -306,17 +336,21 @@ pub struct WtSession {
     /// WT_STOP_SENDING / WT_MAX_STREAM_DATA 受信による再作成を拒否するために使用する。
     /// draft-ietf-webtrans-http2-16 Section 6.6: ストリーム削除後も非増加の
     /// WT_MAX_STREAM_DATA を検出できるよう、初期値または最後に受理した送信上限を保持する。
-    /// 削除後に増加を受理した場合は記録を更新する。記録から追い出された ID は
-    /// 非増加の検出を行わない (既知の制限。削除済みローカル開始ストリームでは
-    /// 初期値との比較も失われる)。
+    /// 削除後に増加を受理した場合は記録を更新する。
+    /// 上限 (閉鎖数基準) と、追い出しで検出が失われる範囲は
+    /// `STREAM_ID_RECORD_MAX_SIZE` の doc に集約する。
     closed_stream_send_max: BoundedMap<WtStreamId, u64>,
     /// WT_STOP_SENDING を受信したストリーム ID の集合
     ///
     /// draft-ietf-webtrans-http2-16 Section 6.3 / Section 6.6: 2 回目の
     /// WT_STOP_SENDING の拒否と、WT_STOP_SENDING を受信した後の
-    /// WT_MAX_STREAM_DATA の拒否に使用する。`WtStream::stop_sending_received` は
-    /// ストリーム削除で失われるため、削除後も検証できるよう受理した時点で記録する。
-    /// ピアが WT_STOP_SENDING を送らないセッションでは伸びない。
+    /// WT_MAX_STREAM_DATA の拒否に使用する。生存ストリームの判定は
+    /// `WtStream::stop_sending_received` フラグとの OR (述語 `stop_sending_received`)
+    /// で行う。フラグはストリーム削除で失われるため、受理した時点で ID を記録して
+    /// 削除後の検証を維持する。ピアが WT_STOP_SENDING を送らないセッションでは
+    /// 伸びない。上限は `STREAM_ID_RECORD_MAX_SIZE` を共有する WT_STOP_SENDING の
+    /// 受理数基準であり、追い出された削除済み ID で検出が失われる範囲は同 doc を
+    /// 参照する。
     stop_sending_received_ids: BoundedSet<WtStreamId>,
     /// フロー制御
     flow_control: WtFlowControl,
@@ -1208,7 +1242,9 @@ impl WtSession {
 
                 // draft-ietf-webtrans-http2-16 Section 6.3:
                 // 2 回目の WT_STOP_SENDING は WT_STREAM_STATE_ERROR。ストリーム生成より
-                // 前に検証し、拒否時にストリームと WtEvent::StreamOpened を残さない
+                // 前に検証し、拒否時にストリームと WtEvent::StreamOpened を残さない。
+                // 記録から追い出された削除済み ID は検出の対象外である
+                // (`STREAM_ID_RECORD_MAX_SIZE` の doc 参照)
                 if self.stop_sending_received(stream_id) {
                     return Err(WtError::stream_state_error(
                         "duplicate WT_STOP_SENDING received",
@@ -1401,7 +1437,8 @@ impl WtSession {
         // ストリームへの WT_STREAM は WT_STREAM_STATE_ERROR のセッションエラーとする。
         // セッションを終了させる必要があり (Section 3.4)、tokio-http2 の driver は
         // CONNECT ストリームを RST_STREAM で終了させる。
-        // 記録から追い出された ID は対象外 (既知の制限)。
+        // 記録から追い出された ID は対象外 (追い出し既知制限の詳細は
+        // `STREAM_ID_RECORD_MAX_SIZE` の doc 参照)。
         if self.closed_stream_send_max.contains(&stream_id) {
             return Err(WtError::stream_state_error(format!(
                 "WT_STREAM received for closed stream {stream_id}"
@@ -1551,7 +1588,7 @@ impl WtSession {
     /// 再作成すると `WtEvent::StreamOpened` が再送出されて
     /// クローズ済みストリームを再作成しない方針 (draft-ietf-webtrans-http2-16 Section 6.4)
     /// に反する。`closed_stream_send_max` は上限付きのため、記録から追い出された ID は
-    /// 再作成され得る (既知の制限)。
+    /// 再作成され得る (追い出し既知制限の詳細は `STREAM_ID_RECORD_MAX_SIZE` の doc 参照)。
     fn create_peer_streams_up_to(
         &mut self,
         stream_id: WtStreamId,
@@ -1591,7 +1628,9 @@ impl WtSession {
     /// 方向判定で除外する。開始主体がローカル側の ID と、`closed_stream_send_max` に
     /// 記録済みの削除済み ID は
     /// 生成しない。後者を再作成すると閉じたストリームの `WtEvent::StreamOpened` が
-    /// 再送出されるため生成しない。生成しなかった場合、呼び出し元の後続処理は
+    /// 再送出されるため生成しない (ただし記録から追い出された ID は判定を通過する
+    /// 例外であり、`STREAM_ID_RECORD_MAX_SIZE` の doc 参照)。生成しなかった場合、
+    /// 呼び出し元の後続処理は
     /// ストリーム不在として扱う (RFC 9000 Section 19.10 がエラーとするのは未作成の
     /// ローカル開始ストリームと受信専用ストリームのみであり、削除済みのピア開始 bidi は
     /// 該当しない。RFC 9000 Section 3.3 は遅延配送により任意の状態で受信し得るとする)。

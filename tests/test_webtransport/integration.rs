@@ -2781,7 +2781,7 @@ fn wt_reset_stream_reliable_size_zero_match() {
 }
 
 /// WT_STOP_SENDING 受信による自動 WT_RESET_STREAM 送信と、その後の追送データへの
-/// WT_RESET_STREAM 受信を組み合わせた流水 (組合検証) で、受信側イベントの
+/// WT_RESET_STREAM 受信を組み合わせた一連の流れで、受信側イベントの
 /// `reliable_size` が受信済みバイト数と常に一致することを検証する。
 /// 自動応答の送信側は既存テストで担保済みのため、本検証は受信側イベントの値を固定する。
 /// (draft-ietf-webtrans-http2-16 Section 6.2: Reliable Size MUST equal)
@@ -2791,7 +2791,7 @@ fn wt_reset_stream_reliable_size_after_stop_sending_auto_reset() {
     session.initiate().expect("セッションを開始できるはず");
 
     // 未作成のピア開始 bidi ストリームへ WT_STOP_SENDING を受信すると、
-    // ストリームが暗黙生成され自动応答の WT_RESET_STREAM がキューに積まれる
+    // ストリームが暗黙生成され自動応答の WT_RESET_STREAM がキューに積まれる
     let peer_id = wt_stream_id::first(true, true);
     let mut encoder = CapsuleEncoder::new();
     encoder.encode(&Capsule::WtStopSending {
@@ -4427,6 +4427,109 @@ fn out_of_order_peer_stream_does_not_recreate_closed_lower_id() {
         opened,
         vec![7, 11],
         "削除済みの ID の StreamOpened は再送出されないはず"
+    );
+}
+
+/// 記録上限 (10000 件) を超えてクローズ済み ID の記録から最古の ID が追い出された場合の
+/// 既知の制限を固定するテスト。
+///
+/// 追い出された最古 ID への WT_STREAM は新規ストリームとして受理され
+/// `WtEvent::StreamOpened` が再送出される。これは draft-ietf-webtrans-http2-16
+/// Section 6.4 (有効でない状態のストリームへの WT_STREAM への WT_STREAM_STATE_ERROR
+/// MUST) の検出を漏らす既知の制限である。上限値と制限として受け入れる
+/// 根拠は `STREAM_ID_RECORD_MAX_SIZE` の doc を参照する。記録に残っている 2 番目の ID
+/// への WT_STREAM は従来どおり WT_STREAM_STATE_ERROR で拒否され、境界を確認する。
+#[test]
+fn wt_stream_on_evicted_closed_stream_id_recreates_stream() {
+    // ピア開始 bidi ストリームの受理判定はローカル広告値の
+    // `initial_max_streams_bidi` を使用するため、10001 件以上を受け取れる値にする
+    let local = WtConfig {
+        initial_max_streams_bidi: 20000,
+        ..WtConfig::default()
+    };
+    let mut session = WtSession::server(local, WtConfig::default());
+    session.initiate().expect("セッションを開始できるはず");
+
+    let first_id = wt_stream_id::first(true, true);
+    let second_id = wt_stream_id::next(first_id);
+
+    // ピア開始 bidi ストリームを 10001 件閉じて記録を超過させる。
+    // 各ストリームはピアの FIN 付き WT_STREAM (データなし) とローカル側の FIN 送信の
+    // 両方で終端する (双方向ストリームは両端が終端状態になると閉じる)。
+
+    let mut id = first_id;
+    for _ in 0..10001 {
+        let mut encoder = CapsuleEncoder::new();
+        encoder.encode(&Capsule::WtStream {
+            stream_id: id,
+            data: vec![],
+            fin: true,
+        });
+        session.feed(&encoder.take()).expect("feed に成功するはず");
+        session.process().expect("process に成功するはず");
+
+        // StreamOpened / StreamData を消費して次のループへ影響を残さない
+        while session.poll_event().is_some() {}
+
+        // ローカル側の送信終端で閉じて記録へ入れる
+        session
+            .send_stream_data(id, &[], true)
+            .expect("FIN 送信に成功するはず");
+
+        // 送信バッファを消費して次のループへ影響を残さない
+        while session.poll_output().is_some() {}
+        id = wt_stream_id::next(id);
+    }
+    // 10001 件目の記録で最古の ID (first_id) が追い出された結果を、公開 API 経由の
+    // 後続の WT_STREAM 受信結果で判定する
+
+    // 追い出された最古 ID への WT_STREAM は新規ストリームとして受理される
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: first_id,
+        data: b"0".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    session
+        .process()
+        .expect("追い出された最古 ID への WT_STREAM は新規ストリームとして受理されるはず");
+    assert!(
+        session.stream(first_id).is_some(),
+        "追い出された ID の WT_STREAM は新規の StreamOpened と共に受理されるはず"
+    );
+
+    let mut opened_first = false;
+    while let Some(ev) = session.poll_event() {
+        if let WtEvent::StreamOpened { stream_id, .. } = ev
+            && stream_id == first_id
+        {
+            opened_first = true;
+        }
+    }
+    assert!(
+        opened_first,
+        "追い出された ID の StreamOpened が再送出されるはず (既知の制限)"
+    );
+
+    // 記録に残っている 2 番目の ID への WT_STREAM は従来どおり拒否される (境界確認)
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::WtStream {
+        stream_id: second_id,
+        data: b"1".to_vec(),
+        fin: false,
+    });
+    session.feed(&encoder.take()).expect("feed に成功するはず");
+    let err = session
+        .process()
+        .expect_err("記録に残るクローズ済み ID への WT_STREAM は拒否されるはず");
+    assert_eq!(
+        err.kind(),
+        shiguredo_http2::webtransport::WtErrorKind::StreamStateError
+    );
+    assert!(
+        err.reason().contains("closed stream"),
+        "記録に残る ID はクローズ済みとして拒否されるはず"
     );
 }
 
