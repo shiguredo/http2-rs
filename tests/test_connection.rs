@@ -98,6 +98,190 @@ fn test_send_settings_does_not_emit_window_update_when_default() {
     );
 }
 
+/// draft-ietf-webtrans-http2-16 構成の Limits を返すテスト補助
+fn webtransport_limits() -> Limits {
+    Limits::builder()
+        .enable_connect_protocol(true)
+        .wt_enabled(true)
+        .webtransport(
+            Some(1_048_576),
+            Some(262_144),
+            Some(131_072),
+            Some(64),
+            Some(128),
+            Some(32),
+        )
+        .build()
+        .expect("WebTransport 向け Limits の構築に成功しなければならない")
+}
+
+/// 接続の送信バッファに溜まった内容を一括して取り出すテスト補助
+///
+/// モックは使用しない。実際の `poll_output()` で送信バイト列を取り出して相手に
+/// 流し込むことで、SETTINGS と SETTINGS ACK の往復を検証する。
+fn drain_connection_output(conn: &mut Connection) -> Vec<u8> {
+    let mut out = Vec::new();
+    while let Some(chunk) = conn.poll_output() {
+        out.extend_from_slice(&chunk);
+    }
+    out
+}
+
+/// クライアントとサーバーが互いのバッファを 1 往復で消化するテスト補助
+///
+/// サーバーがクライアント出力を処理してからクライアントがサーバー出力を処理する。
+/// SETTINGS とその ACK の順序付けはこの方向で固定する。
+fn exchange_connection_output(client: &mut Connection, server: &mut Connection) {
+    let from_client = drain_connection_output(client);
+    server
+        .feed(&from_client)
+        .expect("クライアント出力の取り込みに成功しなければならない");
+    server
+        .process()
+        .expect("クライアント出力の処理に成功しなければならない");
+
+    let from_server = drain_connection_output(server);
+    client
+        .feed(&from_server)
+        .expect("サーバー出力の取り込みに成功しなければならない");
+    client
+        .process()
+        .expect("サーバー出力の処理に成功しなければならない");
+}
+
+/// ACK を受けた SETTINGS がない間は `acked_settings` が未広告値を返し、
+/// SETTINGS ACK の受信 (1 往復) からは自広告値と一致すること
+///
+/// draft-ietf-webtrans-http2-16 Section 4.3.1 / Section 11.2: ACK を受けた
+/// SETTINGS に含まれない WT 初期値は Initial Value 0 (未広告) として扱われる。
+/// 1 つでも ACK を受けた SETTINGS がある場合、自広告値 (バッチ間同値) と一致する。
+#[test]
+fn test_acked_settings_confirmed_by_first_settings_ack() {
+    let mut client = Connection::client(webtransport_limits());
+    let mut server = Connection::server(webtransport_limits());
+    client
+        .initiate()
+        .expect("クライアント接続の開始に成功しなければならない");
+    server
+        .initiate()
+        .expect("サーバー接続の開始に成功しなければならない");
+
+    // 1 往復目: サーバーがクライアント SETTINGS を受理して ACK を積み、クライアントは
+    // サーバー SETTINGS を受理して ACK を積むと同時に、自 SETTINGS への ACK を
+    // 処理して自広告 SETTINGS を確定する (exchange_connection_output は
+    // 固定順序のため、このように非対称になる)
+    exchange_connection_output(&mut client, &mut server);
+    assert_eq!(
+        client.acked_settings(),
+        client.local_settings(),
+        "SETTINGS ACK 受信後の acked_settings は自広告値と一致するはず"
+    );
+    // 未広告の直定義: acked_settings が初期値未満の空 `Settings` であること
+    assert_eq!(
+        server.acked_settings(),
+        &shiguredo_http2::Settings::new(),
+        "クライアントの ACK が届く前の acked_settings は未広告 (全項目が既定値) でなければならない"
+    );
+    assert!(
+        server.acked_settings().wt_initial_max_data().is_none(),
+        "クライアントの ACK が届く前の acked_settings は WT 初期値を持ってはならない"
+    );
+
+    // 2 往復目でサーバーもクライアント SETTINGS への ACK を処理して確定する
+    exchange_connection_output(&mut client, &mut server);
+    assert_eq!(
+        server.acked_settings(),
+        server.local_settings(),
+        "SETTINGS ACK 受信後の acked_settings は自広告値と一致するはず"
+    );
+}
+
+/// 連続 `send_settings()` でバッチが 2 つ積まれても、ACK の受信が進む間に
+/// `acked_settings()` の観測値が変化しないこと
+///
+/// 自広告 SETTINGS は構築後に不変であるため、送信バッチ間の値は同一である。
+/// 「どのバッチが確定したか」を外部から観測する値の変化は存在しない。
+#[test]
+fn test_acked_settings_stable_across_multiple_pending_batches() {
+    let mut client = Connection::client(webtransport_limits());
+    let mut server = Connection::server(webtransport_limits());
+    client
+        .initiate()
+        .expect("クライアント接続の開始に成功しなければならない");
+    server
+        .initiate()
+        .expect("サーバー接続の開始に成功しなければならない");
+
+    // 2 往復で初回 SETTINGS の ACK を両側に確定させる
+    exchange_connection_output(&mut client, &mut server);
+    exchange_connection_output(&mut client, &mut server);
+
+    // 両側で SETTINGS を 1 回ずつさらに追加送信する (同一値のバッチ)
+    server
+        .send_settings()
+        .expect("SETTINGS の再送信に成功しなければならない");
+    client
+        .send_settings()
+        .expect("SETTINGS の再送信に成功しなければならない");
+
+    // ACK の往復 2 回で全バッチを消化する
+    exchange_connection_output(&mut client, &mut server);
+    exchange_connection_output(&mut client, &mut server);
+
+    assert_eq!(
+        server.acked_settings(),
+        server.local_settings(),
+        "追加バッチの ACK 受信後も acked_settings は自広告値と一致するはず"
+    );
+    assert_eq!(
+        client.acked_settings(),
+        client.local_settings(),
+        "追加バッチの ACK 受信後も acked_settings は自広告値と一致するはず"
+    );
+}
+
+/// 未送信 SETTINGS への SETTINGS ACK は PROTOCOL_ERROR の接続エラーになる
+///
+/// RFC 9113 Section 6.5.3: ACK は最古の未 ACK SETTINGS に対応するため、
+/// 同期が取れない ACK は本実装の判断で接続エラーにする。
+#[test]
+fn test_unsolicited_settings_ack_is_connection_error() {
+    let mut server = Connection::server(Limits::default());
+    server.mark_preface_received();
+
+    // 先行フレームは SETTINGS (非 ACK) が必須であるため、先に通常の SETTINGS を
+    // 受信しておく (受信側の pending バッチは送信しない限り空のまま)
+    server
+        .feed(&encode_frame(&Frame::Settings(SettingsFrame::new())))
+        .expect("受信バッファへの追加に成功しなければならない");
+    server
+        .process()
+        .expect("SETTINGS フレームの処理に成功しなければならない");
+    // 受信側の SETTINGS への応答 ACK は送信待ちに積まれるため捨てる
+    while server.poll_output().is_some() {}
+
+    // 未送信状態での SETTINGS ACK (空ペイロードの ACK フレーム)
+    server
+        .feed(&encode_frame(&Frame::Settings(SettingsFrame::ack())))
+        .expect("受信バッファへの追加に成功しなければならない");
+    let err = server
+        .process()
+        .expect_err("未送信 SETTINGS への ACK は接続エラーになるはず");
+    assert!(
+        err.is_connection_error(),
+        "未送信 SETTINGS への ACK は接続エラーであるはず"
+    );
+    assert_eq!(
+        err.error_code(),
+        Some(ErrorCode::ProtocolError),
+        "エラーコードは PROTOCOL_ERROR のはず"
+    );
+    assert!(
+        err.reason().contains("without pending SETTINGS"),
+        "エラー理由は「ACK に対応する未送信 SETTINGS がない」ことを示すはず: {err:?}"
+    );
+}
+
 /// SETTINGS_WT_ENABLED の送信経路が draft 16 の識別子 (0x2b67) を使う
 ///
 /// draft-ietf-webtrans-http2-16 Section 11.2: SETTINGS_WT_ENABLED の識別子は 0x2b67。

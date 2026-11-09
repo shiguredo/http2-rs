@@ -201,6 +201,18 @@ impl ServerConnection {
         self.conn.remote_settings()
     }
 
+    /// ACK 済み自広告 SETTINGS への参照を取得する
+    ///
+    /// ピアから SETTINGS ACK を受信した分の自広告 SETTINGS 値の集約。
+    /// 1 つも ACK を受けた SETTINGS がない場合は未広告 (全項目が `Settings` の既定値)、
+    /// 1 つでも ACK を受けた場合は `local_settings()` と同じ値を返す。
+    /// draft-ietf-webtrans-http2-16 Section 4.3.1: WebTransport セッションの
+    /// 初期値決定に利用する。
+    #[must_use]
+    pub fn acked_settings(&self) -> &shiguredo_http2::Settings {
+        self.conn.acked_settings()
+    }
+
     /// 内部の `rustls::ServerConnection` を参照する閉包を実行する
     ///
     /// `Server::accept()` で TLS ハンドシェイクが完了している前提。

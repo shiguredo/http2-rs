@@ -262,6 +262,16 @@ where
         self.inner.remote_settings()
     }
 
+    /// ACK 済み自広告 SETTINGS への参照を取得する
+    ///
+    /// 公開面は `ServerConnection::acked_settings` から利用する
+    /// (draft-ietf-webtrans-http2-16 Section 4.3.1: WebTransport セッションの
+    /// 初期値決定に利用する)。
+    #[must_use]
+    pub(crate) fn acked_settings(&self) -> &Settings {
+        self.inner.acked_settings()
+    }
+
     /// 内部のストリームへの参照を取得
     pub fn get_ref(&self) -> &S {
         &self.stream

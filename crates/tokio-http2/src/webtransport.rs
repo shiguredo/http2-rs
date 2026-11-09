@@ -150,9 +150,10 @@ impl WtServerRequest {
     /// レスポンスに `wt-protocol` (RFC 9651 sf-string) を付与する
     /// (draft-ietf-webtrans-http2-16 Section 3.3)。
     ///
-    /// `config` の WT 初期値は、この接続が広告した SETTINGS の値で上書きされる。
-    /// SETTINGS で広告していない項目は Initial Value の 0 になる
-    /// (draft-ietf-webtrans-http2-16 Section 11.2)。
+    /// `config` の WT 初期値は、ACK 済みの自広告 SETTINGS の値で上書きされる
+    /// (draft-ietf-webtrans-http2-16 Section 4.3.1 / Section 11.2)。
+    /// ACK を受けた SETTINGS に含まれない項目 (未 ACK の項目を含む) は
+    /// Initial Value の 0 になる。accept 実装の根拠は関数内コメントに記載する。
     pub async fn accept(
         mut self,
         mut config: WtConfig,
@@ -227,7 +228,16 @@ impl WtServerRequest {
         // draft-ietf-webtrans-http2-16 Section 4.3.1 / Section 11.2:
         // セッション確立時は ACK 済みの自広告 SETTINGS 初期値を適用する。
         // 未広告の WT 初期値は Initial Value の 0 として扱う。
-        config.apply_advertised_settings(conn.local_settings());
+        // 同一接続の同方向フレームは送信順に処理されるため、クライアントが
+        // CONNECT を送るより前に応答した SETTINGS ACK フレームは必ず
+        // CONNECT フレームより先に届く。したがって accept 時点までに処理した
+        // SETTINGS ACK (CONNECT フレームの処理より先に処理した ACK) に対応する
+        // 自広告値は、Section 4.3.1 の「CONNECT 送信直前に ACK 済みの SETTINGS」
+        // と一致する。accept 時点で ACK が 1 つも処理されていない場合、
+        // ACK 済み SETTINGS は未広告 (全項目が `Settings` の既定値) のため
+        // WT 初期値は Initial Value 0 になる (Section 4.3.1 / Section 11.2 で
+        // 正しい挙動)。
+        config.apply_advertised_settings(conn.acked_settings());
 
         // draft-ietf-webtrans-http2-16 Section 4.3.1:
         // ピア (クライアント) の SETTINGS からピア用 WtConfig を構築する。
