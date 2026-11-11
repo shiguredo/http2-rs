@@ -14,10 +14,11 @@
 - コメントはしっかり入れること
 - テストはコメントを重視すること
 - モックやスタブは絶対に利用しないこと
+- grep ではなく ripgrep (rg) を使うこと
 
-## コードベースについて
+## リポジトリ固有の設定について
 
-- コードベースの規約は `CODEBASE.md` を参照すること
+- リポジトリ固有の規約・設定がある場合は `CODEBASE.md` を参照すること
 
 ## 機密情報について
 
@@ -31,13 +32,21 @@
 
 - issues を作成・管理するときは `shiguredo-issues` スキルを参照すること
 
-## Erlang/OTP
+## GitHub Actions について
+
+- GitHub Actions を作成・変更・レビューするときは `shiguredo-github-actions` スキルを参照すること
+
+## テストについて
+
+- テストを書く・レビューするときは `shiguredo-test` スキルを参照すること
+
+## 言語について
 
 - Erlang/OTP のコードを書くときは `shiguredo-erlang` スキルを参照すること
-
-## Rust
-
 - Rust のコードを書くときは `shiguredo-rust` スキルを参照すること
+- Python のコードを書くときは `shiguredo-python` スキルを参照すること
+- TypeScript のコードを書くときは `shiguredo-typescript` スキルを参照すること
+- Swift のコードを書くときは `shiguredo-swift` スキルを参照すること
 
 ## 変更履歴について
 
