@@ -3,7 +3,7 @@
 - Created: 2026-08-10
 - Completed: {YYYY-MM-DD}
 - Branch: feature/remove-closed-stream-check
-- Polished: 2026-08-28
+- Polished: 2026-11-16
 
 ## 目的
 
