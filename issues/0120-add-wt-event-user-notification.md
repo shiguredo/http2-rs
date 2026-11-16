@@ -3,7 +3,7 @@
 - Created: 2026-08-16
 - Completed: {YYYY-MM-DD}
 - Branch: feature/add-wt-event-user-notification
-- Polished: 2026-08-28
+- Polished: 2026-11-16
 
 ## 目的
 
@@ -25,7 +25,7 @@
 - `WtServerSession` は `bidi_rx` / `uni_rx` / `datagram_rx` / `driver` を private フィールドに持つ一方、`WtServerSession::into_parts()` は `WtSessionParts` (`session_id` / `selected_protocol` / `bidi_rx` / `uni_rx` / `datagram_rx` / `handle` / `driver` のすべてが `pub`) を返す。リポジトリ内唯一の実ユーザーコードである `examples/wt_server/src/main.rs` の `run_echo` は `into_parts()` の結果を `..` 付きの分割代入で束縛し (`bidi_rx` / `uni_rx` / `datagram_rx` / `handle` / `driver` を束縛して残りを破棄している)、`recv()` が `None` を返すことでセッション終端を判定し、終端後に `let _ = driver.await;` で driver の結果を捨てている
 - `DriverState::handle_event` は `while let Some(wt_ev) = self.wt_session.poll_event()` のループで `dispatch_wt_event()` を呼び、その**後に** `WtSessionState::Closed` の判定で END_STREAM 返信と `Err(Error::ConnectionClosed)` を行う。つまり通知を `dispatch_wt_event()` で送れば、driver 終了より前にキューへ積める
 - `crates/tokio-http2/tests/test_webtransport.rs` の `test_wt_close` / `test_wt_drain` はサーバーからクライアントへの送信方向のみを検証し、ピア由来カプセルの受信方向は `test_wt_close_received_sends_end_stream` (sans-io の `WtSession::client()` をピアに見立てて `WT_CLOSE_SESSION` を流す) が END_STREAM 返信のみを検証している。イベントがユーザーに届くことは検証されていない
-- ドレイン時の挙動は仕様どおり実装済み。`src/webtransport.rs` の `WtSession::open_bidi_stream()` / `open_uni_stream()` / `send_stream_data()` / `send_datagram()` は `WtSessionState::Draining` を許可し、Section 6.13 を根拠コメントに持つ。ピア開始ストリームの受信もセッション状態を参照しない
+- ドレイン時の挙動は仕様どおり実装済み。`src/webtransport.rs` の `WtSession::open_bidi_stream()` / `open_uni_stream()` / `send_stream_data()` / `send_datagram()` は `WtSessionState::Draining` を許可し、Section 6.13 を根拠コメントに持つ。ピア開始ストリームの受信は Draining 状態を参照しない (Closed は `WtSession::handle_capsule` 冒頭のガードで吸収される)
 
 ## 設計方針
 
@@ -35,25 +35,28 @@
 - 通知専用 enum を `crates/tokio-http2/src/webtransport.rs` に新規定義する
 
   ```
+  #[derive(Debug, Clone, PartialEq, Eq)]
   pub enum WtSessionEvent {
       Draining,
       Closed { error_code: u32, reason: String },
   }
   ```
 
-- `shiguredo_http2::webtransport::WtEvent` を再 export しない。`WtEvent` のストリーム系・DATAGRAM 系 variant は `bidi_rx` / `uni_rx` / `datagram_rx` / `stream_channels` ですでに別の形へ変換されており、同一 enum を流すと 1 variant だけチャネルが重複する不整合になる。shiguredo-rust の「re-export は基本的にやらないこと」にも従う
+  既存の `WtEvent` と同じ derive を付け、テストで `assert_eq!` できるようにする
+
+- `shiguredo_http2::webtransport::WtEvent` を再 export しない。`WtEvent` のストリーム系・DATAGRAM 系 variant は `bidi_rx` / `uni_rx` / `datagram_rx` / `stream_channels` ですでに別の形へ変換されており、同一 enum を流すと既存チャネルで配送済みの variant と重複するか、新チャネルでは一部の variant しか流れない不整合になる。shiguredo-rust の「re-export は基本的にやらないこと」にも従う
 - driver に問い合わせる pull 型メソッド (`closed_reason() -> Option<...>` 等) にしない。ピア close 受信後に driver は `Err(Error::ConnectionClosed)` で終了するため、終了後は応答できず、`cmd_tx` 往復でも同じ理由で失われる。`Arc<Mutex<..>>` での共有状態は shiguredo-rust が最終手段としているため採用しない
 - 受け口は未分解・分解済みの両方に提供する
   - `WtServerSession` に `pub async fn next_session_event(&mut self) -> Option<WtSessionEvent>` を追加する (内部の `rx.recv()`。チャネルが閉じたら `None`)
   - `WtSessionParts` に `pub session_event_rx: mpsc::UnboundedReceiver<WtSessionEvent>` を追加し、`into_parts()` で移譲する
-  - `examples/wt_server/src/main.rs` の `run_echo` は `WtSessionParts` を `..` 付きで分割代入しているため、フィールドを追加してもコンパイルは通り、`session_event_rx` は無警告で破棄される (clippy でも検出されない)。したがって `run_echo` 側で明示的に束縛し直す作業が必須である
+  - `examples/wt_server/src/main.rs` の `run_echo` は `WtSessionParts` を `..` 付きで分割代入しているため、フィールドを追加してもコンパイルは通り、`session_event_rx` は無警告で破棄される (clippy でも検出されない)。したがって `run_echo` 側で明示的に束縛し直す作業が必須である。ただし `issues/0191-bug-fix-wt-session-parts-lifecycle.md` が `WtSessionParts` に Drop を実装した場合は、値による分割代入自体がコンパイルできなくなるため、その場合は `parts.session_event_rx` を直接使う形に変更する
 - 通知の送信は `DriverState::dispatch_wt_event` の `WtEvent::SessionDraining | WtEvent::SessionClosed { .. }` アームでのみ行う。`DriverState::handle_event` 側では送らない (`handle_event` は `dispatch_wt_event()` を呼んだ後に END_STREAM 返信と `Err(Error::ConnectionClosed)` を行うため、通知は driver 終了より先にキューへ積まれる)
 - 新規公開 enum とメソッドには `///` doc コメントを付ける (shiguredo-rust の公開 API doc 必須)。`next_session_event()` と `session_event_rx` の doc には「ピア由来の `WT_CLOSE_SESSION` / `WT_DRAIN_SESSION` のみを通知し、ローカル発信の `close()` / `drain()` では発生しない」こと、および「ローカル発信で `Draining` になったセッションへピアから `WT_DRAIN_SESSION` が届いても、Sans I/O 層が `state == Active` のときしか `SessionDraining` を発行しないため通知も来ない」ことを書く
 
 ### 通知する範囲
 
 - 通知するのはピア由来の `WtEvent::SessionDraining` / `WtEvent::SessionClosed` の受信のみとする
-- ローカル発信の `WtServerSession::drain()` / `WtServerSession::close()` は通知しない。Sans I/O 層が発行しないイベントであり、通知すると意図的な操作がピアからの signal として返る
+- ローカル発信の `WtServerSession::drain()` / `WtServerSession::close()` および `WtSessionHandle::drain()` / `WtSessionHandle::close()` は通知しない。Sans I/O 層が発行しないイベントであり、通知すると意図的な操作がピアからの signal として返る
 - END_STREAM のみの正常終了は `WtSessionEvent::Closed { error_code: 0, reason: String::new() }` として合成しない。draft-16 Section 6.12 は END_STREAM のみの終了を `error_code` 0 / empty reason の `WT_CLOSE_SESSION` と意味論的に等価と定めるが、現状 `DriverState::handle_event` は `Err(Error::ConnectionClosed)` を返すだけで `WtEvent::SessionClosed` を発行しない。チャネル閉塞と driver の `JoinHandle` の戻り値で検知可能なため、合成による通知は行わない
 - HTTP/2 GOAWAY 由来の drain 信号 (Section 6.13 が `WT_DRAIN_SESSION` と並列で挙げる) は対象外。`DriverState` は GOAWAY を `WtEvent` に変換していないため、対応するには別途受信経路の追加が必要であり本 issue の目的外である
 
@@ -64,33 +67,32 @@
 
 ## スコープ外
 
-- `WtEvent::StopSending` の送信側アプリへの伝達。Sans I/O 層の WT_RESET_STREAM 自動応答は `issues/closed/0059-bug-fix-wt-stop-sending-auto-reset.md` で決着済みで、アプリ側は `WtBidiStream::send()` が `Error::WebTransport` (`stream_state_error` / `invalid_stream_id`) を返すことで観測できる。専用シグナルの追加は別の設計判断であり本 issue では扱わない
-- `WtServerSession::close()` が driver への送信結果を無視している問題は `issues/closed/0121-bug-wt-close-error-propagation.md` で対応済み (`cmd_tx.send()` と `rx.await` の結果を伝播する現在形)。残る同経路の問題 (送信ウィンドウ枯渇時に `Ok` を返す) は `issues/0138-bug-wt-close-silent-not-send.md` が扱うため、本 issue では扱わない
+- `WtEvent::StopSending` の送信側アプリへの伝達。Sans I/O 層の WT_RESET_STREAM 自動応答は `issues/closed/0059-bug-fix-wt-stop-sending-auto-reset.md` で決着済みで、アプリ側は `WtBidiStream::send()` が `Error::WebTransport` (`stream_state_error` / `invalid_stream_id`) を返すことで観測できる。専用シグナルの追加は `issues/0200-bug-fix-wt-notification.md` が扱うため、本 issue では扱わない
+- `WtServerSession::close()` が driver への送信結果を無視している問題は `issues/closed/0121-bug-wt-close-error-propagation.md` で対応済み (`cmd_tx.send()` と `rx.await` の結果を伝播する現在形)。同経路の残件 (送信ウィンドウ枯渇時に `Ok` を返す) も `issues/closed/0138-bug-wt-close-silent-not-send.md` で対応済み (`DriverState::handle_cmd` の Close 処理が `has_pending_send_data` を検査して `Error::ConnectionClosed` を返す現在形)。いずれも本 issue では扱わない
 
 ## 他 issue との関係
 
-本 issue と同じ `crates/tokio-http2/src/webtransport.rs` (特に `DriverState`) を触る open issue が複数ある。着手順に関係なく、リベースで同一アームの競合が出る前提で進めること。
+本 issue と同じ `crates/tokio-http2/src/webtransport.rs` (特に `DriverState`) を触る open issue が複数ある。着手順に関係なく、リベースで同一アームや構造体フィールドの競合が出る前提で進めること。
 
-- `issues/0129-bug-wt-stop-sending-inflight-abort.md` — `DriverState::dispatch_wt_event` の `WtEvent::StreamData` 経路と `grow_stream_recv_window` のエラー扱いを変更する。同一メソッドの別アームだが、修正が `dispatch_wt_event` 全体に及ぶため後着手側が追従する
-- `issues/0130-bug-wt-grow-stream-window-initial-value.md` — `DriverState::maybe_grow_stream_window` の初期値を扱う。`dispatch_wt_event` 内の呼び出しと近接する
-- `issues/0138-bug-wt-close-silent-not-send.md` — `DriverState::handle_cmd` の Close 経路と `flush_wt_output()` を変更する。`DriverState` の構造体フィールド追加 (受信箱 sender) と同一 impl ブロックで衝突しうる
-- `issues/0132-bug-wt-closed-recv-capsule.md` — Sans I/O 側 (`src/webtransport.rs`) の Closed 状態での受信 capsule 処理を変える。本 issue の「現状」が書く `WtSession::handle_capsule` の状態ゲート条件が古くなる可能性があるため、0132 完了後は本 issue の現状記述を再確認する
-- `issues/0117-change-privatize-wt-config-fields.md` — `DriverState::maybe_grow_session_window` / `maybe_grow_max_streams` の `WtConfig` フィールドアクセスを getter 経由へ書き換える。同じファイルのためリベースを見込む
-- 0121 は closed 済み。`WtServerSession::close()` の ack 経路は現在形になっており、本 issue はそれを前提に `WtServerSession` へのメソッド追加を行う
+- `issues/0200-bug-fix-wt-notification.md` — 本 issue の `WtSessionEvent` を前提に、`StopSending` の通知と driver の正常終了・異常終了の区別を追加する。`WtSessionEvent` の variant を増やす場合は破壊的変更になるため、0200 側で破壊的変更として扱う必要がある (CHANGES への記録は 0199 の運用判断に従う)。本 issue の enum 名・variant 名を変える場合は 0200 の設計も追従する
+- `issues/0191-bug-fix-wt-session-parts-lifecycle.md` — `DriverState` の自己 `cmd_tx` 削除と `WtSessionParts` の Drop 追加 (または明示的な shutdown API の追加) を行う。本 issue の通知 sender フィールド追加と `WtSessionParts::session_event_rx` 追加が同じ構造体・impl に触れる。`WtSessionParts` に Drop が付くと `examples/wt_server/src/main.rs` と `crates/tokio-http2/tests/test_webtransport.rs` の `..` による値分割代入がコンパイルできなくなるため、0191 の完了後に束縛方法を再確認する
+- `issues/0117-change-privatize-wt-config-fields.md` — `DriverState::maybe_grow_session_window` / `maybe_grow_max_streams` / `maybe_grow_stream_window` の `WtConfig` フィールドアクセスを getter 経由へ書き換える。同じファイルのためリベースを見込む
+- `issues/0175-bug-fix-wt-next-event-cancellation.md` / `issues/0177-bug-fix-wt-unbounded-receive-queue.md` / `issues/0180-bug-fix-wt-initial-credit-ack-race.md` / `issues/0183-bug-fix-wt-send-backpressure.md` / `issues/0184-bug-fix-wt-command-cancellation.md` / `issues/0186-bug-fix-wt-connection-window.md` / `issues/0190-change-wt-multi-session.md` — `DriverState` のループ・チャネル・フロー制御・コマンド処理を変更する。`dispatch_wt_event` の該当アームや構造体フィールド追加と競合し得る
+- `issues/closed/0129-bug-wt-stop-sending-inflight-abort.md` / `issues/closed/0130-bug-wt-grow-stream-window-initial-value.md` / `issues/closed/0132-bug-wt-closed-recv-capsule.md` / `issues/closed/0138-bug-wt-close-silent-not-send.md` / `issues/closed/0121-bug-wt-close-error-propagation.md` は closed 済み。本 issue の「現状」はこれらの完了後のコードを前提に確認済み (特に 0132 の `handle_capsule` 冒頭の Closed ガードと、0138 の `has_pending_send_data` 検査)。0121 の ack 経路 (現在形) を前提に `WtServerSession` へのメソッド追加を行う
 
 ## 完了条件
 
 - `WtSessionEvent` (`Draining` / `Closed { error_code, reason }`) が `crates/tokio-http2` の公開型として定義され、`crates/tokio-http2/src/lib.rs` の `pub use webtransport::{...}` から到達できる
-- `WtServerSession::next_session_event()` と `WtSessionParts::session_event_rx` の両方から通知を消費できる
+- `WtServerSession::next_session_event()` と `WtSessionParts::session_event_rx` の両方から通知を消費できる。`CODEBASE.md` の「公開 API は必ず使用箇所とテストを用意すること」に従い、少なくとも 1 つのテストは `next_session_event()` を、別のテストは `session_event_rx` を使う
 - `DriverState::dispatch_wt_event` の `WtEvent::SessionDraining | WtEvent::SessionClosed { .. }` アームの「将来追加」コメントが消え、通知の送信が実装されている
 - ローカル発信では通知が発生しないことを検証するテストが `crates/tokio-http2/tests/test_webtransport.rs` にある。`WtServerSession::close()` は `self` を消費して driver を await するため、検証は `into_parts()` 経由で行う: `WtSessionHandle::drain()` の後は `WtSessionParts::session_event_rx.try_recv()` が `Empty` を返すこと、`WtSessionHandle::close()` の後は driver が終了して `session_event_rx.recv()` が `None` を返すこと (`Some(WtSessionEvent::Closed { .. })` にならないこと) で決定的に検証する
-- ピア由来の `WT_CLOSE_SESSION` について、`crates/tokio-http2/tests/test_webtransport.rs` の `test_wt_close_received_sends_end_stream` と同じ組み立て (sans-io の `WtSession::client()` をピアに見立てる) で `WtSessionEvent::Closed` が受信でき、`error_code` と `reason` の値が送信側と一致することを検証するテストが追加されている。待機は必ず `tokio::time::timeout` で上限を設けて `recv()` する (既存テストにある固定長の `tokio::time::sleep` は踏襲しない。通知漏れ時にテストがハングするのを防ぎ、合否を決定的にするため)
-- ピア由来の `WT_DRAIN_SESSION` について、`WtSessionEvent::Draining` が受信できることを検証するテストが追加されている (同上の待ち方)。加えて通知後も `WtServerSession::open_bidi()` (または `WtSessionParts::handle` 経由の `WtSessionHandle::open_bidi()`) による双方向ストリームの開設と送信が継続できること (Section 6.13 の挙動) を同じテストで検証する
-- `examples/wt_server/src/main.rs` が `WtSessionEvent` を実際に消費している (drain 受信と close 受信に対する挙動を持つ。`CODEBASE.md`「公開 API は必ず使用箇所とテストを用意すること」)
+- ピア由来の `WT_CLOSE_SESSION` について、`crates/tokio-http2/tests/test_webtransport.rs` の `test_wt_close_received_sends_end_stream` と同じ組み立て (sans-io の `WtSession::client()` をピアに見立てる) で `WtSessionEvent::Closed` が受信でき、`error_code` と `reason` の値が送信側と一致することを検証するテストが追加されている。このテストは `WtServerSession::next_session_event()` を使う。待機は必ず `tokio::time::timeout` で上限を設けて `recv()` する (既存テストにある固定長の `tokio::time::sleep` は踏襲しない。通知漏れ時にテストがハングするのを防ぎ、合否を決定的にするため)
+- ピア由来の `WT_DRAIN_SESSION` について、`WtSessionEvent::Draining` が受信できることを検証するテストが追加されている (同上の待ち方)。このテストは `into_parts()` で取り出した `WtSessionParts::session_event_rx` を使う。加えて通知後も `WtServerSession::open_bidi()` (または `WtSessionParts::handle` 経由の `WtSessionHandle::open_bidi()`) による双方向ストリームの開設と送信が継続できること (Section 6.13 の挙動) を同じテストで検証する
+- `examples/wt_server/src/main.rs` が `WtSessionEvent` を実際に消費している。`run_echo` の `tokio::select!` に `session_event_rx` を追加し、`Draining` 受信時は `WtSessionHandle::close(0, "drained")` で graceful に終了し、`Closed { error_code, reason }` 受信時は `error_code` / `reason` をログしてループを抜ける (`session_event_rx.recv()` が `None` を返した場合もループを抜ける。`CODEBASE.md`「公開 API は必ず使用箇所とテストを用意すること」)
 - ドレイン通知による新規ストリーム遮断・自動 close が導入されていない (`src/webtransport.rs` の Draining 許可挙動と `DriverState::handle_event` の END_STREAM 順序が不変)
 - 新規公開 API すべてに `///` doc コメントが付いている
 - `skills/shiguredo-http2/SKILL.md` の「tokio-http2 WebTransport サーバー」節と `WtEvent` 関連の節に、`WtSessionEvent` と受け口が追記されている
-- `CHANGES.md` の `## develop` に 2 エントリが追加されている (`[CHANGE]` から `[ADD]` の順): `WtSessionParts::session_event_rx` の `pub` フィールド追加は網羅的な分割代入を利用側で壊すため `[CHANGE]`、`WtSessionEvent` と `WtServerSession::next_session_event()` の追加は `[ADD]`。いずれも次の行に担当者行を置く (`issues/0117-change-privatize-wt-config-fields.md` と同時期に `## develop` へ追記する issue があるため、編集コンフリクトに注意)
+- `CHANGES.md` は現行の `CODEBASE.md` の「この指示がなくなるまでは変更履歴を `CHANGES.md` に残さないこと」に従い変更しない (`issues/0199-doc-update-changes.md` で運用を整理中)。将来 `## develop` へ追記する場合の内容は、`WtSessionParts::session_event_rx` の `pub` フィールド追加が網羅的な分割代入を利用側で壊すため `[CHANGE]`、`WtSessionEvent` と `WtServerSession::next_session_event()` の追加が `[ADD]` で、いずれも次の行に担当者行を置く
 - `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通る
 
 ## 参照
