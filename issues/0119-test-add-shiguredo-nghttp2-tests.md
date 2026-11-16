@@ -3,11 +3,11 @@
 - Created: 2026-08-16
 - Completed: {YYYY-MM-DD}
 - Branch: feature/add-shiguredo-nghttp2-tests
-- Polished: 2026-08-28
+- Polished: 2026-11-16
 
 ## 目的
 
-`shiguredo_nghttp2` クレートで、本クレートのテストから一度も呼ばれていない公開関数・メソッドにテストを追加し、対象範囲について CODEBASE.md「公開 API は必ずテストで動作を保証すること（テストされていない公開 API を公開しない）」を満たす。対象は `Session` / `validation.rs` / `SessionOptions` / `types.rs` の公開関数・メソッドに限定する (`error.rs` の生成されない `Error` variant と、`Http2Event` の variant は下の「対象外」参照)。ここで「一度も呼ばれていない」は、テストコードから直接の呼び出し箇所が無いことを指す (`FrameType::from_u8` のように本クレートのコード内部から呼ばれ、結果がイベントとして観測されるものも含む)。
+`shiguredo_nghttp2` クレートで、本クレートのテストから一度も呼ばれていない公開関数・メソッドにテストを追加し、対象範囲について CODEBASE.md「公開 API は必ずテストで動作を保証すること（テストされていない公開 API を公開しない）」を満たす。対象は `Session` / `validation.rs` / `SessionOptions` / `types.rs` の公開関数・メソッドに限定する (`Http2Event` の variant は下の「対象外」参照)。ここで「一度も呼ばれていない」は、テストコードから直接の呼び出し箇所が無いことを指す (`FrameType::from_u8` のように本クレートのコード内部から呼ばれ、結果がイベントとして観測されるものも含む)。
 
 テスト追加 (削除ではない) を選ぶ理由は次のとおり。`shiguredo_nghttp2` は nghttp2 C API をラップする低レベル境界であり、`SessionOptions` のビルダー群は `crates/shiguredo_nghttp2/README.md` と `skills/shiguredo-http2/SKILL.md` の双方に、`validation.rs` の検証関数 7 個は `crates/shiguredo_nghttp2/README.md` の「ユーティリティ」に、それぞれ公開 API として記載されている (検証関数は SKILL.md に記載が無いため、記載を根拠に含めない)。コアクレート (`shiguredo_http2`) の公開 API 整理で削除を検討した 0113 / 0072 とは性質が異なる。
 
@@ -44,7 +44,7 @@
 - **往復には `submit_settings()` の明示呼び出しが必要**。2026-08-28 の実測で、次の 2 通りの挙動を確定した
   - 失敗する構成: `Session::client()` に `submit_request()` させただけ (両側で `submit_settings()` を呼ばない) で 1 回目の `send()` 出力 (実測で 42 バイト。送信するヘッダー集合で変わる) をサーバーに `recv()` させると、全バイトは消費されるがサーバー側に `Http2Event::HeadersReceived` は発生せず `get_last_proc_stream_id()` も 0 のままになる。往復を 6 回繰り返しても同じだった。サーバー側は「SETTINGS を期待する位置に別種のフレームが来た」扱いで GOAWAY を送出し、`last_error_message()` が `Some("Remote peer returned unexpected data while we expected SETTINGS frame.  Perhaps, peer does not support HTTP/2 properly.")` を返す
   - 成立する構成: 両側で `submit_settings()` を明示的に呼び、`want_write()` が偽になるまで `send()` 出力を対面に `recv()` させるのを繰り返す。この構成でサーバー側に `SettingsReceived` と `HeadersReceived` が観測され `get_last_proc_stream_id()` が 1 になること、続けて `submit_response()` が `Ok` を返しクライアント側に `HeadersReceived` と `StreamClosed` が届くことを実測で確認した
-- `send()` は 1 回の呼び出しで出力が途中で尽きる (`want_write()` が真のまま返り値が空になることはないが、対面が `recv()` を返した消費長が入力長に届くとは限らない)。ヘルパーは「`while want_write() { send() → recv() }` を双方交互に繰り返す」形で確定させる
+- `send()` は 1 回の呼び出しでその時点の送信出力をすべて返す (`want_write()` が真のまま返り値が空になることはないが、対面が `recv()` を返した消費長が入力長に届くとは限らない)。ヘルパーは「`while want_write() { send() → recv() }` を双方交互に繰り返す」形で確定させる
 - 往復ヘルパーの形を決める際の参照先は `crates/tokio-nghttp2/src/connection.rs` の `Connection::drive()` / `Connection::flush()` / `Connection::recv()` である。ただし `drive()` は `flush()` (1 回の `send()`) と `recv()` を 1 度ずつ行う構成で、`want_write()` ベースのループは持たない (`Session::send()` が `nghttp2_session_mem_send` を返り値 0 まで回して出力を全部 drain するため、tokio 側は 1 回で足りる)。同期テストでも同じ前提に立つことができるが、ヘルパーは `Session` の公開 API (`submit_settings` / `send` / `recv` / `want_read` / `want_write` / `poll_event`) のみで実装し、`nghttp2-sys` の生関数をテストから呼ぶことはしない
 - ヘルパーは `test_session` ターゲット内でのみ使うため `tests/helpers/` は作らない (0111 と同じ判断)
 - 往復の成立そのものを最初のテストとして固定する (`submit_request()` した HEADERS がサーバー側の `Http2Event::HeadersReceived` として観測されること)。他のサーバー側 API のテストはすべてこのヘルパーに依存する
@@ -64,7 +64,7 @@
   - `last_error_message()`: 生成経路は `session.rs` の `on_error_callback2` に限定される。2026-08-28 の実測で、SETTINGS を期待する位置に別種のフレームを置いて `recv()` させると (サーバー側はプリフェイス消費後の `FIRST_SETTINGS` 状態、クライアント側も自側が SETTINGS を送った直後は同じく SETTINGS 期待状態で、nghttp2 側は同じメッセージを通る)、`last_error_message()` が `Some("Remote peer returned unexpected data while we expected SETTINGS frame.  Perhaps, peer does not support HTTP/2 properly.")` を返すことを確認した。したがって `Some(...)` を返す正常系を「エラーケース」の `recv()` 不正データ経路と兼ねて検証する。`send()` 側で `error_callback2` を発火させる経路は困難なため使わない (`issues/closed/0069-bug-fix-nghttp2-send-set-user-data.md` が同じ理由で `error_callback2` 経路の検証を絞った前例)
 - サーバー側で受信ストリームが必須の API (`submit_response` / `submit_headers` / `submit_trailer` / `submit_data_for_trailer`): クライアント側 `submit_request()` の出力をサーバー側 `recv()` に流してストリームを開設してから呼び、`FrameSent` イベントと送信バイト列で検証する。**ピアからストリームを開設させていなくても `submit_response()` は `Ok` を返す (2026-08-28 実測: `Session::server()` の未開設ストリーム ID に対する `submit_response(1, ..., true)` が成功)** ため、返り値の `Ok` だけで正常系と判定しない。必ず `poll_event()` の `Http2Event::FrameSent { frame_type: FrameType::Headers, .. }` の発生まで確認する
   - `submit_headers()` は既存ストリームへの追加 HEADERS 経路のみを検証する。新規ストリーム開始経路 (`stream_id = -1`) は検証対象に含めない。ラッパーは nghttp2 が割り当てたストリーム ID を返さない (`Result<()>`) が、`Http2Event::FrameSent` の `stream_id` では観測できる。それでも対象外とするのは、新規ストリーム開始そのものの検証が `submit_request()` の責務であり重複させる意味が無いためである
-- フロー制御 API (`consume` / `consume_connection` / `consume_stream` / `get_remote_window_size` / `get_local_window_size` / `get_stream_remote_window_size` / `get_stream_local_window_size` / `set_local_window_size`): `SessionOptions::no_auto_window_update(true)` を有効にしたセッション (`client_with_options()` / `server_with_options()`) で構築し、DATA 受信後に消費を通知するとウィンドウ値が回復することを実測で検証する
+- フロー制御 API (`consume` / `consume_connection` / `consume_stream` / `get_remote_window_size` / `get_local_window_size` / `get_stream_remote_window_size` / `get_stream_local_window_size` / `set_local_window_size`): `SessionOptions::no_auto_window_update(true)` を有効にしたセッション (`client_with_options()` / `server_with_options()`) で構築する。nghttp2 は受信ウィンドウの残量が既定のしきい値 (初期ウィンドウ 65535 の半分) を下回るまで WINDOW_UPDATE を発行しないため、`consume` 系のテストではしきい値を超える DATA (例: 40000 バイト) を送るか、`set_local_window_size()` でローカルウィンドウを小さくしてから、消費を通知するとウィンドウ値が回復することを実測で検証する
 - `SessionOptions` のビルダー 10 個: `no_auto_window_update` は上記のフロー制御検証で兼任し、残り 9 個 (`peer_max_concurrent_streams` / `no_auto_ping_ack` / `max_send_header_block_length` / `max_deflate_dynamic_table_size` / `max_outbound_ack` / `max_settings` / `stream_reset_rate_limit` / `max_continuations` / `glitch_rate_limit`) は `SessionOptions::new()` から連結して設定を保持したまま `client_with_options()` / `server_with_options()` でセッションを構築できることを検証する
 - `validation.rs` の 7 関数: 有効入力と無効入力を検証する。空入力の扱いは関数ごとに異なり、以下は現行ビルドの nghttp2 1.69.0 に対する 2026-08-28 の実測値である
 
@@ -88,14 +88,12 @@
 - `submit_data()` / `submit_data_for_trailer()`: `submit_request(headers, None, true)` 後に resumed プロバイダがない状態で `submit_data()` が `NGHTTP2_ERR_INVALID_ARGUMENT` を返す条件を検証する (`session.rs` の doc「注意」記載)。**失敗後に `send_buffers` へ追加済みのデータが残留する挙動そのものは検証対象にしない** (`send_buffers` は private フィールドで公開 API から観測できず、同じ `stream_id` での再試行による二重化も公開 API からは判別できない)。検証するのは (1) 初回呼び出しが `Err` になること、(2) 続けて `send()` を呼んでも当該データが送信出力に含まれないことまでとする
 - `get_stream_remote_window_size()` / `get_stream_local_window_size()`: 未知のストリーム ID で `Error::StreamNotFound` が返ることを検証する (`session.rs` に明示的な分岐があり、`crates/nghttp2-sys/src/bindings.rs` の該当関数 doc は失敗時に -1 を返すと規定する)
 - `submit_response()`: クライアントセッションで呼んだ場合 (`NGHTTP2_ERR_PROTO`) と `stream_id = 0` で呼んだ場合 (`NGHTTP2_ERR_INVALID_ARGUMENT`) のエラーを検証する。根拠は `crates/nghttp2-sys/src/bindings.rs` の **`nghttp2_submit_response2`** doc (実装が呼ぶのは v2 側。v1 側は非推奨で、規定内容は同一)。実測では `stream_id = 0` が `-501`、クライアントセッションでの呼び出しが `-505` を返す
-- `recv()`: 不正なバイト列 (HTTP/2 プリフェイスでない先頭、フレーム長不整合) を渡した場合に `Err` になることを検証する
+- `recv()`: サーバーセッションに HTTP/2 クライアントプリフェイスでない先頭バイト列 (例: `b"not http2"`) を渡すと `Err(Nghttp2(_, NGHTTP2_ERR_BAD_CLIENT_MAGIC))` になることを検証する。また、クライアントプリフェイス消費後に SETTINGS を期待する位置で HEADERS を受信すると `recv()` は `Ok(消費長)` を返し、`last_error_message()` が `Some("Remote peer returned unexpected data while we expected SETTINGS frame.  Perhaps, peer does not support HTTP/2 properly.")` になる (この経路は `last_error_message()` の正常系テストと兼ねる)。最大フレームサイズを超えるフレーム長は `nghttp2_session_mem_recv` が負値を返さず、`recv()` は `Ok(消費長)` を返して GOAWAY を送出するため、`Err` ではなく `send()` 後の `Http2Event::FrameSent { frame_type: FrameType::Goaway, .. }` で検証する
 - アサーションの粒度: `Error::StreamNotFound` のように本クレートが生成する variant が決まっているものは variant を assert する。nghttp2 起因の `Error::Nghttp2` は原則 `is_err()` のみを assert し、**code を assert することが明記されたケース** (`submit_shutdown_notice` の `NGHTTP2_ERR_INVALID_STATE`、`submit_response` の `NGHTTP2_ERR_PROTO` / `NGHTTP2_ERR_INVALID_ARGUMENT`、`submit_rst_stream` と `submit_goaway` の `NGHTTP2_ERR_INVALID_ARGUMENT`) に限って code を assert する。`submit_data()` / `submit_data_for_trailer()` は doc にコード名が書かれているが、上記の列挙に入れない限り `is_err()` と「送信出力に当該データが含まれないこと」の検証に留める。code の比較は `crates/nghttp2-sys` の定数 (`nghttp2_error_NGHTTP2_ERR_*`、実測で `NGHTTP2_ERR_INVALID_ARGUMENT` = -501 / `NGHTTP2_ERR_PROTO` = -505 / `NGHTTP2_ERR_INVALID_STATE` = -519 / `NGHTTP2_ERR_STREAM_CLOSING` = -511) を使い、数値リテラルは書かない。`nghttp2-sys` は `crates/shiguredo_nghttp2/Cargo.toml` の `[dependencies]` に既にあるため統合テストから参照でき、マニフェスト変更は不要。`Error::Nghttp2` の message 文字列は検証しない (`issues/closed/0069-bug-fix-nghttp2-send-set-user-data.md` が `Err` の variant 種別を assert しない前例)
 
 ### 対象外
 
-- `crates/shiguredo_nghttp2/src/error.rs` の `Error::InvalidArgument` / `Error::BufferTooSmall` / `Error::SessionClosed` / `Error::Callback` / `Error::Internal` は本クレート内で生成箇所が無く (grep で確認済み)、テスト追加では CODEBASE.md を満たせない。生成されない variant の削除判断は本 issue の対象外とし、必要なら削除専用の issue で扱う (`issues/closed/0113-change-remove-unused-wt-getters.md` / `issues/closed/0072-change-remove-unused-code.md` が削除側の前例)。そのため CODEBASE.md の充足は本 issue 完了時点では保留となる
 - `crates/shiguredo_nghttp2/src/types.rs` の `Http2Event` の variant のうち `InvalidFrameReceived` / `InvalidHeaderReceived` は、本クレートのテストでもワークスペース全体のテストでも一度も観測されていない (生成経路は `session.rs` の `on_invalid_frame_recv_callback` / 不正ヘッダー経路)。発火条件の特定には nghttp2 の内部挙動の調査が必要で、関数・メソッドのテスト追加とは目的が異なるため本 issue では扱わない。`FrameNotSent` は「`submit_rst_stream()`」の項どおりの経路で観測できるため、その検証に含める
-- `crates/shiguredo_nghttp2/src/session.rs` の doc に対する追記は本 issue の対象外 (`src/` を変更しない)。`submit_shutdown_notice()` がサーバー専用である制約と `submit_goaway()` の `last_stream_id` の偶奇制約は、現状 `crates/nghttp2-sys/src/bindings.rs` の doc にしか書かれていない。doc へ追記する作業は別の issue で扱う。なお `session.rs` の `submit_shutdown_notice` doc は last_stream_id を `(1u31 << 31) - 1` と表記しており、`1u31 << 31` は型溢出のため正しい表記ではない (`crates/shiguredo_nghttp2/README.md` は `(1 << 31) - 1` で正しい)。この誤記も同じ doc 追記 issue で扱う
 - 公開フィールドは本 issue の対象に含めない (`Header::name` / `Header::value` / `Header::sensitive` のような `pub` フィールドの直接検証は行わない。目的で「公開関数・メソッド」と限定しているのはこの意味である)
 - `crates/shiguredo_nghttp2/src/error.rs` の `Error::from_nghttp2()` は `session.rs` 内の複数経路から呼ばれており、上記の異常系テストを通じて結果的に検証される。専用のテストは追加しない
 - `submit_headers()` の新規ストリーム開始経路 (`stream_id = -1`) は対象外。その検証が `submit_request()` の責務であり重複させる意味が無いためである (`Http2Event::FrameSent` の `stream_id` で観測は可能)
@@ -103,7 +101,7 @@
 
 ## 完了条件
 
-- 「現状」で未検証と列挙した `Session` の公開メソッド・`validation.rs` の 7 関数・`SessionOptions` のビルダー・`types.rs` の `Header::new` / `FrameType::from_u8` の每一项について、正常系 1 件以上のテストが追加されている (`last_error_message()` は「設定・状態の参照 API」に書いた `Some(...)` の検証をもって正常系 1 件とする)
+- 「現状」で未検証と列挙した `Session` の公開メソッド・`validation.rs` の 7 関数・`SessionOptions` のビルダー・`types.rs` の `Header::new` / `FrameType::from_u8` の各項目について、正常系 1 件以上のテストが追加されている (`last_error_message()` は「設定・状態の参照 API」に書いた `Some(...)` の検証をもって正常系 1 件とする)
 - 「エラーケース」に列挙した 4 条件 (submit_data 系 / ストリーム不存在 / submit_response / recv 不正データ) のテストが追加されている
 - 「API 群ごとの検証方法」に書いた役割制約 (`submit_shutdown_notice` はサーバーのみ、`submit_goaway` の `last_stream_id` の偶奇) と `submit_rst_stream()` の HEADERS 対面到着必須・HEADERS 送信前の `FrameNotSent` 観測・`stream_id = 0` 異常系に従うテストが追加されている
 - `tests/test_validation.rs` を新設し、`validation.rs` の公開 7 関数について「validation.rs の 7 関数」の表に入力と期待値をそのまま反映したテストが追加されている
@@ -114,7 +112,7 @@
 - AGENTS.md に従いモック・スタブを導入していない (ピアは実セッション 2 本の同期往復で模擬する)
 - 新規テストから `nghttp2_sys` の関数を呼び出していない (`nghttp2_error_NGHTTP2_ERR_*` 定数の参照は可)
 - `crates/shiguredo_nghttp2/tests/helpers/` が新規作成されていない (ピア往復ヘルパーは `tests/test_session.rs` 内に置く)
-- `CHANGES.md` の `## develop` の `### misc` にテスト追加の `[ADD]` エントリと担当者行が追加されている
+- `CHANGES.md` は CODEBASE.md の現行指示「この指示がなくなるまでは変更履歴を `CHANGES.md` に残さないこと」に従い、変更しない (`issues/0114-test-add-tests-for-unused-public-api.md` / `issues/0115-fmt-replace-allow-with-expect.md` と同じ判断。CHANGES.md の運用と CODEBASE.md の整合は `issues/0199-doc-update-changes.md` で扱う)
 - `cargo fmt --all -- --check` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` がすべて通る
 - `cargo test -p shiguredo_nghttp2` が全件通過する (短時間確認用。合否判定は `--workspace` で行う)
 
