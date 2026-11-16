@@ -3,7 +3,7 @@
 - Created: 2026-08-16
 - Completed: {YYYY-MM-DD}
 - Branch: feature/refactor-replace-allow-with-expect
-- Polished: 2026-08-16
+- Polished: 2026-11-16
 
 ## 目的
 
@@ -31,8 +31,8 @@ shiguredo-rust 規約「`#[allow(...)]` を使わないこと（例外なし）�
   - `non_snake_case` / `dead_code` / `clippy::all` は expect 化せずに削除する（bindings.rs のアイテムレベル allow に抑制された clippy lint も含め、allow を外した実測で警告が出ない lint の抑制は不要のため）
 - 上記の発火状況は現行の bindings.rs に対する実測結果である。`--features overwrite` による bindgen 再生成で bindings.rs が変わった場合は再検証すること
 - `crates/shiguredo_nghttp2/src/types.rs` の `FrameType::from_u8` は deprecated な `Priority` / `PushPromise` バリアントを参照するため、`#[expect(deprecated, reason = "...")]` に置き換え可能
-- テストファイルの `#![allow(clippy::...)]` は、該当 lint が実際に発生する場合のみ `#![expect(clippy::..., reason = "...")]` に置き換える。発生しない lint は削除する。調査手順: allow を外して `cargo clippy --workspace --all-targets` を実行し、警告が出た lint は expect 化、出なかった lint は削除する
-  - 実測では interop.rs の 5 lint はすべて発火（expect 化）、`tokio-http2/tests/client_server.rs` の `collapsible_match` は発火（expect 化）、`test_webtransport.rs` は `collapsible_if` のみ発火（`collapsible_match` は削除）、`tokio-nghttp2/tests/client_server.rs` の `collapsible_match` は発火しない（削除）。ただし、テストコードの修正により発火状況は変わりうるため、最終的には clippy 実行結果に従うこと
+- テストファイルの `#![allow(clippy::...)]` とモジュール単位の `#[allow(clippy::...)]` は、該当 lint が実際に発生する場合のみ `#![expect(clippy::..., reason = "...")]` / `#[expect(clippy::..., reason = "...")]` に置き換える。発生しない lint は削除する。調査手順: allow を外して `cargo clippy --workspace --all-targets` を実行し、警告が出た lint は expect 化、出なかった lint は削除する
+  - 実測では interop.rs の 5 lint はすべて発火（expect 化）、interop.rs の `stress_tests` モジュールの `single_match` / `collapsible_if` も発火（expect 化）、`tokio-http2/tests/client_server.rs` の `collapsible_match` は発火（expect 化）、`test_webtransport.rs` は `collapsible_if` のみ発火（`collapsible_match` は削除）、`tokio-nghttp2/tests/client_server.rs` の `collapsible_match` は発火（expect 化）。ただし、テストコードの修正により発火状況は変わりうるため、最終的には clippy 実行結果に従うこと
 - `bindings.rs` は対象外
 
 ## 完了条件
@@ -40,7 +40,7 @@ shiguredo-rust 規約「`#[allow(...)]` を使わないこと（例外なし）�
 - 上記 7 箇所・計 11 個の `#[allow(...)]` が `#[expect(...)]` への置き換え、または発火しない lint の削除によって解消されている
 - bindings.rs を除く `crates/` 配下に `#[allow]` が残っていない（`grep -rn "#!\[allow\|#\[allow" crates/ --include="*.rs" | grep -v "src/bindings.rs"` で 0 件）
 - `crates/nghttp2-sys` を `cargo clippy -p nghttp2-sys -- -D warnings` で検査したときに警告がないこと
-- `CHANGES.md` の `## develop` の `### misc` サブセクションに `[UPDATE]` エントリと担当者行が追加されている
+- `CHANGES.md` は CODEBASE.md の現行指示「この指示がなくなるまでは変更履歴を `CHANGES.md` に残さないこと」に従い、変更しない (0199 で CHANGES.md の運用と CODEBASE.md の整合を図る)
 - `cargo fmt --all -- --check` が通過すること
 - `cargo test --workspace` が全件通過すること
 - `cargo clippy --workspace --all-targets -- -D warnings` が通過すること
