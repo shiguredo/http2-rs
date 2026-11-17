@@ -3,7 +3,7 @@
 - Created: 2026-11-16
 - Completed: {YYYY-MM-DD}
 - Branch: feature/remove-unused-nghttp2-error-variants
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-11-17
 
 ## 目的
 
