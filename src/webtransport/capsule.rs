@@ -10,6 +10,8 @@
 //! }
 //! ```
 
+use std::collections::VecDeque;
+
 use crate::webtransport::error::{WtError, WtErrorKind, WtResult};
 use crate::webtransport::varint;
 
@@ -317,7 +319,7 @@ const DEFAULT_MAX_BUFFER_SIZE: usize = 16 * 1024 * 1024;
 /// Capsule デコーダー (ストリーミング対応)
 #[derive(Debug)]
 pub struct CapsuleDecoder {
-    buffer: Vec<u8>,
+    buffer: VecDeque<u8>,
     /// バッファサイズの上限 (DoS 防止)
     max_buffer_size: usize,
 }
@@ -332,24 +334,21 @@ impl CapsuleDecoder {
     /// 新しいデコーダーを生成する
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            buffer: Vec::new(),
-            max_buffer_size: DEFAULT_MAX_BUFFER_SIZE,
-        }
+        Self::with_max_buffer_size(DEFAULT_MAX_BUFFER_SIZE)
     }
 
     /// バッファ上限を指定してデコーダーを生成する
     #[must_use]
     pub fn with_max_buffer_size(max_buffer_size: usize) -> Self {
         Self {
-            buffer: Vec::new(),
+            buffer: VecDeque::new(),
             max_buffer_size,
         }
     }
 
     /// データを追加する
     ///
-    /// バッファ上限を超えた場合はエラーを返す。
+    /// 未処理のデータと合わせてバッファ上限を超える場合はエラーを返す。
     pub fn feed(&mut self, data: &[u8]) -> WtResult<()> {
         // saturating_sub により加算オーバーフローを構造的に防止する
         if data.len() > self.max_buffer_size.saturating_sub(self.buffer.len()) {
@@ -358,7 +357,7 @@ impl CapsuleDecoder {
                 "capsule decoder buffer limit exceeded",
             ));
         }
-        self.buffer.extend_from_slice(data);
+        self.buffer.extend(data);
         Ok(())
     }
 
@@ -368,45 +367,66 @@ impl CapsuleDecoder {
     ///
     /// - `Ok(Some(capsule))`: Capsule をデコードした
     /// - `Ok(None)`: データが不足している
-    /// - `Err(_)`: デコードエラー
+    /// - `Err(_)`: デコードエラー。エラーになった Capsule はバッファに残る
     pub fn decode(&mut self) -> WtResult<Option<Capsule>> {
         if self.buffer.is_empty() {
             return Ok(None);
         }
 
-        let mut offset = 0;
+        // RFC 9297 Section 3.2 の Type と Length は最大 8 バイトの varint が 2 個。
+        // リングをまたぐ場合も、ヘッダーのデコードに必要なバイトだけをコピーする。
+        const MAX_HEADER_LEN: usize = 2 * varint::encoded_len(varint::MAX_VALUE);
+        let (front, back) = self.buffer.as_slices();
+        let mut wrapped_header = [0; MAX_HEADER_LEN];
+        let header = if back.is_empty() || front.len() >= MAX_HEADER_LEN {
+            front
+        } else {
+            let back_len = back.len().min(MAX_HEADER_LEN - front.len());
+            let header_len = front.len() + back_len;
+            wrapped_header[..front.len()].copy_from_slice(front);
+            wrapped_header[front.len()..header_len].copy_from_slice(&back[..back_len]);
+            &wrapped_header[..header_len]
+        };
 
-        // Type をデコード
-        let (capsule_type, type_len) = match varint::decode(&self.buffer[offset..]) {
+        let (capsule_type, type_len) = match varint::decode(header) {
             Ok(v) => v,
             Err(e) if e.kind() == WtErrorKind::Incomplete => return Ok(None),
             Err(e) => return Err(e),
         };
-        offset += type_len;
 
-        // Length をデコード
-        if offset >= self.buffer.len() {
-            return Ok(None);
-        }
-        let (payload_len, len_len) = match varint::decode(&self.buffer[offset..]) {
+        let (payload_len, len_len) = match varint::decode(&header[type_len..]) {
             Ok(v) => v,
             Err(e) if e.kind() == WtErrorKind::Incomplete => return Ok(None),
             Err(e) => return Err(e),
         };
-        offset += len_len;
 
-        // Payload が揃っているか確認
-        let payload_len = payload_len as usize;
-        if self.buffer.len() < offset + payload_len {
+        let header_len = type_len + len_len;
+        let Ok(payload_len) = usize::try_from(payload_len) else {
+            return Ok(None);
+        };
+        if payload_len > self.buffer.len() - header_len {
             return Ok(None);
         }
 
-        let payload = &self.buffer[offset..offset + payload_len];
+        let total_len = header_len + payload_len;
+        let mut wrapped_payload;
+        let payload = if total_len <= front.len() {
+            &front[header_len..total_len]
+        } else if header_len >= front.len() {
+            let start = header_len - front.len();
+            &back[start..start + payload_len]
+        } else {
+            // Payload がリングをまたぐときは、この Capsule の Payload だけを連結する。
+            wrapped_payload = front[header_len..].to_vec();
+            wrapped_payload.extend_from_slice(&back[..total_len - front.len()]);
+            &wrapped_payload
+        };
         let capsule = self.decode_payload(capsule_type, payload)?;
 
-        // 消費したデータを削除
-        let total_len = offset + payload_len;
-        self.buffer.drain(..total_len);
+        // デコードが成功した分だけ取り除き、後続 Capsule のバイトは移動させない。
+        for _ in 0..total_len {
+            let _ = self.buffer.pop_front();
+        }
 
         Ok(Some(capsule))
     }
@@ -643,7 +663,7 @@ impl CapsuleDecoder {
         }
     }
 
-    /// バッファの残りバイト数を取得する
+    /// バッファに残っている未処理のバイト数を取得する
     #[must_use]
     pub fn remaining(&self) -> usize {
         self.buffer.len()
