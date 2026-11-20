@@ -1,7 +1,7 @@
 # テストのサーバー側クローズによる失敗を解消する
 
 - Created: 2026-09-13
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-11-20
 - Branch: feature/fix-abrupt-close-flakiness
 - Polished: 2026-11-17
 
@@ -41,3 +41,11 @@
 - `test_basic_request_response` を通常負荷で 100 回、8 並列の CPU 負荷下で 60 回実行して失敗 0 であること
 - テストの検証内容・アサーション・テスト名が変わっていないこと
 - `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` が通ること
+
+## 解決方法
+
+- `tokio-http2` と `tokio-nghttp2` の正常系の接続テストで、サーバーの検証と応答送信の後に、保留中の出力を処理しながらピアの切断を待つ。クライアントは既存の検証後に接続を閉じてからサーバータスクを待つ。
+- 受信専用のフロー制御テスト 2 件では、接続とストリームの受信ウィンドウを消費量に応じて補充する。サーバーは元の受信アサーションを通過してから正常 GOAWAY を送信し、クライアントの切断を待つ。
+- 修正前の `develop` で相互運用の SETTINGS ACK アサーション失敗を単独で再確認した。`tokio-nghttp2` の `test_settings_exchange` も単独 10 回で 10 回失敗した。修正後は両方とも単独で通過した。
+- `test_basic_request_response` は修正前後とも通常負荷で 100 回、CPU 負荷 8 プロセスで 60 回実行し、失敗は各 0 件だった。
+- ワークスペーステストをテストスレッド数 8・16・24・32、異なる実行順、CPU 負荷 0・8 プロセスで連続 20 回実行し、失敗 0 件だった。通常のワークスペーステスト、フォーマット、Clippy も通過した。
