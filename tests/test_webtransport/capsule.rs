@@ -431,6 +431,104 @@ fn test_decode_multiple_capsules() {
     assert!(decoder.decode().expect("decode should succeed").is_none());
 }
 
+/// 各バイトで feed を分割し、ヘッダーとペイロードをまたいだ入力を確認する。
+#[test]
+fn test_feed_split_capsule_after_consuming_prefix() {
+    let prefix = Capsule::Datagram { data: vec![1; 128] };
+    let capsule_type = 1_u64 << 32;
+    let data: Vec<u8> = (0..64).collect();
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&prefix);
+    let encoded_prefix = encoder.take();
+
+    // RFC 9297 Section 1.1 は非最小の varint を許容するため、短いデータで
+    // Type と Length の両方が 8 バイトになるヘッダーを検証できる。
+    const VARINT_8_BYTE_TAG: u64 = 0b11 << 62;
+    let mut encoded = (VARINT_8_BYTE_TAG | capsule_type).to_be_bytes().to_vec();
+    encoded.extend_from_slice(&(VARINT_8_BYTE_TAG | data.len() as u64).to_be_bytes());
+    encoded.extend_from_slice(&data);
+    let capsule = Capsule::Unknown { capsule_type, data };
+
+    for split in 1..encoded.len() {
+        // 上限まで入力して先頭だけを消費し、次の Capsule の一部を残す。
+        // 後半の feed では、消費済みのバイトを上限に数えないことを確認する。
+        let mut input = encoded_prefix.clone();
+        input.extend_from_slice(&encoded[..split]);
+        let mut decoder = CapsuleDecoder::with_max_buffer_size(input.len());
+        decoder.feed(&input).expect("初回の feed に失敗した");
+        assert_eq!(
+            decoder.decode().expect("先頭のデコードに失敗した"),
+            Some(prefix.clone())
+        );
+        assert_eq!(decoder.remaining(), split);
+        assert_eq!(
+            decoder.decode().expect("分割した入力のデコードに失敗した"),
+            None
+        );
+        assert_eq!(decoder.remaining(), split);
+
+        decoder
+            .feed(&encoded[split..])
+            .expect("消費済みの領域に後半を追加できなかった");
+        assert_eq!(decoder.remaining(), encoded.len());
+        assert_eq!(
+            decoder.decode().expect("全体のデコードに失敗した"),
+            Some(capsule.clone())
+        );
+        assert_eq!(decoder.remaining(), 0);
+
+        decoder
+            .feed(&encoded[..split])
+            .expect("次の feed に失敗した");
+        decoder.clear();
+        assert_eq!(decoder.remaining(), 0);
+        assert_eq!(
+            decoder.decode().expect("クリア後のデコードに失敗した"),
+            None
+        );
+    }
+}
+
+/// 入力サイズを増やしても、既にデコードした Capsule の削除が二乗時間にならないことを確認する。
+#[test]
+fn test_decode_batch_scales_with_input_size() {
+    use std::time::Instant;
+
+    let mut encoder = CapsuleEncoder::new();
+    encoder.encode(&Capsule::Datagram { data: Vec::new() });
+    let capsule = encoder.buffer();
+    assert_eq!(capsule.len(), 2);
+
+    let [small, medium, large] = [16, 64, 256].map(|kib| {
+        let capsule_count = kib * 1024 / capsule.len();
+        let input = capsule.repeat(capsule_count);
+        // feed を計測から外し、スケジューリングによる一時的な遅延の影響を抑える。
+        (0..5)
+            .map(|_| {
+                let mut decoder = CapsuleDecoder::new();
+                decoder.feed(&input).expect("計測用の feed に失敗した");
+                let start = Instant::now();
+                let mut decoded = 0;
+                while decoder
+                    .decode()
+                    .expect("バッチのデコードに失敗した")
+                    .is_some()
+                {
+                    decoded += 1;
+                }
+                let elapsed = start.elapsed();
+                assert_eq!(decoded, capsule_count);
+                elapsed
+            })
+            .min()
+            .expect("デコード時間を計測できなかった")
+    });
+    assert!(
+        large <= small * 64,
+        "デコード時間が入力サイズに対して大きすぎる (16 KiB: {small:?}, 64 KiB: {medium:?}, 256 KiB: {large:?})"
+    );
+}
+
 #[test]
 fn test_decode_unknown_capsule_type() {
     let mut encoder = CapsuleEncoder::new();
@@ -553,6 +651,7 @@ fn test_wt_reset_stream_error_code_exceeds_u32_is_session_error() {
     let err = decoder
         .decode()
         .expect_err("0xffffffff 超過の error_code はエラーになるはず");
+    assert_eq!(decoder.remaining(), wire.len());
     assert_eq!(
         err.kind(),
         WtErrorKind::SessionStateError,
