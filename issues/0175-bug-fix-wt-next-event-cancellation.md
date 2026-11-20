@@ -1,7 +1,7 @@
 # tokio WebTransport ドライバの `next_event` キャンセルで HTTP/2 フレームが破損する
 
 - Created: 2026-11-16
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-11-20
 - Branch: feature/fix-wt-next-event-cancellation
 - Polished: 2026-11-17
 
@@ -29,3 +29,11 @@
 - `Connection::flush()` / `Connection::next_event()` と、それらを委譲する `ServerConnection` / `Client` の doc にキャンセル時の契約が明記されていること。
 - バックプレッシャー下で `WtBidiStream::send` と `WtSessionHandle::close` を並行実行する回帰テストが追加され、クライアント側で HTTP/2 フレームのデコードエラーが起きず、送信した WT データと END_STREAM が到着することが確認されていること。
 - `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` が通ること。
+
+## 解決方法
+
+- `tokio_http2::Connection::flush` は取り出した出力と書き込み位置を接続に保持する。書き込みが完了するたびに位置を進め、下位ストリームのフラッシュが終わってから次の出力を取り出す。`Interrupted` は再試行し、0 バイトの書き込みは `WriteZero` を返す。
+- `Connection`、`Client`、`ServerConnection` の `flush` と `next_event` のドキュメントに、キャンセル後の送信再開を明記した。
+- 実 TCP/TLS のテストでは、クライアントが WINDOW_UPDATE を送り、読み取りを止めている間にコマンドを処理した後、WT データと FIN、WT_CLOSE_SESSION、HTTP/2 の END_STREAM の到着を確認した。
+- バッファ付きの Tokio I/O では、フレーム全体を書き込んだ後の下位フラッシュをキャンセルし、出力を追加せずフレーム全体の送信を再開できることを確認した。
+- 両回帰テストが修正前に失敗し、修正後に通過した。フォーマット、Clippy、ワークスペーステストも通過した。
