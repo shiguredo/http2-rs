@@ -8,6 +8,10 @@ use tokio_http2::{
     Client, ErrorCode, Event, HeaderField, Limits, Server, StreamId, TlsServerConfig,
 };
 
+#[path = "helpers/drain.rs"]
+mod drain;
+use drain::drain_connection;
+
 /// テスト用自己署名証明書を生成
 fn generate_test_cert() -> TlsServerConfig {
     let CertifiedKey { cert, signing_key } =
@@ -86,6 +90,8 @@ async fn test_basic_request_response() {
                 _ => {}
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     // クライアント接続
@@ -134,6 +140,7 @@ async fn test_basic_request_response() {
         }
     }
 
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -247,6 +254,8 @@ async fn test_settings_exchange() {
 
         // GOAWAY を送信してから終了
         conn.shutdown().await.expect("failed to send goaway");
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -275,6 +284,7 @@ async fn test_settings_exchange() {
     assert!(received_ack);
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -325,6 +335,8 @@ async fn test_multiple_streams() {
                 Err(_) => break,
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -383,6 +395,7 @@ async fn test_multiple_streams() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -416,6 +429,8 @@ async fn test_goaway() {
 
         // GOAWAY 送信
         conn.shutdown().await.expect("failed to send goaway");
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -437,6 +452,7 @@ async fn test_goaway() {
         }
     }
 
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -479,6 +495,8 @@ async fn test_rst_stream() {
                 Err(_) => break,
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -521,6 +539,7 @@ async fn test_rst_stream() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -575,6 +594,8 @@ async fn test_many_concurrent_streams() {
                 Err(_) => break,
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -622,6 +643,7 @@ async fn test_many_concurrent_streams() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -670,6 +692,8 @@ async fn test_rapid_rst_stream() {
                 Err(_) => break,
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -714,6 +738,7 @@ async fn test_rapid_rst_stream() {
     assert_eq!(resets, rst_count);
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -834,6 +859,8 @@ async fn test_many_small_data_frames() {
                 _ => {}
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -878,6 +905,7 @@ async fn test_many_small_data_frames() {
     assert_eq!(received_data.len(), chunk_count);
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -930,6 +958,8 @@ async fn test_many_headers() {
                 _ => {}
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -976,6 +1006,7 @@ async fn test_many_headers() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -1025,6 +1056,8 @@ async fn test_goaway_then_drain() {
             .await
             .expect("failed to send response");
         conn.flush().await.expect("failed to flush");
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -1074,6 +1107,7 @@ async fn test_goaway_then_drain() {
     assert!(got_goaway);
     assert!(got_response);
 
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -1125,6 +1159,8 @@ async fn test_bidirectional_streaming() {
                 _ => {}
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -1182,6 +1218,7 @@ async fn test_bidirectional_streaming() {
     assert_eq!(received_data, b"chunk1-chunk2-chunk3");
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -1237,6 +1274,8 @@ async fn test_interleaved_streams() {
                 Err(_) => break,
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -1282,6 +1321,7 @@ async fn test_interleaved_streams() {
     assert_eq!(complete, 5);
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -1331,6 +1371,8 @@ async fn test_response_with_data() {
                 _ => {}
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -1375,6 +1417,7 @@ async fn test_response_with_data() {
     assert_eq!(received_data, b"content");
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -1446,6 +1489,8 @@ async fn test_post_request_with_body() {
                 _ => {}
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -1503,6 +1548,7 @@ async fn test_post_request_with_body() {
     assert_eq!(response_body, body);
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -1560,6 +1606,8 @@ async fn test_large_body() {
                 .await
                 .expect("failed to send data chunk");
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -1607,6 +1655,7 @@ async fn test_large_body() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -1668,6 +1717,8 @@ async fn test_status_codes() {
                 _ => {}
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -1732,6 +1783,7 @@ async fn test_status_codes() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -1782,6 +1834,8 @@ async fn test_stream_closed_event() {
 
         // GOAWAY を送信して正常終了
         conn.shutdown().await.expect("failed to shutdown");
+
+        drain_connection(&mut conn).await;
 
         got_stream_closed
     });
@@ -1840,6 +1894,7 @@ async fn test_stream_closed_event() {
         "should receive StreamClosed event on client"
     );
 
+    drop(client);
     let server_got_closed = server_handle.await.expect("server task failed");
     assert!(
         server_got_closed,
@@ -1879,6 +1934,8 @@ async fn test_goaway_with_error_and_debug_data() {
         // shutdown() を使う (NoError のみ)
         // → ここでは shutdown() で NoError を確認
         conn.shutdown().await.expect("failed to send goaway");
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -1901,6 +1958,7 @@ async fn test_goaway_with_error_and_debug_data() {
         }
     }
 
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -2057,6 +2115,8 @@ async fn test_limits_max_concurrent_streams() {
                 Err(_) => break,
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -2099,6 +2159,7 @@ async fn test_limits_max_concurrent_streams() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -2145,6 +2206,8 @@ async fn test_window_update_received() {
                 Err(_) => break,
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -2195,6 +2258,7 @@ async fn test_window_update_received() {
     let _ = got_window_update;
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -2250,6 +2314,8 @@ async fn test_large_request_body() {
                 _ => {}
             }
         }
+
+        drain_connection(&mut conn).await;
 
         received_body
     });
@@ -2311,10 +2377,10 @@ async fn test_large_request_body() {
         }
     }
 
+    client.shutdown().await.ok();
+    drop(client);
     let server_body = server_handle.await.expect("server task failed");
     assert_eq!(server_body.len(), body_size);
-
-    client.shutdown().await.ok();
 }
 
 /// poll_event の動作確認
@@ -2356,6 +2422,8 @@ async fn test_poll_event() {
                 Err(_) => break,
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -2402,6 +2470,7 @@ async fn test_poll_event() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -2454,6 +2523,8 @@ async fn test_content_length_response() {
                 Err(_) => break,
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -2506,6 +2577,7 @@ async fn test_content_length_response() {
     assert_eq!(received_data, body);
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -2565,6 +2637,8 @@ async fn test_multiple_streams_with_bodies() {
                 Err(_) => break,
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -2627,6 +2701,7 @@ async fn test_multiple_streams_with_bodies() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -2680,6 +2755,8 @@ async fn test_rst_stream_then_continue() {
                 Err(_) => break,
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -2753,6 +2830,7 @@ async fn test_rst_stream_then_continue() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -2805,6 +2883,8 @@ async fn test_head_request() {
                 Err(_) => break,
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -2853,6 +2933,7 @@ async fn test_head_request() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -2902,6 +2983,8 @@ async fn test_delete_request() {
                 Err(_) => break,
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -2947,6 +3030,7 @@ async fn test_delete_request() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 
@@ -3006,6 +3090,8 @@ async fn test_put_request_with_body() {
             }
         }
 
+        drain_connection(&mut conn).await;
+
         request_body
     });
 
@@ -3051,10 +3137,10 @@ async fn test_put_request_with_body() {
         }
     }
 
+    client.shutdown().await.ok();
+    drop(client);
     let server_body = server_handle.await.expect("server task failed");
     assert_eq!(server_body, body);
-
-    client.shutdown().await.ok();
 }
 
 /// drive() の動作確認
@@ -3099,6 +3185,8 @@ async fn test_drive() {
                 Err(_) => break,
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -3144,6 +3232,7 @@ async fn test_drive() {
                 if end_stream {
                     assert_eq!(received_data, b"driven");
                     client.shutdown().await.ok();
+                    drop(client);
                     server_handle.await.expect("server task failed");
                     return;
                 }
@@ -3303,6 +3392,8 @@ async fn test_custom_initial_window_size() {
                 Err(_) => break,
             }
         }
+
+        drain_connection(&mut conn).await;
     });
 
     let mut client = Client::connect_insecure(server_addr, "localhost", limits)
@@ -3348,6 +3439,7 @@ async fn test_custom_initial_window_size() {
     assert_eq!(received_data.len(), body_size);
 
     client.shutdown().await.ok();
+    drop(client);
     server_handle.await.expect("server task failed");
 }
 

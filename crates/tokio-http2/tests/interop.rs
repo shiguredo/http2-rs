@@ -12,12 +12,19 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use shiguredo_nghttp2::SettingsId;
 use tokio_http2::{
     ErrorCode as Http2ErrorCode, Event as Http2Event, HeaderField, Limits, Server as Http2Server,
-    TlsServerConfig as Http2TlsServerConfig,
+    ServerConnection as Http2ServerConnection, StreamId, TlsServerConfig as Http2TlsServerConfig,
 };
 use tokio_nghttp2::{
     Client as NgClient, ErrorCode as NgErrorCode, Header as NgHeader, Http2Event as NgHttp2Event,
     Server as NgServer, TlsServerConfig as NgTlsServerConfig,
 };
+
+#[path = "helpers/drain.rs"]
+mod drain;
+#[path = "helpers/drain_nghttp2.rs"]
+mod drain_nghttp2;
+use drain::drain_connection as drain_http2_connection;
+use drain_nghttp2::drain_connection as drain_nghttp2_connection;
 
 /// tokio-http2 用テスト証明書を生成
 fn generate_http2_test_cert() -> Http2TlsServerConfig {
@@ -115,9 +122,6 @@ async fn test_nghttp2_client_http2_server_basic() {
                             .await
                             .expect("failed to send response");
 
-                        // クライアントがレスポンスを受信するまで待機
-                        let _ =
-                            tokio::time::timeout(Duration::from_secs(2), conn.next_event()).await;
                         break;
                     }
                 }
@@ -127,6 +131,8 @@ async fn test_nghttp2_client_http2_server_basic() {
                 _ => {}
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -174,6 +180,7 @@ async fn test_nghttp2_client_http2_server_basic() {
         }
     }
 
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -220,9 +227,6 @@ async fn test_http2_client_nghttp2_server_basic() {
                             .expect("failed to send response");
                         conn.flush().await.expect("failed to flush");
 
-                        // クライアントがレスポンスを受信するまで待機
-                        let _ =
-                            tokio::time::timeout(Duration::from_secs(2), conn.next_event()).await;
                         break;
                     }
                 }
@@ -230,6 +234,8 @@ async fn test_http2_client_nghttp2_server_basic() {
                 _ => {}
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -280,6 +286,7 @@ async fn test_http2_client_nghttp2_server_basic() {
         }
     }
 
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -333,6 +340,8 @@ async fn test_nghttp2_client_http2_server_multiple_streams() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     let mut client = NgClient::connect_insecure(server_addr, "localhost")
@@ -387,6 +396,7 @@ async fn test_nghttp2_client_http2_server_multiple_streams() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -433,6 +443,8 @@ async fn test_http2_client_nghttp2_server_multiple_streams() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
@@ -486,6 +498,7 @@ async fn test_http2_client_nghttp2_server_multiple_streams() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -532,6 +545,8 @@ async fn test_nghttp2_client_http2_server_rst_stream() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     let mut client = NgClient::connect_insecure(server_addr, "localhost")
@@ -569,6 +584,7 @@ async fn test_nghttp2_client_http2_server_rst_stream() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -609,6 +625,8 @@ async fn test_http2_client_nghttp2_server_rst_stream() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
@@ -646,6 +664,7 @@ async fn test_http2_client_nghttp2_server_rst_stream() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -697,6 +716,8 @@ async fn test_nghttp2_client_http2_server_settings() {
         assert!(received_ack);
 
         conn.shutdown().await.expect("failed to send goaway");
+
+        drain_http2_connection(&mut conn).await;
     });
 
     let mut client = NgClient::connect_insecure(server_addr, "localhost")
@@ -727,6 +748,7 @@ async fn test_nghttp2_client_http2_server_settings() {
     assert!(received_ack);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -769,6 +791,8 @@ async fn test_http2_client_nghttp2_server_settings() {
 
         assert!(received_settings);
         assert!(received_ack);
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
@@ -803,6 +827,7 @@ async fn test_http2_client_nghttp2_server_settings() {
     assert!(received_ack);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -959,6 +984,8 @@ async fn test_nghttp2_client_http2_server_goaway() {
         }
 
         conn.shutdown().await.expect("failed to send goaway");
+
+        drain_http2_connection(&mut conn).await;
     });
 
     let mut client = NgClient::connect_insecure(server_addr, "localhost")
@@ -982,6 +1009,7 @@ async fn test_nghttp2_client_http2_server_goaway() {
         }
     }
 
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -1012,6 +1040,8 @@ async fn test_http2_client_nghttp2_server_goaway() {
 
         conn.shutdown(0).await.expect("failed to send goaway");
         conn.flush().await.expect("failed to flush");
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     let mut client = tokio_http2::Client::connect_insecure(server_addr, "localhost", limits)
@@ -1035,6 +1065,7 @@ async fn test_http2_client_nghttp2_server_goaway() {
         }
     }
 
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -1120,6 +1151,8 @@ async fn test_nghttp2_client_http2_server_post_with_body() {
         conn.send_response(sid, response_headers, true)
             .await
             .expect("failed to send response");
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1168,6 +1201,7 @@ async fn test_nghttp2_client_http2_server_post_with_body() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -1245,6 +1279,8 @@ async fn test_http2_client_nghttp2_server_post_with_body() {
         conn.send_data(request_stream_id, b"Echo: Hello, Server!", true)
             .await
             .expect("failed to send data");
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1320,6 +1356,7 @@ async fn test_http2_client_nghttp2_server_post_with_body() {
     assert_eq!(received_body, b"Echo: Hello, Server!");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -1379,6 +1416,8 @@ async fn test_nghttp2_client_http2_server_response_body() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1447,6 +1486,7 @@ async fn test_nghttp2_client_http2_server_response_body() {
     assert_eq!(received_body, response_body);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -1496,6 +1536,8 @@ async fn test_http2_client_nghttp2_server_response_body() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1562,6 +1604,7 @@ async fn test_http2_client_nghttp2_server_response_body() {
     assert_eq!(received_body, response_body);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -1617,6 +1660,8 @@ async fn test_nghttp2_client_http2_server_put() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1662,6 +1707,7 @@ async fn test_nghttp2_client_http2_server_put() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -1710,6 +1756,8 @@ async fn test_http2_client_nghttp2_server_delete() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1754,6 +1802,7 @@ async fn test_http2_client_nghttp2_server_delete() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -1808,6 +1857,8 @@ async fn test_nghttp2_client_http2_server_head() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1861,6 +1912,7 @@ async fn test_nghttp2_client_http2_server_head() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -1909,6 +1961,8 @@ async fn test_nghttp2_client_http2_server_404() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1954,6 +2008,7 @@ async fn test_nghttp2_client_http2_server_404() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -1995,6 +2050,8 @@ async fn test_http2_client_nghttp2_server_500() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2039,6 +2096,7 @@ async fn test_http2_client_nghttp2_server_500() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -2106,6 +2164,8 @@ async fn test_nghttp2_client_http2_server_custom_headers() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2165,6 +2225,7 @@ async fn test_nghttp2_client_http2_server_custom_headers() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -2218,6 +2279,8 @@ async fn test_http2_client_nghttp2_server_custom_headers() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2269,6 +2332,7 @@ async fn test_http2_client_nghttp2_server_custom_headers() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -2315,6 +2379,8 @@ async fn test_nghttp2_client_http2_server_rst_stream_internal_error() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2354,6 +2420,7 @@ async fn test_nghttp2_client_http2_server_rst_stream_internal_error() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -2394,6 +2461,8 @@ async fn test_http2_client_nghttp2_server_rst_stream_refused() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2433,6 +2502,7 @@ async fn test_http2_client_nghttp2_server_rst_stream_refused() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -2489,6 +2559,8 @@ async fn test_nghttp2_client_http2_server_large_response() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2541,6 +2613,7 @@ async fn test_nghttp2_client_http2_server_large_response() {
     assert_eq!(received_body, response_body);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -2604,6 +2677,8 @@ async fn test_http2_client_nghttp2_server_large_request() {
             .await
             .expect("failed to send response");
         conn.flush().await.expect("failed to flush");
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2653,6 +2728,7 @@ async fn test_http2_client_nghttp2_server_large_request() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -2705,6 +2781,8 @@ async fn test_nghttp2_client_rst_stream_to_http2_server() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2747,6 +2825,7 @@ async fn test_nghttp2_client_rst_stream_to_http2_server() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -2943,6 +3022,8 @@ async fn test_nghttp2_client_http2_server_response_headers_then_data() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -3011,6 +3092,7 @@ async fn test_nghttp2_client_http2_server_response_headers_then_data() {
     assert_eq!(received_body, response_body);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -3064,6 +3146,8 @@ async fn test_http2_client_http2_server_response_headers_then_data() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -3132,6 +3216,7 @@ async fn test_http2_client_http2_server_response_headers_then_data() {
     assert_eq!(received_body, response_body);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -3195,6 +3280,8 @@ async fn test_nghttp2_client_http2_server_multiple_data_frames() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -3242,6 +3329,7 @@ async fn test_nghttp2_client_http2_server_multiple_data_frames() {
     assert_eq!(received_body, expected_body);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -3300,6 +3388,8 @@ async fn test_http2_client_nghttp2_server_multiple_data_frames() {
             .await
             .expect("failed to send response");
         conn.flush().await.expect("failed to flush");
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -3360,6 +3450,7 @@ async fn test_http2_client_nghttp2_server_multiple_data_frames() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -3422,6 +3513,8 @@ async fn test_nghttp2_client_http2_server_post_empty_body() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -3470,6 +3563,7 @@ async fn test_nghttp2_client_http2_server_post_empty_body() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -3524,6 +3618,8 @@ async fn test_http2_client_nghttp2_server_post_empty_body() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -3571,6 +3667,7 @@ async fn test_http2_client_nghttp2_server_post_empty_body() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -3628,6 +3725,8 @@ async fn test_nghttp2_client_http2_server_404_with_body() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -3688,6 +3787,7 @@ async fn test_nghttp2_client_http2_server_404_with_body() {
     assert_eq!(received_body, error_body);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -3741,6 +3841,8 @@ async fn test_nghttp2_client_http2_server_500_with_body() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -3801,6 +3903,7 @@ async fn test_nghttp2_client_http2_server_500_with_body() {
     assert_eq!(received_body, error_body);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -3859,6 +3962,8 @@ async fn test_nghttp2_client_http2_server_options() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -3912,6 +4017,7 @@ async fn test_nghttp2_client_http2_server_options() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -3963,6 +4069,8 @@ async fn test_http2_client_nghttp2_server_options() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -4015,6 +4123,7 @@ async fn test_http2_client_nghttp2_server_options() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -4085,6 +4194,8 @@ async fn test_nghttp2_client_http2_server_many_headers() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -4149,6 +4260,7 @@ async fn test_nghttp2_client_http2_server_many_headers() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -4207,6 +4319,8 @@ async fn test_http2_client_nghttp2_server_many_headers() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -4270,6 +4384,7 @@ async fn test_http2_client_nghttp2_server_many_headers() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -4329,6 +4444,8 @@ async fn test_nghttp2_client_http2_server_goaway_after_stream() {
 
         // ストリームを受信したことを確認 (Connection ではないこと)
         assert!(received_stream_id.is_some());
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -4399,6 +4516,7 @@ async fn test_nghttp2_client_http2_server_goaway_after_stream() {
     assert!(received_goaway);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -4447,6 +4565,8 @@ async fn test_http2_client_nghttp2_server_goaway_after_stream() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -4516,6 +4636,7 @@ async fn test_http2_client_nghttp2_server_goaway_after_stream() {
     assert!(received_goaway);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -4586,6 +4707,8 @@ async fn test_http2_client_http2_server_bidirectional_data() {
         conn.send_data(sid, response_body.to_vec(), true)
             .await
             .expect("failed to send response body");
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -4654,6 +4777,7 @@ async fn test_http2_client_http2_server_bidirectional_data() {
     assert_eq!(received_body, response_body);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -4713,6 +4837,8 @@ async fn test_http2_client_nghttp2_server_bidirectional_data() {
             .await
             .expect("failed to send response");
         conn.flush().await.expect("failed to flush");
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -4764,6 +4890,7 @@ async fn test_http2_client_nghttp2_server_bidirectional_data() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -4835,6 +4962,8 @@ async fn test_nghttp2_client_http2_server_rst_one_stream_continue_other() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -4916,6 +5045,7 @@ async fn test_nghttp2_client_http2_server_rst_one_stream_continue_other() {
     assert!(got_response);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -4976,6 +5106,8 @@ async fn test_http2_client_nghttp2_server_rst_one_stream_continue_other() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -5056,6 +5188,7 @@ async fn test_http2_client_nghttp2_server_rst_one_stream_continue_other() {
     assert!(got_response);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -5105,6 +5238,8 @@ async fn test_nghttp2_client_http2_server_204_no_content() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -5152,6 +5287,7 @@ async fn test_nghttp2_client_http2_server_204_no_content() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -5193,6 +5329,8 @@ async fn test_http2_client_nghttp2_server_204_no_content() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -5239,6 +5377,7 @@ async fn test_http2_client_nghttp2_server_204_no_content() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -5299,6 +5438,8 @@ mod stress_tests {
                     _ => {}
                 }
             }
+
+            drain_http2_connection(&mut conn).await;
         });
 
         let mut client = NgClient::connect_insecure(server_addr, "localhost")
@@ -5341,6 +5482,7 @@ mod stress_tests {
         assert_eq!(responses, stream_count);
 
         client.shutdown().await.ok();
+        drop(client);
         let _ = server_handle.await;
     }
 
@@ -5389,6 +5531,8 @@ mod stress_tests {
                     _ => {}
                 }
             }
+
+            drain_nghttp2_connection(&mut conn).await;
         });
 
         let limits = Limits::default();
@@ -5432,6 +5576,7 @@ mod stress_tests {
         assert_eq!(responses, stream_count);
 
         client.shutdown().await.ok();
+        drop(client);
         let _ = server_handle.await;
     }
 
@@ -5481,6 +5626,8 @@ mod stress_tests {
                     _ => {}
                 }
             }
+
+            drain_http2_connection(&mut conn).await;
         });
 
         let mut client = NgClient::connect_insecure(server_addr, "localhost")
@@ -5519,6 +5666,7 @@ mod stress_tests {
         assert_eq!(closed, rst_count);
 
         client.shutdown().await.ok();
+        drop(client);
         let _ = server_handle.await;
     }
 
@@ -5566,6 +5714,8 @@ mod stress_tests {
                     _ => {}
                 }
             }
+
+            drain_nghttp2_connection(&mut conn).await;
         });
 
         let limits = Limits::default();
@@ -5605,6 +5755,7 @@ mod stress_tests {
         assert_eq!(resets, rst_count);
 
         client.shutdown().await.ok();
+        drop(client);
         let _ = server_handle.await;
     }
 
@@ -5660,6 +5811,8 @@ mod stress_tests {
                     _ => {}
                 }
             }
+
+            drain_http2_connection(&mut conn).await;
         });
 
         let mut client = NgClient::connect_insecure(server_addr, "localhost")
@@ -5701,6 +5854,7 @@ mod stress_tests {
         assert_eq!(received_data.len(), chunk_count);
 
         client.shutdown().await.ok();
+        drop(client);
         let _ = server_handle.await;
     }
 
@@ -5752,6 +5906,8 @@ mod stress_tests {
                     _ => {}
                 }
             }
+
+            drain_nghttp2_connection(&mut conn).await;
         });
 
         let limits = Limits::default();
@@ -5794,6 +5950,7 @@ mod stress_tests {
         assert_eq!(received_data.len(), chunk_count);
 
         client.shutdown().await.ok();
+        drop(client);
         let _ = server_handle.await;
     }
 
@@ -5846,6 +6003,8 @@ mod stress_tests {
                     _ => {}
                 }
             }
+
+            drain_http2_connection(&mut conn).await;
         });
 
         let mut client = NgClient::connect_insecure(server_addr, "localhost")
@@ -5896,6 +6055,7 @@ mod stress_tests {
         assert_eq!(received_data, b"hello-world");
 
         client.shutdown().await.ok();
+        drop(client);
         let _ = server_handle.await;
     }
 
@@ -5943,6 +6103,8 @@ mod stress_tests {
                     _ => {}
                 }
             }
+
+            drain_nghttp2_connection(&mut conn).await;
         });
 
         let limits = Limits::default();
@@ -5994,6 +6156,7 @@ mod stress_tests {
         assert_eq!(received_data, b"hello-world");
 
         client.shutdown().await.ok();
+        drop(client);
         let _ = server_handle.await;
     }
 
@@ -6184,6 +6347,8 @@ mod stress_tests {
                     _ => {}
                 }
             }
+
+            drain_http2_connection(&mut conn).await;
         });
 
         let mut client = NgClient::connect_insecure(server_addr, "localhost")
@@ -6229,6 +6394,7 @@ mod stress_tests {
         }
 
         client.shutdown().await.ok();
+        drop(client);
         let _ = server_handle.await;
     }
 
@@ -6280,6 +6446,8 @@ mod stress_tests {
                     _ => {}
                 }
             }
+
+            drain_nghttp2_connection(&mut conn).await;
         });
 
         let limits = Limits::default();
@@ -6326,6 +6494,7 @@ mod stress_tests {
         }
 
         client.shutdown().await.ok();
+        drop(client);
         let _ = server_handle.await;
     }
 }
@@ -6384,6 +6553,8 @@ async fn test_http2_client_nghttp2_server_trailers() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     let limits = Limits::default();
@@ -6444,6 +6615,7 @@ async fn test_http2_client_nghttp2_server_trailers() {
     assert!(received_trailers);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -6498,6 +6670,8 @@ async fn test_nghttp2_client_http2_server_trailers() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     let mut client = NgClient::connect_insecure(server_addr, "localhost")
@@ -6558,6 +6732,7 @@ async fn test_nghttp2_client_http2_server_trailers() {
     assert!(received_trailers);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -6617,6 +6792,8 @@ async fn test_http2_client_nghttp2_server_client_sends_trailers() {
 
         assert!(received_data);
         assert!(received_trailers);
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     let limits = Limits::default();
@@ -6662,6 +6839,7 @@ async fn test_http2_client_nghttp2_server_client_sends_trailers() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -6724,6 +6902,8 @@ async fn test_nghttp2_client_http2_server_client_sends_trailers() {
 
         assert!(received_data);
         assert!(received_trailers);
+
+        drain_http2_connection(&mut conn).await;
     });
 
     let mut client = NgClient::connect_insecure(server_addr, "localhost")
@@ -6762,6 +6942,7 @@ async fn test_nghttp2_client_http2_server_client_sends_trailers() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -6816,6 +6997,8 @@ async fn test_nghttp2_client_http2_server_1xx_informational() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     let mut client = NgClient::connect_insecure(server_addr, "localhost")
@@ -6867,6 +7050,7 @@ async fn test_nghttp2_client_http2_server_1xx_informational() {
     assert!(saw_200, "200 OK を受信すべき");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -6914,6 +7098,8 @@ async fn test_http2_client_nghttp2_server_1xx_informational() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     let limits = Limits::default();
@@ -6966,6 +7152,7 @@ async fn test_http2_client_nghttp2_server_1xx_informational() {
     assert!(saw_200, "200 OK を受信すべき");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -7022,6 +7209,8 @@ async fn test_nghttp2_client_http2_server_cookie_concatenation() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     let mut client = NgClient::connect_insecure(server_addr, "localhost")
@@ -7067,6 +7256,7 @@ async fn test_nghttp2_client_http2_server_cookie_concatenation() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -7115,6 +7305,8 @@ async fn test_http2_client_nghttp2_server_cookie_concatenation() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     let limits = Limits::default();
@@ -7159,6 +7351,7 @@ async fn test_http2_client_nghttp2_server_cookie_concatenation() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -7209,6 +7402,8 @@ async fn test_http2_client_nghttp2_server_goaway_graceful() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     let limits = Limits::default();
@@ -7254,6 +7449,7 @@ async fn test_http2_client_nghttp2_server_goaway_graceful() {
     assert!(got_response);
     assert!(got_goaway);
 
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -7310,6 +7506,8 @@ async fn test_http2_client_nghttp2_server_manual_window_update() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     let limits = Limits::default();
@@ -7355,6 +7553,7 @@ async fn test_http2_client_nghttp2_server_manual_window_update() {
     assert_eq!(received_data.len(), 16384);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -7407,6 +7606,8 @@ async fn test_http2_client_nghttp2_server_put() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -7451,6 +7652,7 @@ async fn test_http2_client_nghttp2_server_put() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -7502,6 +7704,8 @@ async fn test_nghttp2_client_http2_server_delete() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -7547,6 +7751,7 @@ async fn test_nghttp2_client_http2_server_delete() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -7598,6 +7803,8 @@ async fn test_http2_client_nghttp2_server_head() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -7650,6 +7857,7 @@ async fn test_http2_client_nghttp2_server_head() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -7695,6 +7903,8 @@ async fn test_http2_client_nghttp2_server_404() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -7739,6 +7949,7 @@ async fn test_http2_client_nghttp2_server_404() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -7783,6 +7994,8 @@ async fn test_nghttp2_client_http2_server_500() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -7828,6 +8041,7 @@ async fn test_nghttp2_client_http2_server_500() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -7878,6 +8092,8 @@ async fn test_http2_client_nghttp2_server_404_with_body() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -7937,6 +8153,7 @@ async fn test_http2_client_nghttp2_server_404_with_body() {
     assert_eq!(received_body, error_body);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -7987,6 +8204,8 @@ async fn test_http2_client_nghttp2_server_500_with_body() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -8046,6 +8265,7 @@ async fn test_http2_client_nghttp2_server_500_with_body() {
     assert_eq!(received_body, error_body);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -8090,6 +8310,8 @@ async fn test_http2_client_nghttp2_server_rst_stream_internal_error() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -8129,6 +8351,7 @@ async fn test_http2_client_nghttp2_server_rst_stream_internal_error() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -8171,6 +8394,8 @@ async fn test_nghttp2_client_http2_server_rst_stream_refused() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -8210,6 +8435,7 @@ async fn test_nghttp2_client_http2_server_rst_stream_refused() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -8263,6 +8489,8 @@ async fn test_http2_client_nghttp2_server_large_response() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -8316,6 +8544,7 @@ async fn test_http2_client_nghttp2_server_large_response() {
     assert_eq!(received_body, response_body);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -8380,6 +8609,8 @@ async fn test_nghttp2_client_http2_server_large_request() {
         conn.send_response(sid, response_headers, true)
             .await
             .expect("failed to send response");
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -8425,6 +8656,7 @@ async fn test_nghttp2_client_http2_server_large_request() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -8705,6 +8937,8 @@ async fn test_http2_client_nghttp2_server_goaway_after_response() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -8757,6 +8991,7 @@ async fn test_http2_client_nghttp2_server_goaway_after_response() {
     assert!(got_response);
     assert!(got_goaway);
 
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -8839,6 +9074,8 @@ async fn test_nghttp2_client_http2_server_mixed_methods() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -8919,6 +9156,7 @@ async fn test_nghttp2_client_http2_server_mixed_methods() {
     assert!(post_response);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -9001,6 +9239,8 @@ async fn test_http2_client_nghttp2_server_mixed_methods() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -9080,6 +9320,7 @@ async fn test_http2_client_nghttp2_server_mixed_methods() {
     assert!(post_response);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -9149,6 +9390,8 @@ async fn test_nghttp2_client_http2_server_patch() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -9194,6 +9437,7 @@ async fn test_nghttp2_client_http2_server_patch() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -9259,6 +9503,8 @@ async fn test_http2_client_nghttp2_server_patch() {
             .await
             .expect("failed to send response");
         conn.flush().await.expect("failed to flush");
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -9308,6 +9554,7 @@ async fn test_http2_client_nghttp2_server_patch() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -9359,6 +9606,8 @@ async fn test_nghttp2_client_http2_server_301() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -9410,6 +9659,7 @@ async fn test_nghttp2_client_http2_server_301() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -9454,6 +9704,8 @@ async fn test_http2_client_nghttp2_server_302() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -9504,6 +9756,7 @@ async fn test_http2_client_nghttp2_server_302() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -9548,6 +9801,8 @@ async fn test_nghttp2_client_http2_server_400() {
                 _ => break,
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -9593,6 +9848,7 @@ async fn test_nghttp2_client_http2_server_400() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -9634,6 +9890,8 @@ async fn test_http2_client_nghttp2_server_403() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -9678,6 +9936,7 @@ async fn test_http2_client_nghttp2_server_403() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -9720,6 +9979,8 @@ async fn test_nghttp2_client_http2_server_settings_values() {
         }
 
         assert!(ack_received);
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -9737,6 +9998,7 @@ async fn test_nghttp2_client_http2_server_settings_values() {
     assert!(remote_max_streams > 0);
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -9778,6 +10040,8 @@ async fn test_http2_client_nghttp2_server_settings_values() {
 
         let local_max_frame = conn.get_local_settings(SettingsId::MaxFrameSize);
         assert!(local_max_frame >= 16384);
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -9789,12 +10053,35 @@ async fn test_http2_client_nghttp2_server_settings_values() {
     wait_for_http2_settings_ack(&mut client).await;
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
 // ============================================================================
 // フロー制御: 初期ウィンドウ超過テスト (RFC 9113 Section 6.9)
 // ============================================================================
+
+/// RFC 9113 Section 6.9.1 に従い、消費済み DATA のウィンドウを補充する。
+/// 対象の DATA にはパディングがないため、データ長とフロー制御の消費量は等しい。
+async fn replenish_receive_windows(
+    conn: &mut Http2ServerConnection,
+    stream_id: StreamId,
+    data_len: usize,
+    end_stream: bool,
+) {
+    if data_len == 0 {
+        return;
+    }
+    let increment = u32::try_from(data_len).expect("DATA のサイズは u32 の範囲内");
+    conn.send_window_update(StreamId::Connection, increment)
+        .await
+        .expect("接続ウィンドウの補充に失敗した");
+    if !end_stream {
+        conn.send_window_update(stream_id, increment)
+            .await
+            .expect("ストリームウィンドウの補充に失敗した");
+    }
+}
 
 /// nghttp2 クライアント <-> http2 サーバー: 初期ウィンドウ (65535) を超えるデータ送信
 /// nghttp2 のデータプロバイダーがフロー制御を内部的に処理する
@@ -9832,9 +10119,12 @@ async fn test_nghttp2_client_http2_server_exceed_initial_window() {
                     assert!(!end_stream, "ボディありなので END_STREAM は来ない");
                 }
                 Http2Event::DataReceived {
-                    data, end_stream, ..
+                    stream_id,
+                    data,
+                    end_stream,
                 } => {
                     received_total += data.len();
+                    replenish_receive_windows(&mut conn, stream_id, data.len(), end_stream).await;
                     if end_stream {
                         break;
                     }
@@ -9847,6 +10137,11 @@ async fn test_nghttp2_client_http2_server_exceed_initial_window() {
         }
 
         assert_eq!(received_total, total_size, "全データを受信すべき");
+
+        conn.shutdown()
+            .await
+            .expect("受信完了の GOAWAY 送信に失敗した");
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -9871,16 +10166,21 @@ async fn test_nghttp2_client_http2_server_exceed_initial_window() {
         .expect("failed to send request");
     client.flush().await.expect("failed to flush");
 
-    // サーバーが全データを受信して接続を閉じるのを待つ
+    // WINDOW_UPDATE を処理しながら、サーバーから受信完了の GOAWAY を待つ。
     loop {
         match tokio::time::timeout(Duration::from_secs(10), client.next_event()).await {
-            Ok(Ok(_)) => continue,
-            _ => break,
+            Ok(Ok(NgHttp2Event::GoawayReceived {
+                error_code: NgErrorCode::NoError,
+                ..
+            })) => break,
+            Ok(Ok(_)) => {}
+            _ => panic!("受信完了の GOAWAY を受け取れなかった"),
         }
     }
 
     client.shutdown().await.ok();
-    let _ = server_handle.await;
+    drop(client);
+    server_handle.await.expect("サーバータスクが異常終了した");
 }
 
 /// http2 クライアント <-> nghttp2 サーバー: 初期ウィンドウ (65535) を超えるデータ送信
@@ -9938,6 +10238,8 @@ async fn test_http2_client_nghttp2_server_exceed_initial_window() {
         }
 
         assert_eq!(received_total, total_size, "全データを受信すべき");
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -9991,6 +10293,7 @@ async fn test_http2_client_nghttp2_server_exceed_initial_window() {
     assert!(got_response, "サーバーからのレスポンスを受信すべき");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -10039,6 +10342,7 @@ async fn test_nghttp2_client_http2_server_multi_stream_flow_control() {
                 } => {
                     let entry = received_per_stream.entry(stream_id).or_insert(0usize);
                     *entry += data.len();
+                    replenish_receive_windows(&mut conn, stream_id, data.len(), end_stream).await;
                     if end_stream {
                         completed += 1;
                         if completed >= stream_count {
@@ -10057,6 +10361,11 @@ async fn test_nghttp2_client_http2_server_multi_stream_flow_control() {
         for (_, size) in &received_per_stream {
             assert_eq!(*size, data_per_stream, "各ストリームが全データを受信すべき");
         }
+
+        conn.shutdown()
+            .await
+            .expect("受信完了の GOAWAY 送信に失敗した");
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -10085,16 +10394,21 @@ async fn test_nghttp2_client_http2_server_multi_stream_flow_control() {
     }
     client.flush().await.expect("failed to flush");
 
-    // サーバーが全データを受信して接続を閉じるのを待つ
+    // WINDOW_UPDATE を処理しながら、サーバーから受信完了の GOAWAY を待つ。
     loop {
         match tokio::time::timeout(Duration::from_secs(10), client.next_event()).await {
-            Ok(Ok(_)) => continue,
-            _ => break,
+            Ok(Ok(NgHttp2Event::GoawayReceived {
+                error_code: NgErrorCode::NoError,
+                ..
+            })) => break,
+            Ok(Ok(_)) => {}
+            _ => panic!("受信完了の GOAWAY を受け取れなかった"),
         }
     }
 
     client.shutdown().await.ok();
-    let _ = server_handle.await;
+    drop(client);
+    server_handle.await.expect("サーバータスクが異常終了した");
 }
 
 // ============================================================================
@@ -10156,6 +10470,8 @@ async fn test_nghttp2_client_http2_server_small_initial_window() {
                 _ => {}
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -10205,6 +10521,7 @@ async fn test_nghttp2_client_http2_server_small_initial_window() {
     assert_eq!(received_total, 32768, "全レスポンスボディを受信すべき");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -10275,6 +10592,8 @@ async fn test_nghttp2_client_http2_server_hpack_dynamic_table_eviction() {
                 _ => {}
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -10332,6 +10651,7 @@ async fn test_nghttp2_client_http2_server_hpack_dynamic_table_eviction() {
     assert!(got_response, "レスポンスを受信すべき");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -10388,6 +10708,8 @@ async fn test_http2_client_nghttp2_server_hpack_compression_across_requests() {
         }
 
         assert_eq!(handled, request_count, "全リクエストを処理すべき");
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -10433,6 +10755,7 @@ async fn test_http2_client_nghttp2_server_hpack_compression_across_requests() {
     assert_eq!(responses, request_count, "全レスポンスを受信すべき");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -10504,6 +10827,8 @@ async fn test_nghttp2_client_http2_server_rst_then_new_stream() {
         }
 
         assert_eq!(request_count, 2, "2 つのリクエストを受信すべき");
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -10585,6 +10910,7 @@ async fn test_nghttp2_client_http2_server_rst_then_new_stream() {
     assert!(got_200, "RST 後も新規ストリームで正常応答を受信すべき");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -10650,6 +10976,8 @@ async fn test_http2_client_nghttp2_server_client_rst_then_continue() {
                 _ => break,
             }
         }
+
+        drain_nghttp2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -10720,6 +11048,7 @@ async fn test_http2_client_nghttp2_server_client_rst_then_continue() {
     assert!(got_200, "RST 後も別ストリームで正常応答を受信すべき");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -10790,6 +11119,8 @@ async fn test_nghttp2_client_http2_server_mixed_stream_lifecycle() {
                 _ => {}
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -10853,6 +11184,7 @@ async fn test_nghttp2_client_http2_server_mixed_stream_lifecycle() {
     assert_eq!(rst_count, 1, "1 つのストリームが RST されるべき");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -10916,6 +11248,8 @@ async fn test_nghttp2_client_http2_server_empty_data_end_stream() {
                 _ => {}
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -10970,6 +11304,7 @@ async fn test_nghttp2_client_http2_server_empty_data_end_stream() {
     assert!(got_204, "204 No Content を受信すべき");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -11026,9 +11361,6 @@ async fn test_nghttp2_client_http2_server_tiny_data_frames() {
                         conn.send_data(stream_id, echo, true)
                             .await
                             .expect("failed to send data");
-                        // クライアントが受信するまで待機
-                        let _ =
-                            tokio::time::timeout(Duration::from_secs(2), conn.next_event()).await;
                         break;
                     }
                 }
@@ -11040,6 +11372,8 @@ async fn test_nghttp2_client_http2_server_tiny_data_frames() {
         }
 
         assert_eq!(received_bytes.len(), frame_count, "全バイトを受信すべき");
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -11088,6 +11422,7 @@ async fn test_nghttp2_client_http2_server_tiny_data_frames() {
     );
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -11144,6 +11479,8 @@ async fn test_nghttp2_client_http2_server_goaway_drain() {
                 _ => {}
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -11193,6 +11530,7 @@ async fn test_nghttp2_client_http2_server_goaway_drain() {
     assert!(got_goaway, "GOAWAY を受信すべき");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -11256,6 +11594,8 @@ async fn test_nghttp2_client_http2_server_100_concurrent_streams() {
         }
 
         assert_eq!(responded, stream_count, "全ストリームに応答すべき");
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -11298,6 +11638,7 @@ async fn test_nghttp2_client_http2_server_100_concurrent_streams() {
     assert_eq!(responses, stream_count, "全レスポンスを受信すべき");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -11359,6 +11700,8 @@ async fn test_nghttp2_client_http2_server_ping_during_transfer() {
                 _ => {}
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -11410,6 +11753,7 @@ async fn test_nghttp2_client_http2_server_ping_during_transfer() {
     let _ = got_ping_ack;
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -11488,6 +11832,8 @@ async fn test_nghttp2_client_http2_server_rst_error_codes() {
                     _ => {}
                 }
             }
+
+            drain_http2_connection(&mut conn).await;
         });
 
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -11530,6 +11876,7 @@ async fn test_nghttp2_client_http2_server_rst_error_codes() {
         assert!(got_rst, "RST_STREAM ({:?}) を受信すべき", ng_code);
 
         client.shutdown().await.ok();
+        drop(client);
         let _ = server_handle.await;
     }
 }
@@ -11715,6 +12062,8 @@ async fn test_nghttp2_client_http2_server_bidirectional_simultaneous() {
             received_total, client_data_size,
             "クライアントデータを全受信すべき"
         );
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -11789,6 +12138,7 @@ async fn test_nghttp2_client_http2_server_bidirectional_simultaneous() {
     );
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -11860,6 +12210,8 @@ async fn test_nghttp2_client_http2_server_sequential_requests() {
         }
 
         assert_eq!(handled, request_count, "全リクエストを処理すべき");
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -11922,6 +12274,7 @@ async fn test_nghttp2_client_http2_server_sequential_requests() {
     }
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -12007,6 +12360,8 @@ async fn test_nghttp2_client_http2_server_pseudo_and_regular_headers() {
                 _ => {}
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -12050,6 +12405,7 @@ async fn test_nghttp2_client_http2_server_pseudo_and_regular_headers() {
     assert!(got_200, "200 を受信すべき");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -12115,9 +12471,6 @@ async fn test_nghttp2_client_http2_server_1mb_echo_integrity() {
                                 .expect("failed to send data");
                             sent += chunk.len();
                         }
-                        // クライアントが受信するまで待機
-                        let _ =
-                            tokio::time::timeout(Duration::from_secs(5), conn.next_event()).await;
                         break;
                     }
                 }
@@ -12129,6 +12482,8 @@ async fn test_nghttp2_client_http2_server_1mb_echo_integrity() {
         }
 
         assert_eq!(received.len(), data_size, "全データを受信すべき");
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -12175,6 +12530,7 @@ async fn test_nghttp2_client_http2_server_1mb_echo_integrity() {
     assert_eq!(echo, send_data, "エコーバックのバイト列が完全に一致すべき");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
 
@@ -12234,6 +12590,8 @@ async fn test_nghttp2_client_http2_server_max_concurrent_streams_limit() {
                 _ => {}
             }
         }
+
+        drain_http2_connection(&mut conn).await;
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -12284,5 +12642,6 @@ async fn test_nghttp2_client_http2_server_max_concurrent_streams_limit() {
     assert_eq!(responses, 10, "全 10 リクエストが完了すべき");
 
     client.shutdown().await.ok();
+    drop(client);
     let _ = server_handle.await;
 }
