@@ -11,6 +11,9 @@ use crate::connection::Connection;
 use crate::error::{Error, Result};
 use crate::tls::TlsServerConfig;
 
+#[cfg(test)]
+mod tests;
+
 /// TLS ストリーム型
 type TlsStream = tokio_rustls::server::TlsStream<TcpStream>;
 
@@ -128,10 +131,11 @@ impl ServerConnection {
         self.conn.send_data(stream_id, data, end_stream).await
     }
 
-    /// 指定ストリームに未送信の送信データまたは保留中の END_STREAM があるかを返す
+    /// 指定ストリームに HTTP/2 フロー制御で保留中の DATA または END_STREAM があるかを返す
     ///
     /// `send_data` は送信ウィンドウ枯渇時にデータをバッファへ積むだけで `Ok(())` を
-    /// 返すことがある。本メソッドで実際に送信が完了したかを判定できる。
+    /// 返すことがある。その呼び出しが成功した後、本メソッドでフロー制御の待機を判定できる。
+    /// I/O のキャンセル後は、先に [`Self::flush`] で下位ストリームへの送信を再開する。
     #[must_use]
     pub fn has_pending_send_data(&self, stream_id: StreamId) -> bool {
         self.conn.has_pending_send_data(stream_id)
@@ -143,11 +147,17 @@ impl ServerConnection {
     }
 
     /// イベントを待機
+    ///
+    /// キャンセル時は未送信の出力と取得前のイベントを保持する。
+    /// 次回の [`Self::flush`] または [`Self::next_event`] で送信を継続する。
     pub async fn next_event(&mut self) -> Result<Event> {
         self.conn.next_event().await
     }
 
     /// 送信データをフラッシュ
+    ///
+    /// キャンセル時は未送信の出力と下位ストリームのフラッシュ待ちを保持し、
+    /// 次回の [`Self::flush`] または [`Self::next_event`] で送信を継続する。
     pub async fn flush(&mut self) -> Result<()> {
         self.conn.flush().await
     }

@@ -118,11 +118,17 @@ impl Client {
     }
 
     /// イベントを待機
+    ///
+    /// キャンセル時は未送信の出力と取得前のイベントを保持する。
+    /// 次回の [`Self::flush`] または [`Self::next_event`] で送信を継続する。
     pub async fn next_event(&mut self) -> Result<Event> {
         self.conn.next_event().await
     }
 
     /// 送信データをフラッシュ
+    ///
+    /// キャンセル時は未送信の出力と下位ストリームのフラッシュ待ちを保持し、
+    /// 次回の [`Self::flush`] または [`Self::next_event`] で送信を継続する。
     pub async fn flush(&mut self) -> Result<()> {
         self.conn.flush().await
     }

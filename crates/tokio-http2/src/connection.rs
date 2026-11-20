@@ -1,5 +1,7 @@
 //! HTTP/2 コネクション
 
+use std::io;
+
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use shiguredo_http2::{
@@ -15,6 +17,8 @@ pub struct Connection<S> {
     stream: S,
     inner: Http2Connection,
     recv_buf: Vec<u8>,
+    // 下位ストリームの flush が完了するまで、取り出した出力と書き込み位置を保持する。
+    pending_output: Option<(Vec<u8>, usize)>,
 }
 
 impl<S> Connection<S>
@@ -28,6 +32,7 @@ where
             stream,
             inner,
             recv_buf: vec![0u8; 16384],
+            pending_output: None,
         }
     }
 
@@ -38,6 +43,7 @@ where
             stream,
             inner,
             recv_buf: vec![0u8; 16384],
+            pending_output: None,
         }
     }
 
@@ -137,10 +143,11 @@ where
         self.flush().await
     }
 
-    /// 指定ストリームに未送信の送信データまたは保留中の END_STREAM があるかを返す
+    /// 指定ストリームに HTTP/2 フロー制御で保留中の DATA または END_STREAM があるかを返す
     ///
     /// `send_data` は送信ウィンドウ枯渇時にデータをバッファへ積むだけで `Ok(())` を
-    /// 返すことがある。本メソッドで実際に送信が完了したかを判定できる。
+    /// 返すことがある。その呼び出しが成功した後、本メソッドでフロー制御の待機を判定できる。
+    /// I/O のキャンセル後は、先に [`Self::flush`] で下位ストリームへの送信を再開する。
     #[must_use]
     pub fn has_pending_send_data(&self, stream_id: StreamId) -> bool {
         self.inner.has_pending_send_data(stream_id)
@@ -189,16 +196,30 @@ where
     }
 
     /// 送信データをフラッシュ
+    ///
+    /// キャンセル時は未送信の出力と下位ストリームのフラッシュ待ちを保持し、
+    /// 次回の [`Self::flush`] または [`Self::next_event`] で送信を継続する。
     pub async fn flush(&mut self) -> Result<()> {
-        let mut has_data = false;
-        while let Some(data) = self.inner.poll_output() {
-            self.stream.write_all(&data).await.map_err(Error::Io)?;
-            has_data = true;
+        loop {
+            if self.pending_output.is_none() {
+                self.pending_output = self.inner.poll_output().map(|data| (data, 0));
+            }
+            let Some((data, offset)) = self.pending_output.as_mut() else {
+                return Ok(());
+            };
+
+            // write が完了するたびに位置を進め、キャンセル時も新しい出力より先に続きを書く。
+            while *offset < data.len() {
+                match self.stream.write(&data[*offset..]).await {
+                    Ok(0) => return Err(io::Error::from(io::ErrorKind::WriteZero).into()),
+                    Ok(written) => *offset += written,
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            self.stream.flush().await?;
+            self.pending_output = None;
         }
-        if has_data {
-            self.stream.flush().await.map_err(Error::Io)?;
-        }
-        Ok(())
     }
 
     /// データを受信して処理
@@ -235,6 +256,8 @@ where
     /// イベントを待機
     ///
     /// イベントが発生するまでループし、最初のイベントを返す。
+    /// キャンセル時は未送信の出力と取得前のイベントを保持する。
+    /// 次回の [`Self::flush`] または [`Self::next_event`] で送信を継続する。
     pub async fn next_event(&mut self) -> Result<Event> {
         loop {
             // 送信データをフラッシュ（イベントを返却する前に必ずフラッシュ）
@@ -283,6 +306,8 @@ where
     }
 
     /// コネクションを分解してストリームを取得
+    ///
+    /// フレーム化済みの出力を送信する場合は、分解前に [`Self::flush`] を完了させる。
     pub fn into_inner(self) -> S {
         self.stream
     }
