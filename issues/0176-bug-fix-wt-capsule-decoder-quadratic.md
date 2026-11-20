@@ -1,7 +1,7 @@
 # `CapsuleDecoder::decode` の先頭 drain による O(n²) デコードを解消する
 
 - Created: 2026-11-16
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-11-20
 - Branch: feature/fix-wt-capsule-decoder-quadratic
 - Polished: 2026-11-17
 
@@ -36,3 +36,11 @@ HTTP/2 の DATA フレームは小さくても、ピアは多数のフレーム�
 - `feed` の上限判定が処理済みバイトを上限に数えないこと（処理済みの先頭バイトが残っていても、未処理データが上限未満なら追加の `feed` が成功すること）。
 - `CHANGES.md` は `CODEBASE.md` の指示に従い変更しないこと。
 - `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` が通ること。
+
+## 解決方法
+
+- `CapsuleDecoder` の受信バッファを `VecDeque` に変更した。正常にデコードした先頭バイトだけを取り除き、後続データを移動しない。
+- ヘッダーがリング境界をまたぐ場合は最大 16 バイトを一時領域にコピーする。ペイロードが境界をまたぐ場合は現在の Capsule のペイロードだけを連結する。部分入力やデコードエラーではバッファを消費しない。
+- `feed` は未処理バイト数を基準に上限を判定する。分割入力では最大幅の Type と Length、消費済み領域の再利用、`remaining` と `clear` を検証した。
+- 16 KiB・64 KiB・256 KiB のデコード時間を各 5 回測定した。回帰テストで 256 KiB が 16 KiB の 64 倍以下であることを確認した。
+- フォーマット、Clippy、ワークスペーステストが通過した。
